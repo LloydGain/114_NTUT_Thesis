@@ -1,20 +1,23 @@
+import os
 import json
 import pandas as pd
 
 class RouteManager:
-    """
-    
-    """
-    def __init__(self, excel_file):
+    _DC_CENTER = "DC"
+    _ROUTE_DATA_SHEET = 0
+    _DWELL_TIME_SHEET = 1
+    _STORE_COORD_SHEET = 2
+
+    def __init__(self, excel_files):
         self.dc_center_long = 121.40712
         self.dc_center_lat = 25.083282
-        self.excel_file = excel_file
+        self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
+        self.dwell_info = self._load_store_dwell_time()
         self.routes_info = self._load_original_routes()
 
 
-    @staticmethod
-    def get_max_capacity_by_route_code(route_code):
+    def _get_max_capacity_by_route_code(self, route_code):
         """
         Notes:
             Get the maximum vehicle capacity based on the route code.
@@ -33,20 +36,55 @@ class RouteManager:
             return 7.2
 
 
-    @staticmethod
-    def get_coordinates(store_info):
+    def _get_coordinates(self, store_id):
         """
         Extract longitude and latitude from a store information dictionary.
 
         Args:
-            store_info (dict): A dictionary containing 'longitude' and 'latitude' keys.
+            store_id (str): Store ID.
 
         Returns:
             tuple: (longitude, latitude)
         """
-        longitude = store_info.get('longitude')
-        latitude = store_info.get('latitude')
-        return longitude, latitude
+        store_info = self.stores_info.get(store_id)
+        if not store_info:
+            return self.dc_center_long, self.dc_center_lat
+        return store_info.get('longitude'), store_info.get('latitude')
+
+
+    def _get_dwell_time(self, store_id):
+        """
+        Notes:
+            Retrieve the average dwell time for the store.
+
+        Args:
+            store_id (str): Store ID.
+
+        Returns:
+            float: The dwell time in minutes. Returns 0 if the store ID is not found.
+        """
+        return self.dwell_info.get(store_id, 0)
+
+
+    def _load_store_dwell_time(self):
+        """
+        Notes:
+            Load dwell time information for each store from an sheet.
+
+        Args:
+            None.
+
+        Returns:
+            dict: A dictionary mapping store IDs to their average dwell times.
+        """
+        dwell_info = {}
+        dwells_df = pd.read_excel(self.excel_files[1], sheet_name=self._DWELL_TIME_SHEET, skiprows=0)
+        for _, row in dwells_df.iterrows():
+            store_id = str(row['店舖ID'])
+            dwell_time = row['平均滯店時間']
+            dwell_info[store_id] = dwell_time
+        
+        return dwell_info
 
 
     def _load_store_coordinates(self):
@@ -62,9 +100,9 @@ class RouteManager:
                 Example: {'store_01': {'longitude': 121.5, 'latitude': 25.03}, ...}
         """
         stores_info = {}
-        store_df = pd.read_excel(self.excel_file, sheet_name=2, skiprows=0)
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
         
-        for _, row in store_df.iterrows():
+        for _, row in stores_df.iterrows():
             store_id = str(row['店鋪編號'])
             longitude = row['經度']
             latitude = row['緯度']
@@ -85,32 +123,31 @@ class RouteManager:
             dict: routes information, with route code as key.
         """
         routes_info = {}
-        routes_df = pd.read_excel(self.excel_file, sheet_name=0, skiprows=3)
+        routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, skiprows=3)
         
         for _, row in routes_df.iterrows():
             route_code = str(row['車次'])
             store_id = str(int(row['ID'])) if not pd.isna(row['ID']) else None
             store_name = row['店名']
-            longitude, latitude = self.get_coordinates(self.stores_info[store_id]) if store_id is not None else (self.dc_center_long, self.dc_center_lat)
+            longitude, latitude = self._get_coordinates(store_id)
+            dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
             pred_time = pd.to_datetime(row['預定時間']).isoformat()
             volume = row['貨量']
             load_rate = row['裝載率']
 
             main_route_code = route_code[:2]
-            max_capacity = self.get_max_capacity_by_route_code(main_route_code)
+            max_capacity = self._get_max_capacity_by_route_code(main_route_code)
 
             if main_route_code not in routes_info:
                 routes_info[main_route_code] = {"dc" : None, "shops": []}
 
-            if "DC" not in route_code and len(route_code) == 2:
+            if self._DC_CENTER not in route_code and len(route_code) == 2:
                 routes_info[main_route_code]["dc"] = {
                     "route": main_route_code,
                     "route_code": route_code,
                     "store_id": "DC",
                     "store_name": store_name,
-                    "sched_time": None,
-                    "pred_time": None,
                     "volume": volume,
                     "load_rate": load_rate,
                     "max_capacity": max_capacity
@@ -124,6 +161,7 @@ class RouteManager:
                 "latitude": latitude,
                 "sched_time": sched_time,
                 "pred_time": pred_time,
+                "dwell_time": dwell_time,
                 "volume": volume
             })
         # for route in routes_info:
@@ -134,18 +172,21 @@ class RouteManager:
     def save_routes_to_json(self, json_file):
         """
         Notes:
-            Load routes data from excel & transfer to dict.
+            Save route data to a JSON file.
 
         Args:
-            routes_info (dict): Routes information dict.
             json_file: Path to the Json file.
 
         Returns:
             None.
         """
+        output_dir = os.path.dirname(json_file)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
         with open(json_file, 'w', encoding='utf-8') as f:
             json.dump(self.routes_info, f, ensure_ascii=False, indent=4)
 
 if __name__ == "__main__":
-    manager = RouteManager('../data/1203route.xlsx')
+    manager = RouteManager(['../data/1203route.xlsx', '../data/route_network_and_dwell_times.xlsx'])
     manager.save_routes_to_json('../output/original_routes_info.json')
