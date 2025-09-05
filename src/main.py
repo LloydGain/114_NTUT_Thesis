@@ -1,5 +1,17 @@
-from data_manager import DataManager
+import copy
+from data import DataManager
 from extract_aco import StoreExtractionACO
+from allocate_aco import StoreAllocationACO
+from support_line_aco import SupportLinePlanningACO
+
+
+def print_extracted_stores(extracted_stores):
+    volume = sum(store['volume'] for store in extracted_stores)
+    for store in extracted_stores:
+        print(store)
+    print(len(extracted_stores))
+    print(f"Total extracted volume: {volume / 7.2}")
+
 
 def main():
     route_file = '../data/1203route.xlsx'
@@ -8,15 +20,17 @@ def main():
 
     manager = DataManager([route_file, route_network_file])
     manager.save_routes_to_json(original_route)
-    routes = manager.routes_info
+    routes = copy.deepcopy(manager.routes_info)
 
     extractor = StoreExtractionACO(routes)
-    extracted_stores = extractor.run()
+    remaining_stores = extractor.run()
+    # print_extracted_stores(remaining_stores)
+    # for i in manager.routes_info:
+    #     print(f"Route {i} now has {manager.routes_info[i]['dc']['load_rate']} volume.")
 
-    for store in extracted_stores:
-        print(store)
-    print(len(extracted_stores))
-
+    allocator = StoreAllocationACO(routes, remaining_stores)
+    solution = allocator.run()
+    print(solution)
 
 if __name__ == "__main__":
     main()

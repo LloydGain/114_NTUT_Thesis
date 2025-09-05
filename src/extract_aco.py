@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from haversine import haversine_vector, Unit
-from route_manager import RouteManager
+from route import RouteManager
 
 
 class StoreExtractionACO:
