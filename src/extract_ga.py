@@ -9,7 +9,7 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, population_size=100, generations=100, cross_rate=0.6, mutation_rate=1):
+    def __init__(self, main_routes, population_size=10, generations=10, cross_rate=0.6, mutation_rate=1):
         self.main_routes = main_routes
         self.population_size = population_size
         self.generations = generations
@@ -45,13 +45,17 @@ class StoreExtractionGA:
             list: Selected stores for the route.
         """
         route_manager = RouteManager(copy.deepcopy(self.main_routes))
+        selected_idxs = []
         selected_stores = []
         stores = self.overloaded_routes[route_id]['stores']
 
         while route_manager.get_route_info(route_id, field='load_rate') > 1.0:
             idx = np.random.randint(len(stores))
-            selected_stores.append(stores[idx])
-            route_manager.remove_store(route_id, stores[idx])
+            if idx not in selected_idxs:
+                selected_idxs.append(idx)
+                selected_store = stores[idx]
+                selected_stores.append(selected_store)
+                route_manager.remove_store(route_id, selected_store)
 
         return selected_stores
 

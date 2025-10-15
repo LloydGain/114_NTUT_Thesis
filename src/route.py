@@ -45,6 +45,26 @@ class RouteManager:
             self._update_route_info(route)
 
 
+    def remove_stores(self, route_id, removed_stores):
+        """
+        Notes:
+            Remove multiple stores from the route and update route info.
+
+        Args:
+            route_id (str): Route ID.
+            removed_stores (list): List of removed store information.
+
+        Returns:
+            None
+        """
+        if route_id in self.routes_info:
+            route = self.routes_info[route_id]
+            stores = self.routes_info[route_id]['stores']
+            removed_route_codes = {store['route_code'] for store in removed_stores}
+            self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] not in removed_route_codes]
+            self._update_route_info(route)
+
+
     def get_route_info(self, route_id, field=None):
         """
         Notes:
