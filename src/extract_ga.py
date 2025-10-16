@@ -179,7 +179,26 @@ class StoreExtractionGA:
             individual[route_id] = selected_stores
 
 
-    def _population_to_set(self, individual):
+    def _best_main_routes(self, individual):
+        """
+        Notes:
+            Get the main routes after extraction based on the individual.
+
+        Args:
+            individual (dict): The individual representing extracted stores.
+
+        Returns:
+            dict: Updated main routes after extraction.
+        """
+        updated_routes = copy.deepcopy(self.main_routes)
+        route_manager = RouteManager(updated_routes)
+        for route_id, stores in individual.items():
+            for store in stores:
+                route_manager.remove_store(route_id, store)
+        return route_manager.routes_info
+
+
+    def _best_individual_to_set(self, individual):
         """
         Notes:
             Converts an individual to a set of store IDs.
@@ -215,4 +234,4 @@ class StoreExtractionGA:
             population = new_population
         # Select the best individual from the final population
         self.best_individual = population[0]
-        return self._population_to_set(self.best_individual)
+        return self._best_main_routes(self.best_individual), self._best_individual_to_set(self.best_individual)

@@ -1,6 +1,6 @@
-import numpy as np
 import copy
 import random
+import numpy as np
 import haversine as hs
 
 class SupportLinePlanningACO:
@@ -196,14 +196,58 @@ class SupportLinePlanningACO:
         Returns:
             None.
         """
-        initial_pheromone = 1 / cost
+        initial_pheromone = self.q / cost
         for s in self.remaining_stores:
             self.pheromone_matrix[s['store_id']] = {
                 store['store_id']: initial_pheromone for store in self.remaining_stores if store['store_id'] != s['store_id']
             }
 
 
-    def _pheromone_update(self, solution, cost):
+    def _solution_construction(self):
+        """
+        Notes:
+            Construct a solution for an ant.
+
+        Args:
+            None.
+        
+        Returns:
+            solution (dict): {vehicle_id: [store, ...]}.
+        """
+        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        ant_solution = dict()
+        vehicle_num = 0
+
+        while unvisited_stores:
+            current_store = random.choice(unvisited_stores)
+            ant_solution[vehicle_num] = [current_store]
+            total_volume = current_store['volume']
+            unvisited_stores.remove(current_store)
+
+            while unvisited_stores:
+                probabilities = []
+                for next_store in unvisited_stores:
+                    prob = self._transition_value(current_store, next_store)
+                    probabilities.append(prob)
+                probabilities = np.array(probabilities)
+                probabilities[probabilities < 1e-12] = 1e-12
+                probabilities /= probabilities.sum()
+
+                next_store = random.choices(unvisited_stores, weights=probabilities, k=1)[0]
+
+                if total_volume + next_store['volume'] <= self.support_capacity:
+                    ant_solution[vehicle_num].append(next_store)
+                    total_volume += next_store['volume']
+                    current_store = next_store
+                    unvisited_stores.remove(next_store)
+                else:
+                    vehicle_num += 1
+                    break
+        
+        return ant_solution
+
+
+    def _update_pheromone(self, solution, cost):
         """
         Notes:
             Update pheromone based on the solution.
@@ -241,41 +285,12 @@ class SupportLinePlanningACO:
         self._initial_pheromone(greedy_cost)
         for _ in range(self.iteration):
             for _ in range(self.ants):
-                unvisited_stores = copy.deepcopy(self.remaining_stores)
-                ant_solution = dict()
-                vehicle_num = 0
-
-                while unvisited_stores:
-                    current_store = random.choice(unvisited_stores)
-                    ant_solution[vehicle_num] = [current_store]
-                    total_volume = current_store['volume']
-                    unvisited_stores.remove(current_store)
-
-                    while unvisited_stores:
-                        probabilities = []
-                        for next_store in unvisited_stores:
-                            prob = self._transition_value(current_store, next_store)
-                            probabilities.append(prob)
-                        probabilities = np.array(probabilities)
-                        probabilities[probabilities < 1e-12] = 1e-12
-                        probabilities /= probabilities.sum()
-
-                        next_store = random.choices(unvisited_stores, weights=probabilities, k=1)[0]
-
-                        if total_volume + next_store['volume'] <= self.support_capacity:
-                            ant_solution[vehicle_num].append(next_store)
-                            total_volume += next_store['volume']
-                            current_store = next_store
-                            unvisited_stores.remove(next_store)
-                        else:
-                            vehicle_num += 1
-                            break
-                
+                ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_solution
                 
-                self._pheromone_update(ant_solution, ant_cost)
+                self._update_pheromone(ant_solution, ant_cost)
 
         return self.best_cost, self.best_solution
