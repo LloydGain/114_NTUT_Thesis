@@ -2,6 +2,7 @@ import copy
 import random
 import numpy as np
 import haversine as hs
+from route import RouteManager
 
 class SupportLinePlanningACO:
     """
@@ -99,6 +100,32 @@ class SupportLinePlanningACO:
         return (tau ** self.alpha) * (eta ** self.beta)
 
 
+    def _initial_route(self, vehicle_id):
+        """
+        Create an initial route structure for a given vehicle.
+
+        Args:
+            vehicle_id (int): Vehicle identifier.
+
+        Returns:
+            dict: Initial route structure.
+        """
+        return {
+            "dc": {
+                "route_id": vehicle_id,
+                "route_code": vehicle_id,
+                "store_id": "DC",
+                "store_name": "林口ＤＣ",
+                "total_volume": 0.0,
+                "load_rate": 0.0,
+                "max_capacity": self.support_capacity,
+                "sched_time": None,
+                "pred_time": None
+            },
+            "stores": []
+        }
+
+
     def _greedy_selection(self, current_store, unvisited_stores):
         """
         Notes:
@@ -130,30 +157,36 @@ class SupportLinePlanningACO:
             None.
 
         Returns:
-            dict: {vehicle_id: [store1, store2, ...], ...}.
+            dict: { dc: {...}, stores: [...] }.
         """
         if not self.remaining_stores:
             return {}
         
-        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        vehicle_num = 101
         solution = dict()
-        vehicle_num = 0
+        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        route_manager = RouteManager(solution)
+
         while unvisited_stores:
+            vehicle_id = f'{vehicle_num}'
+            route = self._initial_route(vehicle_id)
+            solution[vehicle_id] = route
+
             current_store = random.choice(unvisited_stores)
-            solution[vehicle_num] = [current_store]
-            total_volume = current_store['volume']
+            route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
                 next_store = self._greedy_selection(current_store, unvisited_stores)
-                if total_volume + next_store['volume'] <= self.support_capacity:
-                    solution[vehicle_num].append(next_store)
-                    total_volume += next_store['volume']
+
+                if route['dc']['total_volume'] + next_store['volume'] <= self.support_capacity:
+                    route_manager.add_store(vehicle_id, next_store)
                     current_store = next_store
                     unvisited_stores.remove(next_store)
                 else:
                     vehicle_num += 1
                     break
+    
         return solution
 
 
@@ -163,24 +196,23 @@ class SupportLinePlanningACO:
             Calculate the total cost of a solution.
 
         Args:
-            solution (dict): {vehicle_id: [store1, store2, ...], ...}.
+            solution (dict): { dc: {...}, stores: [...] }.
 
         Returns:
             float: The total cost of the solution.
         """
         total_cost = 0
-
         for vehicle_id in solution:
-            route = solution[vehicle_id]
-            if not route:
+            stores = solution[vehicle_id]['stores']
+            if not stores:
                 continue
 
-            total_cost += self.cost_matrix['dc'][route[0]['store_id']]
+            total_cost += self.cost_matrix['dc'][stores[0]['store_id']]
 
-            for i in range(len(route) - 1):
-                total_cost += self.cost_matrix[route[i]['store_id']][route[i+1]['store_id']]
+            for i in range(len(stores) - 1):
+                total_cost += self.cost_matrix[stores[i]['store_id']][stores[i+1]['store_id']]
 
-            total_cost += self.cost_matrix[route[-1]['store_id']]['dc']
+            total_cost += self.cost_matrix[stores[-1]['store_id']]['dc']
 
         return total_cost
 
@@ -212,16 +244,23 @@ class SupportLinePlanningACO:
             None.
         
         Returns:
-            solution (dict): {vehicle_id: [store, ...]}.
+            solution (dict): { dc: {...}, stores: [...] }.
         """
-        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        if not self.remaining_stores:
+            return {}
+
+        vehicle_num = 101
         ant_solution = dict()
-        vehicle_num = 0
+        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        route_manager = RouteManager(ant_solution)
 
         while unvisited_stores:
+            vehicle_id = f'{vehicle_num}'
+            route = self._initial_route(vehicle_id)
+            ant_solution[vehicle_id] = route
+
             current_store = random.choice(unvisited_stores)
-            ant_solution[vehicle_num] = [current_store]
-            total_volume = current_store['volume']
+            route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
@@ -235,9 +274,8 @@ class SupportLinePlanningACO:
 
                 next_store = random.choices(unvisited_stores, weights=probabilities, k=1)[0]
 
-                if total_volume + next_store['volume'] <= self.support_capacity:
-                    ant_solution[vehicle_num].append(next_store)
-                    total_volume += next_store['volume']
+                if route['dc']['total_volume'] + next_store['volume'] <= self.support_capacity:
+                    route_manager.add_store(vehicle_id, next_store)
                     current_store = next_store
                     unvisited_stores.remove(next_store)
                 else:
@@ -265,9 +303,10 @@ class SupportLinePlanningACO:
         
         delta_pheromone = self.q / cost
         for route in solution:
-            for i in range(len(solution[route]) - 1):
-                store_1 = solution[route][i]['store_id']
-                store_2 = solution[route][i+1]['store_id']
+            stores = solution[route]['stores']
+            for i in range(len(stores) - 1):
+                store_1 = stores[i]['store_id']
+                store_2 = stores[i+1]['store_id']
                 self.pheromone_matrix[store_1][store_2] += delta_pheromone
                 self.pheromone_matrix[store_2][store_1] += delta_pheromone
 

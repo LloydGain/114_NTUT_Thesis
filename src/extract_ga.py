@@ -1,6 +1,7 @@
 import numpy as np
 import copy
 from route import RouteManager
+from allocate_aco import StoreAllocationACO
 
 # np.random.seed(1234)
 
@@ -9,13 +10,14 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, population_size=10, generations=10, cross_rate=0.6, mutation_rate=1):
+    def __init__(self, main_routes, population_size=10, generations=50, cross_rate=0.6, mutation_rate=1):
         self.main_routes = main_routes
         self.population_size = population_size
         self.generations = generations
         self.cross_rate = cross_rate
         self.mutation_rate = mutation_rate
         self.overloaded_routes = self._get_overloaded_routes()
+        self.best_cost = float('inf')
         self.best_individual = None
     
 
@@ -94,10 +96,39 @@ class StoreExtractionGA:
             population.append(individual)
         return population
 
+
+    def _get_individual_routes(self, indiviudal):
+        """
+        Notes:
+            Remove the extracted stores from main routes.
+        
+        Args:
+            individual (dict): { route_id: [store1, store2, ...] }
+        
+        Returns:
+            dict: route info { dc: {...}, stores: [...] }.
+        """
+        route_manager = RouteManager(copy.deepcopy(self.main_routes))
+        for route_id in indiviudal:
+            route_manager.remove_stores(route_id, indiviudal[route_id])
+        
+        return route_manager.routes_info
+
     
     def _fitness(self, individual):
-        # Fitness function (Not done yet)
-        return 1
+        """
+        Notes:
+            Calculates the fitness value for an individual solution
+        
+        Args:
+            individual (dict): { route_id: [store1, store2, ...] }
+        
+        Returns:
+            float: The fitness value
+        """
+        routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
+        fitness, _ = StoreAllocationACO(routes, stores).run()
+        return fitness
 
     
     def _roulette_wheel_selection(self, population, fitnesses):
@@ -112,8 +143,9 @@ class StoreExtractionGA:
         Returns:
             tuple: Two selected parents (individuals).
         """
-        total_fitness = sum(fitnesses)
-        probabilities = np.array(fitnesses) / total_fitness
+        inverse_fitnesses = 1 / np.array(fitnesses)
+        total_inverse_fitness = sum(inverse_fitnesses)
+        probabilities = np.array(inverse_fitnesses) / total_inverse_fitness
         parent1_idx = np.random.choice(len(fitnesses), p=probabilities)
         parent2_idx = np.random.choice(len(fitnesses), p=probabilities)
         return population[parent1_idx], population[parent2_idx]
@@ -198,7 +230,7 @@ class StoreExtractionGA:
         return route_manager.routes_info
 
 
-    def _best_individual_to_set(self, individual):
+    def _individual_to_list(self, individual):
         """
         Notes:
             Converts an individual to a set of store IDs.
@@ -222,8 +254,18 @@ class StoreExtractionGA:
             Runs the genetic algorithm for store extraction.
         """
         population = self._init_population()
-        for _ in range(self.generations):
-            fitnesses = [self._fitness(population) for _ in population]
+        for i in range(self.generations):
+            fitnesses = [self._fitness(individual) for individual in population]
+            current_best_index = np.argmin(fitnesses)
+            current_best_cost = fitnesses[current_best_index]
+            current_best_individual = population[current_best_index]
+
+            if current_best_cost < self.best_cost:
+                self.best_cost = current_best_cost
+                self.best_individual = copy.deepcopy(current_best_individual)
+
+            print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
+
             new_population = []
             for _ in range(self.population_size // 2):
                 parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
@@ -232,6 +274,5 @@ class StoreExtractionGA:
                 self._mutate(child2)
                 new_population.extend([child1, child2])
             population = new_population
-        # Select the best individual from the final population
-        self.best_individual = population[0]
-        return self._best_main_routes(self.best_individual), self._best_individual_to_set(self.best_individual)
+
+        return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)

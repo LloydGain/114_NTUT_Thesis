@@ -1,3 +1,6 @@
+import os
+import json
+
 class RouteManager:
     """
     Notes:
@@ -128,3 +131,22 @@ class RouteManager:
         """
         self._update_route_volume(route)
         self._update_route_load_rate(route)
+    
+
+    def _export_routes_info(self, json_file='optimized_routes_info.json'):
+        """
+        Notes:
+            Save route data to a JSON file.
+
+        Args:
+            json_file: Path to the Json file.
+
+        Returns:
+            None.
+        """
+        output_dir = os.path.dirname(json_file)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(self.routes_info, f, ensure_ascii=False, indent=4)

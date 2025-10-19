@@ -1,5 +1,6 @@
 import copy
 from data import DataManager
+from route import RouteManager
 from extract_ga import StoreExtractionGA
 from allocate_aco import StoreAllocationACO
 from support_line_aco import SupportLinePlanningACO
@@ -9,6 +10,7 @@ def main():
     route_file = '../data/1203route.xlsx'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     original_route = '../output/original_routes_info.json'
+    optimized_route_file = '../output/optimized_routes_info.json'
 
     print("Loading route data...")
     manager = DataManager([route_file, route_network_file])
@@ -18,32 +20,22 @@ def main():
     print("Starting Store Extraction using GA...")
     store_extractor = StoreExtractionGA(routes)
     main_routes, extracted_stores = store_extractor.run()
-    # num = 0
-    # for store in extracted_stores:
-    #     num += 1
-    #     print(store)
-    # print(f"Total extracted stores: {num}")
-
-    # for route_id in main_routes:
-    #     if main_routes[route_id]['dc']['load_rate'] > 1:
-    #         print(f"Route {route_id} exceeds capacity! Load Rate: {main_routes[route_id]['dc']['load_rate']}")
-    #     else:
-    #         print(f"Route {route_id} is within capacity. Load Rate: {main_routes[route_id]['dc']['load_rate']}")
 
     print("Starting Store Allocation using ACO...")
     store_allocator = StoreAllocationACO(main_routes, extracted_stores)
-    store_allocator.run()
+    best_cost, best_solution = store_allocator.run()
 
-    # print("\nStarting Support Line Planning using ACO...")
-    # support_line = SupportLinePlanningACO(extracted_stores)
-    # best_cost, best_solution = support_line.run()
-    # print("Best Cost:", best_cost)
-    # num = 0
-    # for vehicle_id, stores in best_solution.items():
-    #     store_ids = [store['store_id'] for store in stores]
-    #     num += len(store_ids)
-    #     print(f"Vehicle {vehicle_id}:\n Stores {store_ids}\nVolume: {sum(store['volume'] for store in stores)}\n\n")
-    # print(f"Total allocated stores: {num}")
+    total_stores = 0
+    for vehicle_id, vehicle in best_solution.items():
+        total_stores += len(vehicle['stores'])
+        print(f"Vehicle {vehicle_id}: {len(vehicle['stores'])} stores -> load_rate: {vehicle['dc']['load_rate']}")
+    print(f"Total Cost: {best_cost}")
+    print(f"Total Vehicle Num: {len(best_solution)}")
+    print(f"Total Store: {total_stores}")
+
+    route_manager = RouteManager(best_solution)
+    route_manager._export_routes_info(optimized_route_file)
+
 
 if __name__ == "__main__":
     main()
