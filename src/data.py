@@ -180,12 +180,11 @@ class DataManager:
                     "store_name": store_name,
                     "total_volume": volume,
                     "load_rate": load_rate,
-                    "max_capacity": max_capacity
+                    "max_capacity": max_capacity,
+                    "distance": 0,
+                    "duration": 0
                 }
-            elif self._DC_CENTER in route_code:
-                routes_info[main_route_code]["dc"]['sched_time'] = sched_time
-                routes_info[main_route_code]["dc"]['pred_time'] = pred_time
-            else:
+            elif self._DC_CENTER not in route_code:
                 if dwell_time == 0:
                     i += 1
                     print(f"Route Code: {route_code}, store ID: {store_id}, store Name: {store_name}")
@@ -201,8 +200,7 @@ class DataManager:
                     "dwell_time": dwell_time,
                     "volume": volume
                 })
-        # for route in routes_info:
-        #     print(routes_info[route])
+
         return routes_info
 
 

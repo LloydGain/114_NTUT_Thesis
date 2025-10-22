@@ -1,13 +1,17 @@
 import os
 import json
+from datetime import datetime, timedelta
+from google_maps import GoogleRoutesAPI
 
 class RouteManager:
     """
     Notes:
         Route Management.
     """
-    def __init__(self, routes_info):
+    def __init__(self, routes_info, distance_matrix=None, time_matrix=None):
         self.routes_info = routes_info
+        self.distance_matrix = distance_matrix
+        self.time_matrix = time_matrix
 
 
     def add_store(self, route_id, store):
@@ -23,8 +27,10 @@ class RouteManager:
             None
         """
         route = self.routes_info.get(route_id)
+
         if not route:
             return
+
         route['stores'].append(store)
         self._update_route_info(route)
 
@@ -86,6 +92,60 @@ class RouteManager:
             return None
             
         return self.routes_info.get(route_id).get('dc')
+            
+
+    def _update_route_time(self, route):
+        """
+        Notes:
+            Calculate and update total time of the route.
+
+        Args:
+            route (dict): Route information.
+
+        Returns:
+            None
+        """
+        if self.time_matrix is None:
+            raise ValueError("Time matrix must be provided to update route time.")
+
+        total_time = 0
+
+        prev_id = 'dc'
+        for store in route['stores']:
+            curr_id = store['store_id']
+            total_time += self.time_matrix[prev_id][curr_id]
+            total_time += store['dwell_time']
+            prev_id = curr_id
+        total_time += self.time_matrix[prev_id]['dc']
+
+        route['dc']['duration'] = total_time
+
+
+    def _update_all_stores_pred_time(self, route):
+        """
+        Notes:
+            Update predicted time for all stores in all routes.
+        
+        Args:
+            route (dict): Route information.
+        
+        Returns:
+            None.
+        """
+        if self.time_matrix is None:
+            raise ValueError("Time matrix must be provided to update predicted times.")
+
+        stores = route.get('stores', [])
+
+        if not stores:
+            return
+        
+        stores[0]['pred_time'] = stores[0]['sched_time']
+        for prev, curr in zip(stores[:-1], stores[1:]):
+            travel_time = self.time_matrix[prev['store_id']][curr['store_id']]
+            pre_dwell = prev['dwell_time']
+            arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
+            curr['pred_time'] = arrival_time.isoformat()
 
 
     def _update_route_volume(self, route):
@@ -129,6 +189,8 @@ class RouteManager:
         Returns:
             None
         """
+        self._update_route_time(route)
+        self._update_all_stores_pred_time(route)
         self._update_route_volume(route)
         self._update_route_load_rate(route)
     
