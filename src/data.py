@@ -1,6 +1,8 @@
 import os
 import json
+import numpy as np
 import pandas as pd
+import haversine as hs
 
 class DataManager:
     """
@@ -19,13 +21,46 @@ class DataManager:
     _STORE_COORD_SHEET = 2
 
     def __init__(self, excel_files):
-        self.dc_center_long = 121.40712
-        self.dc_center_lat = 25.083282
+        self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
+        self.avg_speed_kmh = 40
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
+        self.distance_matrix, self.time_matrix = self._compute_cost_matrices()        
+
+
+    def _compute_cost_matrices(self):
+        """
+        Notes:
+            Compute distance and time matrices.
+
+        Args:
+            None.
+        
+        Returns:
+            tuple: (distance_matrix, time_matrix)
+        """
+        routes = self.routes_info.values()
+        stores_id = [self.dc['store_id']] + [store['store_id'] for route in routes for store in route['stores']]
+        coordinates = np.array([(self.dc['latitude'], self.dc['longitude'])] + [(store['latitude'], store['longitude']) for route in routes for store in route['stores']] )
+        dist = hs.haversine_vector(coordinates, coordinates, comb=True, unit=hs.Unit.KILOMETERS)
+        dist = dist * 1.5
+        
+        dist_matrix = {
+            store_id: {
+                store_id_j: dist[i][j] for j, store_id_j in enumerate(stores_id)
+            } for i, store_id in enumerate(stores_id)
+        }
+
+        time_matrix = {
+            store_id: {
+                store_id_j: (dist[i][j] / self.avg_speed_kmh) * 60 for j, store_id_j in enumerate(stores_id)
+            } for i, store_id in enumerate(stores_id)
+        }
+
+        return dist_matrix, time_matrix
 
 
     def _get_max_capacity_by_route_code(self, route_code):
@@ -60,7 +95,7 @@ class DataManager:
         """
         store_info = self.stores_info.get(store_id)
         if not store_info:
-            return self.dc_center_long, self.dc_center_lat
+            return self.dc['longitude'], self.dc['latitude']
         return store_info.get('longitude'), store_info.get('latitude')
 
 
@@ -162,6 +197,8 @@ class DataManager:
             longitude, latitude = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
+            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=30)).isoformat()
+            latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(hours=1)).isoformat()
             pred_time = pd.to_datetime(row['預定時間']).isoformat()
             volume = row['貨量']
             load_rate = row['裝載率']
@@ -196,6 +233,8 @@ class DataManager:
                     "longitude": longitude, 
                     "latitude": latitude,
                     "sched_time": sched_time,
+                    "earliest_time": earliest_time,
+                    "latest_time": latest_time,
                     "pred_time": pred_time,
                     "dwell_time": dwell_time,
                     "volume": volume

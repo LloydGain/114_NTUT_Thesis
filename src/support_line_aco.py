@@ -3,14 +3,13 @@ import random
 import numpy as np
 from datetime import datetime, timedelta
 from route import RouteManager
-from google_maps import GoogleRoutesAPI
 
 class SupportLinePlanningACO:
     """
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, alpha=1, beta=2, rho=0.5, q=1, ants=20, iteration=100, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, ants=20, iteration=50, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
@@ -21,31 +20,10 @@ class SupportLinePlanningACO:
         self.iteration = iteration
         self.support_capacity = support_capacity
         self.pheromone_matrix = dict()
-        self.distance_matrix, self.time_matrix = self._calculate_distance_and_time_matrix()
+        self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
         self.best_cost = float('inf')
         self.best_solution = None
-        self.time_limit_per_route = 5 * 3600
-
-
-    def _calculate_distance_and_time_matrix(self):
-        """
-        Notes:
-            Calculate cost matrix based on distances between stores.
-
-        Args:
-            None.
-
-        Returns:
-            tuple: Distance matrix & Time matrix .
-        """
-        if not self.remaining_stores:
-            return {}
-
-        routes_api = GoogleRoutesAPI()
-        origins, destinations = self.remaining_stores, self.remaining_stores
-        distance_matrix, time_matrix = routes_api.batch_compute_route_matrix(origins, destinations)
-        
-        return distance_matrix, time_matrix
+        self.time_limit_per_route = 5 * 60 * 60
 
 
     def _heuristic(self, current_store, next_store):
@@ -167,27 +145,20 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             solution[vehicle_id] = route
 
-            current_store = None
-            min_distance = float('inf')
-            for store in unvisited_stores:
-                store_id = store['store_id']
-                distance = self.distance_matrix['dc'][store_id]
-                if distance < min_distance:
-                    current_store = store
-
+            current_store = min(unvisited_stores, key=lambda s: self.distance_matrix['dc'][s['store_id']])
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
-                next_store = self._greedy_selection(current_store, unvisited_stores)
-
-                if self._capacity_and_time_constraints(route, next_store):
-                    route_manager.add_store(vehicle_id, next_store)
-                    current_store = next_store
-                    unvisited_stores.remove(next_store)
-                else:
+                feasible_stores = [store for store in unvisited_stores if self._capacity_and_time_constraints(route, store)]
+                if not feasible_stores:
                     vehicle_num += 1
                     break
+
+                next_store = self._greedy_selection(current_store, feasible_stores)
+                route_manager.add_store(vehicle_id, next_store)
+                current_store = next_store
+                unvisited_stores.remove(next_store)
     
         return solution
 
@@ -237,23 +208,87 @@ class SupportLinePlanningACO:
             }
 
 
-    def _is_within_time_window(self, arrival_time, sched_time, before=30, after=60):
+    def _check_volume_constraint(self, route_volumn, store):
         """
         Notes:
-            Check if arrival_time is within the time window of sched_time.
+            Check if adding a store violates the capacity constraint.
 
         Args:
-            arrival_time (datetime): The arrival time.
-            sched_time (datetime): The scheduled time.
-            before (int): Minutes before scheduled time.
-            after (int): Minutes after scheduled time.
+            route_volumn (float): Current route volume.
+            store (dict): Store information.
 
         Returns:
-            bool: True if within time window, False otherwise.
+            bool: True if capacity constraint is satisfied, False otherwise.
         """
-        window_start = sched_time - timedelta(minutes=before)
-        window_end = sched_time + timedelta(minutes=after)
-        return window_start <= arrival_time <= window_end
+        return (route_volumn + store['volume']) <= self.support_capacity
+
+
+    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
+        """
+        Notes:
+            Check if a given arrival time within store time window.
+
+        Args:
+            arrival_time (datetime): Arrival time.
+            earliest_time (datetime): Earliest time (start of time window).
+            latest_time (datetime): Latest time (end of time window).
+
+        Returns:
+            bool: True if arrival_time is within the [earliest_time, latest_time] window, False otherwise.
+        """
+        return earliest_time <= arrival_time <= latest_time
+
+
+    def _is_within_time_limit(self, duration):
+        """
+        Notes:
+            Check route duration is within time limit per route.
+
+        Args:
+            duration (int): The total duration of the route in seconds.
+
+        Returns:
+            bool: True if duration is within the route time limit, False otherwise.
+        """
+        return duration <= self.time_limit_per_route
+            
+
+    def _check_time_constraint(self, stores, store, duration):
+        """
+        Notes:
+            Check if adding a store violates the time window constraint.
+        
+        Args:
+            route (list): Current route (list of stores).
+            store (dict): Store information.
+            duration (float): Current total duration of the route in seconds.
+        
+        Returns:
+            bool: True if time window constraint is satisfied, False otherwise.
+        """
+        prev_store = stores[-1]
+        prev_id = prev_store['store_id']
+        cur_id = store['store_id']
+        prev_dwell_time = prev_store['dwell_time']
+        pre_to_cur_time = self.time_matrix[prev_id][cur_id]
+        pre_pred_time = datetime.fromisoformat(prev_store['pred_time']) 
+        arrival_time = pre_pred_time + timedelta(seconds=pre_to_cur_time + prev_dwell_time)
+        arrival_time = arrival_time.replace(microsecond=0)
+        earliest_time = datetime.fromisoformat(store['earliest_time'])
+        latest_time = datetime.fromisoformat(store['latest_time'])
+
+        pre_to_dc_time = self.time_matrix[prev_id]['dc']
+        cur_to_dc_time = self.time_matrix[cur_id]['dc']
+        cur_dwell_time = store['dwell_time']
+        new_duration = duration + (pre_to_cur_time + cur_to_dc_time - pre_to_dc_time) + cur_dwell_time
+            
+        if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
+            return False
+        
+        if not self._is_within_time_limit(new_duration):
+            return False
+
+        return True
 
 
     def _capacity_and_time_constraints(self, route, store):
@@ -268,33 +303,20 @@ class SupportLinePlanningACO:
         Returns:
             bool: True if constraints are satisfied, False otherwise.
         """
-        if route['dc']['total_volume'] + store['volume'] > self.support_capacity:
+        dc = route['dc']
+        stores = route['stores']
+        duration = dc['duration']
+
+        if not self._check_volume_constraint(dc['total_volume'], store):
             return False
 
-        if len(route['stores']) == 0:
+        if len(stores) == 0:
             return True
 
-        pre_id = route['stores'][-1]['store_id']
-        next_id = store['store_id']
-        duration = route['dc']['duration']
-        dwell_time = store['dwell_time']
-        time_pre_to_dc = self.time_matrix[pre_id]['dc']
-        time_pre_to_next = self.time_matrix[pre_id][next_id]
-        time_next_to_dc = self.time_matrix[next_id]['dc']
+        if self._check_time_constraint(stores, store, duration):
+            return True
 
-        new_duration = duration - time_pre_to_dc + time_pre_to_next + time_next_to_dc + dwell_time
-
-        if new_duration > self.time_limit_per_route:
-            return False
-        
-        sched_time = datetime.fromisoformat(store['sched_time'])
-        pre_arrival_time = datetime.fromisoformat(route['stores'][-1]['pred_time'])
-        arrival_time = pre_arrival_time + timedelta(seconds=time_pre_to_next)
-
-        if not self._is_within_time_window(arrival_time, sched_time):
-            return False
-
-        return True
+        return False
 
 
     def _solution_construction(self):
@@ -326,23 +348,23 @@ class SupportLinePlanningACO:
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
+                feasible_stores = [store for store in unvisited_stores if self._capacity_and_time_constraints(route, store)]
+                if not feasible_stores:
+                    vehicle_num += 1
+                    break
+
                 probabilities = []
-                for next_store in unvisited_stores:
+                for next_store in feasible_stores:
                     prob = self._transition_value(current_store, next_store)
                     probabilities.append(prob)
                 probabilities = np.array(probabilities)
                 probabilities[probabilities < 1e-12] = 1e-12
                 probabilities /= probabilities.sum()
 
-                next_store = random.choices(unvisited_stores, weights=probabilities, k=1)[0]
-
-                if self._capacity_and_time_constraints(route, next_store):
-                    route_manager.add_store(vehicle_id, next_store)
-                    current_store = next_store
-                    unvisited_stores.remove(next_store)
-                else:
-                    vehicle_num += 1
-                    break
+                next_store = random.choices(feasible_stores, weights=probabilities, k=1)[0]
+                route_manager.add_store(vehicle_id, next_store)
+                current_store = next_store
+                unvisited_stores.remove(next_store)
         
         return ant_solution
 
@@ -370,7 +392,6 @@ class SupportLinePlanningACO:
                 store_1 = stores[i]['store_id']
                 store_2 = stores[i+1]['store_id']
                 self.pheromone_matrix[store_1][store_2] += delta_pheromone
-                self.pheromone_matrix[store_2][store_1] += delta_pheromone
 
 
     def run(self):
@@ -378,10 +399,11 @@ class SupportLinePlanningACO:
         Notes:
             Runs the ACO algorithm for support line planning.
         """
+        # print(f'Support Line stores: {len(self.remaining_stores)}')
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
         self._initial_pheromone(greedy_cost)
-        for _ in range(self.iteration):
+        for i in range(self.iteration):
             for _ in range(self.ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
@@ -391,5 +413,6 @@ class SupportLinePlanningACO:
                     self.best_solution = ant_solution
                 
                 self._update_pheromone(ant_solution, ant_cost)
-
+            
+            # print(f'iteration{i+1} -> best cost = {self.best_cost}')
         return self.best_cost, self.best_solution

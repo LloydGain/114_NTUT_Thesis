@@ -1,4 +1,5 @@
 import copy
+import time
 from data import DataManager
 from route import RouteManager
 from extract_ga import StoreExtractionGA
@@ -12,18 +13,40 @@ def main():
     original_route = '../output/original_routes_info.json'
     optimized_route_file = '../output/optimized_routes_info.json'
 
+    start_time = time.time()
+
     print("Loading route data...")
     manager = DataManager([route_file, route_network_file])
     # manager.save_routes_to_json(original_route)
     routes = copy.deepcopy(manager.routes_info)
+    distance_matrix, time_matrix = manager.distance_matrix, manager.time_matrix
+
+    end_time = time.time()
+    print(f"資料讀取執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
+
+    start_time = time.time()
 
     print("Starting Store Extraction using GA...")
-    store_extractor = StoreExtractionGA(routes)
+    store_extractor = StoreExtractionGA(routes, distance_matrix, time_matrix)
     main_routes, extracted_stores = store_extractor.run()
 
+    end_time = time.time()
+    print(f"店鋪抽取執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
+
+    start_time = time.time()
+
     print("Starting Store Allocation using ACO...")
-    store_allocator = StoreAllocationACO(main_routes, extracted_stores)
+    store_allocator = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix)
     best_cost, best_solution = store_allocator.run()
+
+    end_time = time.time()
+    print(f"店鋪再分配執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
 
     total_stores = 0
     for vehicle_id, vehicle in best_solution.items():

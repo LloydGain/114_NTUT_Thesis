@@ -1,7 +1,6 @@
 import os
 import json
 from datetime import datetime, timedelta
-from google_maps import GoogleRoutesAPI
 
 class RouteManager:
     """
@@ -10,6 +9,7 @@ class RouteManager:
     """
     def __init__(self, routes_info, distance_matrix=None, time_matrix=None):
         self.routes_info = routes_info
+        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
 
@@ -32,6 +32,28 @@ class RouteManager:
             return
 
         route['stores'].append(store)
+        self._update_route_info(route)
+
+
+    def insert_store(self, store, route_id, position):
+        """
+        Notes:
+            Insert a store at a specific position in the route and update route info.
+
+        Args:
+            store (dict): Store information.
+            route_id (str): Route ID.
+            position (int): Position to insert the store.
+
+        Returns:
+            None
+        """
+        route = self.routes_info.get(route_id)
+
+        if not route:
+            return
+
+        route['stores'].insert(position, store)
         self._update_route_info(route)
 
 
@@ -94,6 +116,31 @@ class RouteManager:
         return self.routes_info.get(route_id).get('dc')
             
 
+    def _update_route_distance(self, route):
+        """
+        Notes:
+            Calculate and update total distance of the route.
+        
+        Args:
+            route (dict): Route information.
+
+        Returns:
+            None.
+        """
+        if self.distance_matrix is None:
+            raise ValueError("Distance matrix must be provided to update route distance.")
+        
+        total_distance = 0
+        stores = [self.dc] + route['stores'] + [self.dc]
+
+        for prev, curr in zip(stores[:-1], stores[1:]):
+            prev_id, cur_id = prev['store_id'], curr['store_id']
+            distance = self.distance_matrix[prev_id][cur_id]
+            total_distance += distance
+        
+        route['dc']['distance'] = total_distance
+
+
     def _update_route_time(self, route):
         """
         Notes:
@@ -103,22 +150,23 @@ class RouteManager:
             route (dict): Route information.
 
         Returns:
-            None
+            None.
         """
         if self.time_matrix is None:
             raise ValueError("Time matrix must be provided to update route time.")
 
-        total_time = 0
+        duration = 0
+        stores = [self.dc] + route['stores'] + [self.dc]
 
-        prev_id = 'dc'
-        for store in route['stores']:
-            curr_id = store['store_id']
-            total_time += self.time_matrix[prev_id][curr_id]
-            total_time += store['dwell_time']
-            prev_id = curr_id
-        total_time += self.time_matrix[prev_id]['dc']
+        for prev, curr in zip(stores[:-1], stores[1:]):
+            prev_id, cur_id = prev['store_id'], curr['store_id']
+            travel_time = self.time_matrix[prev_id][cur_id]
+            duration += travel_time
 
-        route['dc']['duration'] = total_time
+        total_dwell_time = sum(store['dwell_time'] for store in route['stores'])
+        duration += total_dwell_time
+
+        route['dc']['duration'] = duration
 
 
     def _update_all_stores_pred_time(self, route):
@@ -129,7 +177,7 @@ class RouteManager:
         Args:
             route (dict): Route information.
         
-        Returns:
+        Returns:    
             None.
         """
         if self.time_matrix is None:
@@ -142,10 +190,11 @@ class RouteManager:
         
         stores[0]['pred_time'] = stores[0]['sched_time']
         for prev, curr in zip(stores[:-1], stores[1:]):
-            travel_time = self.time_matrix[prev['store_id']][curr['store_id']]
+            pre_id, cur_id = prev['store_id'], curr['store_id']
+            travel_time = self.time_matrix[pre_id][cur_id]
             pre_dwell = prev['dwell_time']
             arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
-            curr['pred_time'] = arrival_time.isoformat()
+            curr['pred_time'] = arrival_time.isoformat(timespec='seconds')
 
 
     def _update_route_volume(self, route):
@@ -189,6 +238,7 @@ class RouteManager:
         Returns:
             None
         """
+        self._update_route_distance(route)
         self._update_route_time(route)
         self._update_all_stores_pred_time(route)
         self._update_route_volume(route)

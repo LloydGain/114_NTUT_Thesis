@@ -1,7 +1,9 @@
-import numpy as np
 import copy
+import numpy as np
+import hashlib
 from route import RouteManager
 from allocate_aco import StoreAllocationACO
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # np.random.seed(1234)
 
@@ -10,8 +12,10 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, population_size=10, generations=50, cross_rate=0.6, mutation_rate=1):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.6, mutation_rate=0.2):
         self.main_routes = main_routes
+        self.distance_matrix = distance_matrix
+        self.time_matrix = time_matrix
         self.population_size = population_size
         self.generations = generations
         self.cross_rate = cross_rate
@@ -19,6 +23,7 @@ class StoreExtractionGA:
         self.overloaded_routes = self._get_overloaded_routes()
         self.best_cost = float('inf')
         self.best_individual = None
+        self.fitness_cache = {}
     
 
     def _get_overloaded_routes(self):
@@ -46,7 +51,7 @@ class StoreExtractionGA:
         Returns:
             list: Selected stores for the route.
         """
-        route_manager = RouteManager(copy.deepcopy(self.main_routes))
+        route_manager = RouteManager(copy.deepcopy(self.main_routes), self.distance_matrix, self.time_matrix)
         selected_idxs = []
         selected_stores = []
         stores = self.overloaded_routes[route_id]['stores']
@@ -108,13 +113,28 @@ class StoreExtractionGA:
         Returns:
             dict: route info { dc: {...}, stores: [...] }.
         """
-        route_manager = RouteManager(copy.deepcopy(self.main_routes))
+        route_manager = RouteManager(copy.deepcopy(self.main_routes), self.distance_matrix, self.time_matrix)
         for route_id in indiviudal:
             route_manager.remove_stores(route_id, indiviudal[route_id])
         
         return route_manager.routes_info
 
     
+    def _encode_individual(self, individual):
+        """
+        Notes:
+            Generates a unique string key for an individual.
+
+        Args:
+            individual (dict): { route_id: [store1, store2, ...] }
+
+        Returns:
+            str: Unique key representing the individual
+        """
+        s = str(tuple(sorted((r, s['store_id']) for r, stores in individual.items() for s in stores)))
+        return hashlib.md5(s.encode()).hexdigest()
+
+
     def _fitness(self, individual):
         """
         Notes:
@@ -126,8 +146,14 @@ class StoreExtractionGA:
         Returns:
             float: The fitness value
         """
+        key = self._encode_individual(individual)
+        if key in self.fitness_cache:
+            return self.fitness_cache[key]
+        
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
-        fitness, _ = StoreAllocationACO(routes, stores).run()
+        fitness, _ = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix).run()
+
+        self.fitness_cache[key] = fitness
         return fitness
 
     
@@ -223,7 +249,7 @@ class StoreExtractionGA:
             dict: Updated main routes after extraction.
         """
         updated_routes = copy.deepcopy(self.main_routes)
-        route_manager = RouteManager(updated_routes)
+        route_manager = RouteManager(updated_routes, self.distance_matrix, self.time_matrix)
         for route_id, stores in individual.items():
             for store in stores:
                 route_manager.remove_store(route_id, store)
