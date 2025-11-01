@@ -10,7 +10,7 @@ class StoreAllocationACO:
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=2, rho=0.5, q=100, num_ants=20, iterations=50):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=20, iterations=50):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix

@@ -1,1 +1,2 @@
 haversine==2.9.0
+matplotlib==3.10.7

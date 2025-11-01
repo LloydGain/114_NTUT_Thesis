@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import numpy as np
 import pandas as pd
 import haversine as hs
@@ -28,7 +29,8 @@ class DataManager:
         self.dwell_info = self._load_store_dwell_time()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
-        self.distance_matrix, self.time_matrix = self._compute_cost_matrices()        
+        self.distance_matrix, self.time_matrix = self._compute_cost_matrices()    
+        self._classify_store_dist_group_and_region()    
 
 
     def _compute_cost_matrices(self):
@@ -61,6 +63,58 @@ class DataManager:
         }
 
         return dist_matrix, time_matrix
+
+
+    def _region_classification(self, lat, lng):
+        """
+        Note:
+            Classify the region of a store to DC based on coordinates.
+        
+        Args:
+            lat (float): Latitude of the store.
+            lng (float): Longitude of the store.
+
+        Returns:
+            str: Store's region.
+        """
+        dc_lat, dc_lng = self.dc['latitude'], self.dc['longitude']
+        dx = lng - dc_lng
+        dy = lat - dc_lat
+
+        theta = math.degrees(math.atan2(dy, dx)) % 360
+
+        if 315 <= theta or theta < 45:
+            region = 'east'
+        elif 45 <= theta < 135:
+            region = 'north'
+        elif 135 <= theta < 225:
+            region = 'west'
+        else:
+            region = 'south'
+
+        return region
+
+
+    def _distance_classification(self, store_id):
+        """
+        Note:
+            Classify the distance group of a store to DC.
+        
+        Args:
+            store_id (str): Store ID.
+
+        Returns:
+            str: Store's distance group.
+        """
+        dist = self.distance_matrix[self.dc['store_id']][store_id]
+        if dist <= 3:
+            group = 'near'
+        elif 3 < dist <= 5:
+            group ='mid'
+        else:
+            group ='far'
+
+        return group
 
 
     def _get_max_capacity_by_route_code(self, route_code):
@@ -194,7 +248,7 @@ class DataManager:
             route_code = str(row['車次'])
             store_id = str(int(row['ID'])) if not pd.isna(row['ID']) else None
             store_name = row['店名']
-            longitude, latitude = self._get_coordinates(store_id)
+            lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
             earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=30)).isoformat()
@@ -230,8 +284,10 @@ class DataManager:
                     "route_code": route_code,
                     "store_id": store_id,
                     "store_name": store_name,
-                    "longitude": longitude, 
-                    "latitude": latitude,
+                    "longitude": lng, 
+                    "latitude": lat,
+                    "region": "",
+                    "dist_group": "",
                     "sched_time": sched_time,
                     "earliest_time": earliest_time,
                     "latest_time": latest_time,
@@ -241,6 +297,18 @@ class DataManager:
                 })
 
         return routes_info
+
+
+    def _classify_store_dist_group_and_region(self):
+        """
+        """
+        routes = self.routes_info.values()
+        for route in routes:
+            for store in route['stores']:
+                store_group = self._distance_classification(store['store_id'])
+                store_region = self._region_classification(store['latitude'], store['longitude'])
+                store['dist_group'] = store_group
+                store['region'] = store_region
 
 
     def save_routes_to_json(self, json_file):

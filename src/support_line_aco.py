@@ -1,6 +1,7 @@
 import copy
 import random
 import numpy as np
+import math
 from datetime import datetime, timedelta
 from route import RouteManager
 
@@ -99,6 +100,55 @@ class SupportLinePlanningACO:
         }
 
 
+    def _feasible_stores(self, route, unvisited_stores):
+        """
+        Notes:
+            Determine which stores are feasible to visit next from the current route.
+        
+        Args:
+            route (dict): Current route.
+            unvisited_stores (list): List of stores unvisited.
+
+        Returns:
+            feasible (list): List of feasible next stores.
+        """
+        last_store = route['stores'][-1]
+        last_region = last_store['region']
+        last_group = last_store['dist_group']
+
+        opposite = {
+            'north': 'south',
+            'south': 'north',
+            'east': 'west',
+            'west': 'east'
+        }
+
+        feasible = []
+        for store in unvisited_stores:
+            store_region = store['region']
+            store_group = store['dist_group']
+
+            if last_group == 'far' and store_region == opposite[last_region]:
+                continue
+
+            if last_group == 'far':
+                allowed_groups = ['far', 'mid', 'near']
+            elif last_group == 'mid':
+                allowed_groups = ['mid', 'near']
+            else:
+                allowed_groups = ['near']
+
+            if store_group not in allowed_groups:
+                continue
+
+            if not self._capacity_and_time_constraints(route, store):
+                continue
+
+            feasible.append(store)
+
+        return feasible
+
+
     def _greedy_selection(self, current_store, unvisited_stores):
         """
         Notes:
@@ -150,7 +200,7 @@ class SupportLinePlanningACO:
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
-                feasible_stores = [store for store in unvisited_stores if self._capacity_and_time_constraints(route, store)]
+                feasible_stores = self._feasible_stores(route, unvisited_stores)
                 if not feasible_stores:
                     vehicle_num += 1
                     break
@@ -348,7 +398,7 @@ class SupportLinePlanningACO:
             unvisited_stores.remove(current_store)
 
             while unvisited_stores:
-                feasible_stores = [store for store in unvisited_stores if self._capacity_and_time_constraints(route, store)]
+                feasible_stores = self._feasible_stores(route, unvisited_stores)
                 if not feasible_stores:
                     vehicle_num += 1
                     break

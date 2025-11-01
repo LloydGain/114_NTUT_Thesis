@@ -17,7 +17,7 @@ def main():
 
     print("Loading route data...")
     manager = DataManager([route_file, route_network_file])
-    # manager.save_routes_to_json(original_route)
+    manager.save_routes_to_json(original_route)
     routes = copy.deepcopy(manager.routes_info)
     distance_matrix, time_matrix = manager.distance_matrix, manager.time_matrix
 

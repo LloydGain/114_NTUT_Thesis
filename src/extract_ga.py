@@ -12,7 +12,7 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.6, mutation_rate=0.2):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=20, generations=50, cross_rate=0.8, mutation_rate=0.2):
         self.main_routes = main_routes
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
@@ -282,6 +282,10 @@ class StoreExtractionGA:
         population = self._init_population()
         for i in range(self.generations):
             fitnesses = [self._fitness(individual) for individual in population]
+
+            for idx, fitness in enumerate(fitnesses):
+                print(f'individual{idx+1} -> cost = {fitness}')
+
             current_best_index = np.argmin(fitnesses)
             current_best_cost = fitnesses[current_best_index]
             current_best_individual = population[current_best_index]
