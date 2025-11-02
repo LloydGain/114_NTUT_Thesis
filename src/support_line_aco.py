@@ -10,7 +10,7 @@ class SupportLinePlanningACO:
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, ants=20, iteration=50, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=2, rho=0.3, q=100, ants=20, iteration=20, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
@@ -187,7 +187,7 @@ class SupportLinePlanningACO:
         
         vehicle_num = 101
         solution = dict()
-        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        unvisited_stores = [store.copy() for store in self.remaining_stores]
         route_manager = RouteManager(solution, self.distance_matrix, self.time_matrix)
 
         while unvisited_stores:
@@ -195,7 +195,7 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             solution[vehicle_id] = route
 
-            current_store = min(unvisited_stores, key=lambda s: self.distance_matrix['dc'][s['store_id']])
+            current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
@@ -385,7 +385,7 @@ class SupportLinePlanningACO:
 
         vehicle_num = 101
         ant_solution = dict()
-        unvisited_stores = copy.deepcopy(self.remaining_stores)
+        unvisited_stores = [store.copy() for store in self.remaining_stores]
         route_manager = RouteManager(ant_solution, self.distance_matrix, self.time_matrix)
 
         while unvisited_stores:
@@ -393,7 +393,7 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             ant_solution[vehicle_id] = route
 
-            current_store = random.choice(unvisited_stores)
+            current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 

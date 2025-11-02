@@ -28,6 +28,25 @@ class StoreAllocationACO:
         self.best_solution = None
 
 
+    def _copy_routes_info(self, routes):
+        """
+        Notes:
+            Create a shallow copy of routes info.
+        
+        Args:
+            routes (dict): Original routes info.
+
+        Returns:
+            dict: Routes Info.
+        """
+        return {
+            route_id: {
+                "dc": route_data["dc"].copy(),
+                "stores": [store.copy() for store in route_data["stores"]]
+            } for route_id, route_data in routes.items()
+        }                   
+
+
     def _get_all_stores_in_route(self):
         """
         Notes:
@@ -176,7 +195,8 @@ class StoreAllocationACO:
             solution (dict): {route_id: [store, ...]}.
         """
         unassigned_stores = []
-        route_manager = RouteManager(copy.deepcopy(self.main_routes), self.distance_matrix, self.time_matrix)
+        copy_routes = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
 
         for store in self.remaining_stores:
             assigned = False

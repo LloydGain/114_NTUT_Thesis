@@ -26,6 +26,41 @@ class StoreExtractionGA:
         self.fitness_cache = {}
     
 
+    def _copy_routes_info(self, routes):
+        """
+        Notes:
+            Create a shallow copy of routes info.
+        
+        Args:
+            routes (dict): Original routes info.
+
+        Returns:
+            dict: Routes Info.
+        """
+        return {
+            route_id: {
+                "dc": route_data["dc"].copy(),
+                "stores": [store.copy() for store in route_data["stores"]]
+            } for route_id, route_data in routes.items()
+        }
+
+
+    def _copy_individual(self, individual):
+        """
+        Notes:
+            Create a shallow copy of individual.
+        
+        Args:
+            routes (dict): Original individual.
+
+        Returns:
+            dict: Individual.
+        """
+        return {
+            route_id: [store.copy() for store in stores] for route_id, stores in individual.items()
+        }
+
+
     def _get_overloaded_routes(self):
         """
         Notes:
@@ -51,7 +86,8 @@ class StoreExtractionGA:
         Returns:
             list: Selected stores for the route.
         """
-        route_manager = RouteManager(copy.deepcopy(self.main_routes), self.distance_matrix, self.time_matrix)
+        copy_routes = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         selected_idxs = []
         selected_stores = []
         stores = self.overloaded_routes[route_id]['stores']
@@ -113,7 +149,8 @@ class StoreExtractionGA:
         Returns:
             dict: route info { dc: {...}, stores: [...] }.
         """
-        route_manager = RouteManager(copy.deepcopy(self.main_routes), self.distance_matrix, self.time_matrix)
+        copy_routes = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         for route_id in indiviudal:
             route_manager.remove_stores(route_id, indiviudal[route_id])
         
@@ -189,8 +226,8 @@ class StoreExtractionGA:
         Returns:
             tuple: Two children individuals (child1, child2).
         """
-        child1 = copy.deepcopy(parent1)
-        child2 = copy.deepcopy(parent2)
+        child1 = self._copy_individual(parent1)
+        child2 = self._copy_individual(parent2)
         
         route_ids = list(self.overloaded_routes.keys())
         
@@ -216,7 +253,7 @@ class StoreExtractionGA:
         cross = np.random.rand()
         if cross < self.cross_rate:
             return self._uniform_crossover(parent1, parent2)
-        return copy.deepcopy(parent1), copy.deepcopy(parent2)
+        return self._copy_individual(parent1), self._copy_individual(parent2)
     
 
     def _mutate(self, individual):
@@ -248,8 +285,8 @@ class StoreExtractionGA:
         Returns:
             dict: Updated main routes after extraction.
         """
-        updated_routes = copy.deepcopy(self.main_routes)
-        route_manager = RouteManager(updated_routes, self.distance_matrix, self.time_matrix)
+        copy_routes = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         for route_id, stores in individual.items():
             for store in stores:
                 route_manager.remove_store(route_id, store)
@@ -292,7 +329,7 @@ class StoreExtractionGA:
 
             if current_best_cost < self.best_cost:
                 self.best_cost = current_best_cost
-                self.best_individual = copy.deepcopy(current_best_individual)
+                self.best_individual = current_best_individual
 
             print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
 
