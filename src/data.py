@@ -3,7 +3,7 @@ import json
 import math
 import numpy as np
 import pandas as pd
-import haversine as hs
+from osrm import OSRM
 
 class DataManager:
     """
@@ -44,12 +44,13 @@ class DataManager:
         Returns:
             tuple: (distance_matrix, time_matrix)
         """
+        osm = OSRM()
         routes = self.routes_info.values()
         stores_id = [self.dc['store_id']] + [store['store_id'] for route in routes for store in route['stores']]
-        coordinates = np.array([(self.dc['latitude'], self.dc['longitude'])] + [(store['latitude'], store['longitude']) for route in routes for store in route['stores']] )
-        dist = hs.haversine_vector(coordinates, coordinates, comb=True, unit=hs.Unit.KILOMETERS)
-        dist = dist * 1.5
-        
+        coordinates = [self.dc] + [store for route in routes for store in route['stores']]
+
+        dist, time = osm.get_distance_and_time_matrix(coordinates)
+
         dist_matrix = {
             store_id: {
                 store_id_j: dist[i][j] for j, store_id_j in enumerate(stores_id)
@@ -58,7 +59,7 @@ class DataManager:
 
         time_matrix = {
             store_id: {
-                store_id_j: (dist[i][j] / self.avg_speed_kmh) * 60 for j, store_id_j in enumerate(stores_id)
+                store_id_j: time[i][j] for j, store_id_j in enumerate(stores_id)
             } for i, store_id in enumerate(stores_id)
         }
 
@@ -251,7 +252,7 @@ class DataManager:
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
-            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=30)).isoformat()
+            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=1)).isoformat()
             latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(hours=1)).isoformat()
             pred_time = pd.to_datetime(row['預定時間']).isoformat()
             volume = row['貨量']

@@ -5,6 +5,7 @@ from route import RouteManager
 from extract_ga import StoreExtractionGA
 from allocate_aco import StoreAllocationACO
 from support_line_aco import SupportLinePlanningACO
+from display_routes import DisplayRoutes
 
 
 def main():
@@ -12,6 +13,8 @@ def main():
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     original_route = '../output/original_routes_info.json'
     optimized_route_file = '../output/optimized_routes_info.json'
+
+# -----------------------------------------------------------------------------------
 
     start_time = time.time()
 
@@ -29,8 +32,8 @@ def main():
     start_time = time.time()
 
     print("Starting Store Extraction using GA...")
-    store_extractor = StoreExtractionGA(routes, distance_matrix, time_matrix)
-    main_routes, extracted_stores = store_extractor.run()
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix)
+    main_routes, extracted_stores = store_extract.run()
 
     end_time = time.time()
     print(f"店鋪抽取執行時間: {end_time - start_time:.2f} 秒")
@@ -40,24 +43,46 @@ def main():
     start_time = time.time()
 
     print("Starting Store Allocation using ACO...")
-    store_allocator = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix)
-    best_cost, best_solution = store_allocator.run()
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix)
+    allocate_cost, main_routes, remaining_stores = store_allocate.run()
 
     end_time = time.time()
     print(f"店鋪再分配執行時間: {end_time - start_time:.2f} 秒")
 
 # -----------------------------------------------------------------------------------
 
+    start_time = time.time()
+
+    print("Starting Support Line Planning using ACO...")
+    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix)
+    support_cost, support_routes = support.run()
+
+    end_time = time.time()
+    print(f"支援線規劃執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
+
+    total_cost = allocate_cost + support_cost
+    optimized_routes = {**support_routes, **main_routes}
+
+# -----------------------------------------------------------------------------------
+
     total_stores = 0
-    for vehicle_id, vehicle in best_solution.items():
+    for vehicle_id, vehicle in optimized_routes.items():
         total_stores += len(vehicle['stores'])
         print(f"Vehicle {vehicle_id}: {len(vehicle['stores'])} stores -> load_rate: {vehicle['dc']['load_rate']}")
-    print(f"Total Cost: {best_cost}")
-    print(f"Total Vehicle Num: {len(best_solution)}")
+    print(f"Total Cost: {total_cost}")
+    print(f"Total Vehicle Num: {len(optimized_routes)}")
     print(f"Total Store: {total_stores}")
 
-    route_manager = RouteManager(best_solution)
+    route_manager = RouteManager(optimized_routes)
     route_manager._export_routes_info(optimized_route_file)
+
+# -----------------------------------------------------------------------------------
+
+    dis_routes = DisplayRoutes(optimized_route_file)
+    dis_routes.show_optimized_result()
+    dis_routes.plot_routes()
 
 
 if __name__ == "__main__":

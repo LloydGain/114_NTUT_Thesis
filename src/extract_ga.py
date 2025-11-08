@@ -1,9 +1,8 @@
-import copy
 import numpy as np
 import hashlib
 from route import RouteManager
 from allocate_aco import StoreAllocationACO
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from support_line_aco import SupportLinePlanningACO
 
 # np.random.seed(1234)
 
@@ -13,9 +12,9 @@ class StoreExtractionGA:
         Genetic Algorithm for Store Extraction.
     """
     def __init__(self, main_routes, distance_matrix, time_matrix, population_size=20, generations=50, cross_rate=0.8, mutation_rate=0.2):
-        self.main_routes = main_routes
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
+        self.main_routes = self._routes(main_routes)
         self.population_size = population_size
         self.generations = generations
         self.cross_rate = cross_rate
@@ -25,6 +24,25 @@ class StoreExtractionGA:
         self.best_individual = None
         self.fitness_cache = {}
     
+
+    def _routes(self, routes):
+        """
+        Notes:
+            Update route info.
+
+        Args:
+            routes (dict): Original routes info.
+
+        Returns:
+            routes (dict): Updated routes info.
+        """
+
+        route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
+        for route_id in routes:
+            route_manager._update_route_info(routes[route_id])
+        
+        return routes
+
 
     def _copy_routes_info(self, routes):
         """
@@ -168,7 +186,8 @@ class StoreExtractionGA:
         Returns:
             str: Unique key representing the individual
         """
-        s = str(tuple(sorted((r, s['store_id']) for r, stores in individual.items() for s in stores)))
+        store_set = sorted([s['store_id'] for stores in individual.values() for s in stores])
+        s = ','.join(map(str, store_set))
         return hashlib.md5(s.encode()).hexdigest()
 
 
@@ -188,8 +207,10 @@ class StoreExtractionGA:
             return self.fitness_cache[key]
         
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
-        fitness, _ = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix).run()
+        allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix).run()
+        support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix).run()
 
+        fitness = allocate_cost + support_cost
         self.fitness_cache[key] = fitness
         return fitness
 
@@ -319,7 +340,7 @@ class StoreExtractionGA:
         population = self._init_population()
         for i in range(self.generations):
             fitnesses = [self._fitness(individual) for individual in population]
-
+            print(len(self.fitness_cache))
             for idx, fitness in enumerate(fitnesses):
                 print(f'individual{idx+1} -> cost = {fitness}')
 

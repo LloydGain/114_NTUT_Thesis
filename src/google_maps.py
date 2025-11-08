@@ -1,6 +1,5 @@
 import os
 import requests
-import numpy as np
 from dotenv import load_dotenv
 
 class GoogleRoutesAPI:
