@@ -1,5 +1,5 @@
-import numpy as np
 import hashlib
+import numpy as np
 from route import RouteManager
 from allocate_aco import StoreAllocationACO
 from support_line_aco import SupportLinePlanningACO
@@ -11,7 +11,7 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=20, generations=50, cross_rate=0.8, mutation_rate=0.2):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.8, mutation_rate=0.2):
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)

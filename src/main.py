@@ -43,7 +43,7 @@ def main():
     start_time = time.time()
 
     print("Starting Store Allocation using ACO...")
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix)
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, num_ants=10, iterations=100)
     allocate_cost, main_routes, remaining_stores = store_allocate.run()
 
     end_time = time.time()
@@ -54,7 +54,7 @@ def main():
     start_time = time.time()
 
     print("Starting Support Line Planning using ACO...")
-    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix)
+    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, num_ants=10, iterations=100)
     support_cost, support_routes = support.run()
 
     end_time = time.time()

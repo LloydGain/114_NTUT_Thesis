@@ -1,5 +1,5 @@
-import copy
 import random
+import hashlib
 import numpy as np
 from datetime import datetime, timedelta
 from route import RouteManager
@@ -10,7 +10,7 @@ class StoreAllocationACO:
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=20, iterations=50):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=10, iterations=20):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -26,7 +26,8 @@ class StoreAllocationACO:
         self.pheromone_matrix = dict()
         self.best_cost = float('inf')
         self.best_solution = None
-
+        self.best_remaining_solution = None
+        self.cost_cache = {}
 
     def _copy_routes_info(self, routes):
         """
@@ -47,21 +48,50 @@ class StoreAllocationACO:
         }                   
 
 
-    def _get_all_stores_in_route(self):
+    def _heuristic(self, cost):
         """
         Notes:
-            Get all stores in the main routes.
+            Get heuristic information between store and route.
 
         Args:
-            None.
+            cost (float): The store cost.
 
         Returns:
-            list: All stores in the main routes.
+            float: Heuristic value (1 / cost).
         """
-        all_stores = []
-        for route_info in self.main_routes.values():
-            all_stores.extend(route_info['stores'])
-        return all_stores
+        return 1 / cost
+        
+
+    def _pheromone(self, store, route_id):
+        """
+        Notes:
+            Get pheromone value between store and route.
+        
+        Args:
+            store (dict): The current store.
+            route_id (str): The candidate route.
+        
+        Returns:
+            float: The pheromone value.
+        """
+        return self.pheromone_matrix[store['store_id']][route_id]
+
+
+    def _transition_value(self, store, route_id, cost):
+        """
+        Notes:
+            Calculate the transition value for moving from current_store to next_store.
+        
+        Args:
+            store (dict): The current store.
+            route_id (str): The candidate route.
+
+        Returns:
+            float: The transition value.
+        """
+        tau = self._pheromone(store, route_id)
+        eta = self._heuristic(cost)
+        return (tau ** self.alpha) * (eta ** self.beta)
 
 
     def _check_volume_constraint(self, store, route_volume, max_capacity):
@@ -167,18 +197,18 @@ class StoreAllocationACO:
         if not self._check_volume_constraint(store, route_volume, route_max_capacity):
             return -1, -1
 
-        min_cost = float('inf')
         best_pos = -1
+        min_cost = float('inf')
 
         prev_store = self.dc
         route = [self.dc] + stores + [self.dc]
-        for pos in range(1, len(route)):
-            prev_store, next_store = route[pos - 1], route[pos]
+        for pos, (prev_store, next_store) in enumerate(zip(route, route[1:]), start=1):
             prev_id, next_id, store_id = prev_store['store_id'], next_store['store_id'], store['store_id']
-            insert_cost = self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id]
-            
-            if insert_cost < min_cost and self._check_time_constraint(route, pos, store):
-                min_cost, best_pos = insert_cost, (pos - 1)
+            insert_cost = (self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id])
+
+            if insert_cost < min_cost and insert_cost > 0 and self._check_time_constraint(route, pos, store):
+                best_pos = pos - 1
+                min_cost = insert_cost
 
         return min_cost, best_pos
         
@@ -194,6 +224,7 @@ class StoreAllocationACO:
         Returns:
             solution (dict): {route_id: [store, ...]}.
         """
+        solutions = {}
         unassigned_stores = []
         copy_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
@@ -215,82 +246,135 @@ class StoreAllocationACO:
             else:
                 unassigned_stores.append(store)
 
-        return route_manager.routes_info, unassigned_stores
+            solutions[store['store_id']] = best_route_id
+
+        return route_manager.routes_info, solutions, unassigned_stores
 
 
-    def _cost_function(self, routes):
+    def _encode_stores(self, stores):
+        """
+        """
+        store_set = sorted([store['store_id'] for store in stores])
+        s = ','.join(map(str, store_set))
+        return hashlib.md5(s.encode()).hexdigest()
+
+
+    def _cost_function(self, routes, remaining_stores):
         """
         Notes:
             Calculate the cost of a solution.
         
         Args:
-            solution (dict): { dc: {...}, stores: [...] }.
+            routes (dict): { dc: {...}, stores: [...] }.
+            remaining_stores (list): [store1, store2, ...].
         
         Returns:
             cost (float): Total cost of the solution.
         """
-        total_cost = 0
-
+        greedy_cost = 0        
         for _, route_info in routes.items():
             prev_store = self.dc
             for store in route_info['stores']:
-                total_cost += self.distance_matrix[prev_store['store_id']][store['store_id']]
+                greedy_cost += self.distance_matrix[prev_store['store_id']][store['store_id']]
                 prev_store = store
-            total_cost += self.distance_matrix[prev_store['store_id']][self.dc['store_id']]
+            greedy_cost += self.distance_matrix[prev_store['store_id']][self.dc['store_id']]
 
-        return total_cost
+        key = self._encode_stores(remaining_stores)
 
-
-    # def _initial_pheromone(self, cost):
-    #     """
-    #     Notes:
-    #         Initialize pheromone levels based on initial cost.
-
-    #     Args:
-    #         cost (float): Initial cost.
-
-    #     Returns:
-    #         None.
-    #     """
-    #     initial_pheromone = self.q / cost
-    #     all_stores = self._get_all_stores_in_route() + self.remaining_stores
-    #     for s in all_stores:
-    #         self.pheromone_matrix[s['store_id']] = {
-    #             store['store_id']: initial_pheromone for store in all_stores if store['store_id'] != s['store_id']
-    #         }
-
-
-    # def _construct_solution(self):
-    #     """
-    #     Notes:
-    #         Construct a solution for store allocation.
-
-    #     Args:
-    #         None.
+        if key not in self.cost_cache:
+            support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix).run()
+            self.cost_cache[key] = support_cost
+        else:
+            support_cost = self.cost_cache[key]
         
-    #     Returns:
-    #         solution (dict): { dc: {...}, stores: [...] }.
-    #     """
-    #     unvisited_stores = copy.deepcopy(self.remaining_stores)
-    #     route_manager = RouteManager(copy.deepcopy(self.main_routes))
+        return greedy_cost + support_cost
 
 
-    def _combine_solutions(self, main_routes, support_solution):
+    def _initial_pheromone(self, cost):
         """
         Notes:
-            Combine main routes and support line solutions.
+            Initialize pheromone levels based on initial cost.
 
         Args:
-            main_routes (dict): { dc: {...}, stores: [...] }.
-            support_solution (dict): { dc: {...}, stores: [...] }.
+            cost (float): Initial cost.
 
         Returns:
-            combined_solution (dict): Combined solution { dc: {...}, stores: [...] }.
+            None.
         """
-        return {**support_solution, **main_routes}
+        initial_pheromone = self.q / cost
+        for store in self.remaining_stores:
+            store_id = store['store_id']
+            self.pheromone_matrix[store_id] = {}
+        
+            for route_id in self.main_routes.keys():
+                self.pheromone_matrix[store_id][route_id] = initial_pheromone
 
 
-    # def _update_pheromone(self, cost):
+    def _solution_construct(self):
+        """
+        Construct a solution for store allocation using ACO.
+
+        Returns:
+            route_manager.routes_info: dict of routes with assigned stores
+            solution: dict {store_id: route_id} for assigned stores
+            unassigned_stores: list of stores that couldn't be assigned
+        """
+        solutions = {}
+        unassigned_stores = []
+        copy_routes = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
+
+        stores_to_assign = self.remaining_stores[:]
+        random.shuffle(stores_to_assign)
+
+        for store in stores_to_assign:
+            feasible_routes = []
+            for route_id, route_info in route_manager.routes_info.items():
+                cost, pos = self._get_store_insertion_cost_and_pos(route_info, store)
+                if pos != -1:
+                    feasible_routes.append((route_id, cost, pos))
+
+            if not feasible_routes:
+                unassigned_stores.append(store)
+                continue
+
+            probabilities = []
+            for route_id, cost, pos in feasible_routes:
+                prob = self._transition_value(store, route_id, cost)
+                probabilities.append(prob)
+            probabilities = np.array(probabilities)
+            probabilities[probabilities < 1e-12] = 1e-12
+            probabilities /= probabilities.sum()
+
+            selected = random.choices(feasible_routes, weights=probabilities, k=1)[0]
+            selected_route, _, selected_pos = selected
+            route_manager.insert_store(store, selected_route, selected_pos)
+            solutions[store['store_id']] = selected_route
+
+        return route_manager.routes_info, solutions, unassigned_stores
+
+
+    def _update_pheromone(self, solution, cost):
+        """
+        Notes:
+            Update pheromone based on the solution.
+
+        Args:
+            solution (dict): The solution found by an ant.
+            cost (float): The cost of the solution.
+
+        Returns:
+            None.
+        """
+        delta = self.q / cost
+        
+        for store_id in self.pheromone_matrix:
+            for route_id in self.pheromone_matrix[store_id]:
+                self.pheromone_matrix[store_id][route_id] *= (1 - self.rho)
+
+        for store_id in solution:
+            route_id = solution[store_id]
+            self.pheromone_matrix[store_id][route_id] += delta
 
 
     def run(self):
@@ -298,30 +382,21 @@ class StoreAllocationACO:
         Notes:
             Execute the ACO algorithm for store allocation.
         """
-        greedy_routes, remaining_stores = self._greedy_solution()
-        greedy_cost = self._cost_function(greedy_routes)
-        
-        support_line = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix)
-        support_cost, support_solution = support_line.run()
+        greedy_routes, _, remaining_stores = self._greedy_solution()
+        greedy_cost = self._cost_function(greedy_routes, remaining_stores)
+        self._initial_pheromone(greedy_cost)
+        self.best_cost = greedy_cost
+        self.best_solution = greedy_routes
+        self.best_remaining_solution = remaining_stores
 
-        initial_cost = greedy_cost + support_cost
-        # self._initial_pheromone(initial_cost)
+        for _ in range(self.iterations):
+            for _ in range(self.num_ants):
+                ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
+                ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
+                if ant_cost < self.best_cost:
+                    self.best_cost = ant_cost
+                    self.best_solution = ant_routes
+                    self.best_remaining_solution = ant_remaining_stores
+                self._update_pheromone(ant_solution, ant_cost)
 
-        return initial_cost, self._combine_solutions(greedy_routes, support_solution)
-
-        # for _ in range(self.iterations):
-        #     for _ in range(self.num_ants):
-        #         ant_routes, ant_remaining_stores = self._construct_solution()
-        #         support_line = SupportLinePlanningACO(ant_remaining_stores)
-        #         support_cost, support_solution = support_line.run()
-        #         ant_cost = self._cost_function(ant_routes)
-        #         ant_cost = ant_cost + support_cost
-
-        #         ant_solution = self._combine_solutions(ant_routes, support_solution)
-
-        #         if ant_cost < self.best_cost:
-        #             self.best_cost = ant_cost
-        #             self.best_solution = ant_solution
-        #         self._update_pheromone(ant_cost)
-
-        # return self.best_cost, self.best_solution
+        return self.best_cost, self.best_solution, self.best_remaining_solution

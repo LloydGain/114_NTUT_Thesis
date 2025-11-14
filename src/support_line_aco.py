@@ -1,7 +1,5 @@
-import copy
 import random
 import numpy as np
-import math
 from datetime import datetime, timedelta
 from route import RouteManager
 
@@ -10,15 +8,15 @@ class SupportLinePlanningACO:
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=2, rho=0.3, q=100, ants=20, iteration=20, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=10, iterations=10, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
         self.beta = beta
         self.rho = rho
         self.q = q
-        self.ants = ants
-        self.iteration = iteration
+        self.num_ants = num_ants
+        self.iterations = iterations
         self.support_capacity = support_capacity
         self.pheromone_matrix = dict()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
@@ -195,6 +193,7 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             solution[vehicle_id] = route
 
+            # current_store = max(unvisited_stores, key=lambda store: store['volume'])
             current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
@@ -393,6 +392,7 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             ant_solution[vehicle_id] = route
 
+            # current_store = max(unvisited_stores, key=lambda store: store['volume'])
             current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
@@ -453,8 +453,8 @@ class SupportLinePlanningACO:
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
         self._initial_pheromone(greedy_cost)
-        for i in range(self.iteration):
-            for _ in range(self.ants):
+        for i in range(self.iterations):
+            for j in range(self.num_ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
 
@@ -464,5 +464,5 @@ class SupportLinePlanningACO:
                 
                 self._update_pheromone(ant_solution, ant_cost)
             
-            # print(f'iteration{i+1} -> best cost = {self.best_cost}')
+                # print(f'iteration{i+1}| ant{j+1} ->  cost = {ant_cost}')
         return self.best_cost, self.best_solution
