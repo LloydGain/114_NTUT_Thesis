@@ -1,9 +1,8 @@
 import os
 import json
 import math
-import numpy as np
 import pandas as pd
-from osrm import OSRM
+from api.osrm import OSRM
 
 class DataManager:
     """
@@ -23,7 +22,6 @@ class DataManager:
 
     def __init__(self, excel_files):
         self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
-        self.avg_speed_kmh = 40
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()

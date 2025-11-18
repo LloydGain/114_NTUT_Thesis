@@ -1,7 +1,7 @@
 import hashlib
 import numpy as np
 from route import RouteManager
-from allocate_aco import StoreAllocationACO
+from route.allocate_aco import StoreAllocationACO
 from support_line_aco import SupportLinePlanningACO
 
 # np.random.seed(1234)

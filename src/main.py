@@ -1,11 +1,14 @@
 import copy
 import time
-from data import DataManager
-from route import RouteManager
-from extract_ga import StoreExtractionGA
-from allocate_aco import StoreAllocationACO
-from support_line_aco import SupportLinePlanningACO
-from display_routes import DisplayRoutes
+from data.data import DataManager
+from route.route import RouteManager
+from route.extract_ga import StoreExtractionGA
+from route.allocate_aco import StoreAllocationACO
+from route.support_line_aco import SupportLinePlanningACO
+from eval.display_routes import DisplayRoutes
+
+# 1. 目前 GA 的搜尋能力有待加強，都不太會變
+# 2. 支援線會有往返的情況發生要解決
 
 
 def main():
