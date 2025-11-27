@@ -4,16 +4,10 @@ import math
 import pandas as pd
 from api.osrm import OSRM
 
-class DataManager:
+class ODataManager:
     """
     Notes:
         Load route-related data from source files.
-    
-    Args:
-        excel_files (list): Source files (Route information, Dwell information).
-    
-    Returns:
-        None.
     """
     _DC_CENTER = "DC"
     _ROUTE_DATA_SHEET = 0
@@ -21,47 +15,15 @@ class DataManager:
     _STORE_COORD_SHEET = 2
 
     def __init__(self, excel_files):
+        osrm = OSRM()
         self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
-        self.distance_matrix, self.time_matrix = self._compute_cost_matrices()    
+        self.distance_matrix, self.time_matrix = osrm._compute_cost_matrices(self.routes_info)
         self._classify_store_dist_group_and_region()    
-
-
-    def _compute_cost_matrices(self):
-        """
-        Notes:
-            Compute distance and time matrices.
-
-        Args:
-            None.
-        
-        Returns:
-            tuple: (distance_matrix, time_matrix)
-        """
-        osm = OSRM()
-        routes = self.routes_info.values()
-        stores_id = [self.dc['store_id']] + [store['store_id'] for route in routes for store in route['stores']]
-        coordinates = [self.dc] + [store for route in routes for store in route['stores']]
-
-        dist, time = osm.get_distance_and_time_matrix(coordinates)
-
-        dist_matrix = {
-            store_id: {
-                store_id_j: dist[i][j] for j, store_id_j in enumerate(stores_id)
-            } for i, store_id in enumerate(stores_id)
-        }
-
-        time_matrix = {
-            store_id: {
-                store_id_j: time[i][j] for j, store_id_j in enumerate(stores_id)
-            } for i, store_id in enumerate(stores_id)
-        }
-
-        return dist_matrix, time_matrix
 
 
     def _region_classification(self, lat, lng):

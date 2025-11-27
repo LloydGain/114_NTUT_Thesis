@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timedelta
+from api.google_maps import GoogleRoutesAPI
 
 class RouteManager:
     """
@@ -245,7 +246,28 @@ class RouteManager:
         self._update_route_load_rate(route)
     
 
-    def _export_routes_info(self, json_file='optimized_routes_info.json'):
+    # def compute_route_via_routes_api(self):
+    #     """
+    #     Notes:
+    #         Compute route distance and duration via Google Maps Routes API.
+
+    #     Args:
+    #         None.
+
+    #     Returns:
+    #         None.
+    #     """
+    #     routes_api = GoogleRoutesAPI()
+
+    #     for _, route in self.routes_info.items():
+    #         waypoints = route['stores']
+    #         distance, duration = routes_api.compute_route(waypoints)
+    #         route['dc']['distance'] = distance
+    #         route['dc']['duration'] = duration
+    #     # pred_time update
+        
+
+    def export_routes_info(self, json_file='optimized_routes_info.json'):
         """
         Notes:
             Save route data to a JSON file.

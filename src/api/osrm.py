@@ -8,6 +8,7 @@ class OSRM:
         """
         self.OSRM_URL = url
     
+
     def get_distance_and_time_matrix(self, stores):
         """
         Notes:
@@ -34,3 +35,35 @@ class OSRM:
             return distances, durations
         else:
             raise ValueError(f'OSRM table query failed.')
+    
+
+    def _compute_cost_matrices(self, routes_info):
+        """
+        Notes:
+            Compute distance and time matrices.
+
+        Args:
+            routes_info (dict): Route information.
+        
+        Returns:
+            tuple: (distance_matrix, time_matrix)
+        """
+        routes = routes_info.values()
+        stores_id = [self.dc['store_id']] + [store['store_id'] for route in routes for store in route['stores']]
+        coordinates = [self.dc] + [store for route in routes for store in route['stores']]
+
+        dist, time = self.get_distance_and_time_matrix(coordinates)
+
+        dist_matrix = {
+            store_id: {
+                store_id_j: dist[i][j] for j, store_id_j in enumerate(stores_id)
+            } for i, store_id in enumerate(stores_id)
+        }
+
+        time_matrix = {
+            store_id: {
+                store_id_j: time[i][j] for j, store_id_j in enumerate(stores_id)
+            } for i, store_id in enumerate(stores_id)
+        }
+
+        return dist_matrix, time_matrix

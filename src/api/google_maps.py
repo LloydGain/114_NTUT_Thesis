@@ -135,9 +135,11 @@ class GoogleRoutesAPI:
         Returns:
             tuple: (distance in km, duration in seconds).
         """
+        dc_latlng = { "latitude": self.dc["latitude"], "longitude": self.dc["longitude"]}
+
         body = {
-            "origin": {'location': {'latLng' : self.dc}},
-            "destination": {'location': {'latLng' : self.dc}},
+            "origin": {'location': {'latLng' : dc_latlng}},
+            "destination": {'location': {'latLng' : dc_latlng}},
             "intermediates": [{'location': {'latLng' : {'latitude': wp['latitude'], 'longitude': wp['longitude']}}} for wp in waypoints],
             "travelMode": travel_mode
         }
@@ -155,5 +157,6 @@ class GoogleRoutesAPI:
 
         data = response.json()
         distance, duration = self.distance_meter_to_km(data['routes'][0]['distanceMeters']), self.parse_duration(data['routes'][0]['duration'])
+        duration += sum(wp['dwell_time'] for wp in waypoints)
 
         return distance, duration
