@@ -19,6 +19,7 @@ class MDataManager:
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
+        self.stores_id = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_manual_routes()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix  
@@ -41,6 +42,20 @@ class MDataManager:
             return 10
         else:
             return 7.2
+
+
+    def _get_store_id_by_route_code(self, route_code):
+        """
+        Notes:
+            Get the store ID based on the route code.
+
+        Args:
+            route_code (str): Route code.
+
+        Returns:
+            str: Store ID.
+        """
+        return self.stores_id.get(route_code, None)
 
 
     def _get_coordinates(self, store_id):
@@ -137,6 +152,21 @@ class MDataManager:
         return stores_info
 
 
+    def _load_store_id(self):
+        """
+        """
+        stores_id = {}
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
+
+        for _, row in stores_df.iterrows():
+            route_code = row['車次']
+            if len(str(route_code)) > 2:
+                store_id = str(row['ID'])
+                stores_id[route_code] = store_id
+
+        return stores_id
+
+
     def _load_manual_routes(self):
         """
         Notes:
@@ -153,7 +183,7 @@ class MDataManager:
         i = 0
         for _, row in routes_df.iterrows():
             route_code = str(row['車次'])
-            store_id = str(int(row['ID'])) if not pd.isna(row['ID']) else None
+            store_id = self._get_store_id_by_route_code(route_code)
             store_name = row['店名']
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
