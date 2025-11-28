@@ -7,6 +7,7 @@ class OSRM:
             Initialize the OSRM with a server URL.
         """
         self.OSRM_URL = url
+        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
     
 
     def get_distance_and_time_matrix(self, stores):

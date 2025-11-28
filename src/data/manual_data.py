@@ -1,8 +1,7 @@
 import os
 import json
-import math
 import pandas as pd
-from api.osrm import OSRM
+from route.route import RouteManager
 
 class MDataManager:
     """
@@ -12,6 +11,7 @@ class MDataManager:
     _DC_CENTER = "DC"
     _ROUTE_DATA_SHEET = 0
     _DWELL_TIME_SHEET = 1
+    _STORE_ID_SHEET = 1
     _STORE_COORD_SHEET = 2
 
     def __init__(self, excel_files, distance_matrix, time_matrix):
@@ -22,7 +22,8 @@ class MDataManager:
         self.stores_id = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_manual_routes()
-        self.distance_matrix, self.time_matrix = distance_matrix, time_matrix  
+        self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
+        self._update_routes_info()
 
 
     def _get_max_capacity_by_route_code(self, route_code):
@@ -154,14 +155,22 @@ class MDataManager:
 
     def _load_store_id(self):
         """
+        Notes:
+            Load store IDs from an Excel file into dict.
+        
+        Args:
+            None.
+        
+        Returns:
+            dict: stores ID with route code as key.
         """
         stores_id = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_ID_SHEET, skiprows=0)
 
         for _, row in stores_df.iterrows():
             route_code = row['車次']
             if len(str(route_code)) > 2:
-                store_id = str(row['ID'])
+                store_id = str(int(row['ID']) if not pd.isna(row['ID']) else None)
                 stores_id[route_code] = store_id
 
         return stores_id
@@ -180,7 +189,9 @@ class MDataManager:
         """
         routes_info = {}
         routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, skiprows=3)
-        i = 0
+        
+        update_main_route = True
+        main_route_code = None
         for _, row in routes_df.iterrows():
             route_code = str(row['車次'])
             store_id = self._get_store_id_by_route_code(route_code)
@@ -194,13 +205,22 @@ class MDataManager:
             volume = row['貨量']
             load_rate = row['裝載率']
 
-            main_route_code = route_code[:2]
+            if main_route_code is None:
+                main_route_code = route_code[:3] if route_code.isdigit() else route_code[:2]
+
+            if update_main_route:
+                main_route_code = route_code[:3] if route_code.isdigit() else route_code[:2]
+                update_main_route = False
+
+            if self._DC_CENTER in route_code:
+                update_main_route = True
+
             max_capacity = self._get_max_capacity_by_route_code(main_route_code)
 
             if main_route_code not in routes_info:
                 routes_info[main_route_code] = {"dc" : None, "stores": []}
 
-            if self._DC_CENTER not in route_code and len(route_code) == 2:
+            if self._DC_CENTER not in route_code and len(route_code) < 4:
                 routes_info[main_route_code]["dc"] = {
                     "route_id": main_route_code,
                     "route_code": route_code,
@@ -213,9 +233,6 @@ class MDataManager:
                     "duration": 0
                 }
             elif self._DC_CENTER not in route_code:
-                if dwell_time == 0:
-                    i += 1
-                    print(f"Route Code: {route_code}, store ID: {store_id}, store Name: {store_name}")
                 routes_info[main_route_code]["stores"].append({
                     "route_id": main_route_code,
                     "route_code": route_code,
@@ -223,8 +240,6 @@ class MDataManager:
                     "store_name": store_name,
                     "longitude": lng, 
                     "latitude": lat,
-                    "region": "",
-                    "dist_group": "",
                     "sched_time": sched_time,
                     "earliest_time": earliest_time,
                     "latest_time": latest_time,
@@ -234,6 +249,21 @@ class MDataManager:
                 })
 
         return routes_info
+
+
+    def _update_routes_info(self):
+        """
+        Notes:
+            Update route information.
+
+        Args:
+            route (dict): Route information.
+
+        Returns:
+            None.
+        """
+        route_manager = RouteManager(self.routes_info, self.distance_matrix, self.time_matrix)
+        route_manager._update_all_routes_info()
 
 
     def save_routes_to_json(self, json_file):

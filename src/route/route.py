@@ -246,6 +246,21 @@ class RouteManager:
         self._update_route_load_rate(route)
     
 
+    def _update_all_routes_info(self):
+        """
+        Notes:
+            Update route information for all routes.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
+        for _, route in self.routes_info.items():
+            self._update_route_info(route)
+
+
     # def compute_route_via_routes_api(self):
     #     """
     #     Notes:
