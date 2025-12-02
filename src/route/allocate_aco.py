@@ -2,15 +2,15 @@ import random
 import hashlib
 import numpy as np
 from datetime import datetime, timedelta
-from route import RouteManager
-from support_line_aco import SupportLinePlanningACO
+from route.route import RouteManager
+from route.support_line_aco import SupportLinePlanningACO
 
 class StoreAllocationACO:
     """
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=10, iterations=20):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.2, q=1, num_ants=10, iterations=20):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -28,6 +28,7 @@ class StoreAllocationACO:
         self.best_solution = None
         self.best_remaining_solution = None
         self.cost_cache = {}
+
 
     def _copy_routes_info(self, routes):
         """
@@ -94,6 +95,26 @@ class StoreAllocationACO:
         return (tau ** self.alpha) * (eta ** self.beta)
 
 
+    def _check_region_constraint(self, store, dc):
+        """
+        Notes:
+            Check if a store is not within the opposite region.
+            
+        Args:
+            store (dict): Store information.
+            dc (dict): DC information.
+        
+        Returns:
+            bool: True if region constraint is satisfied, False otherwise.
+        """
+        opposite = {'north': 'south', 'south': 'north', 'east': 'west', 'west': 'east'}
+
+        if store['region'] == opposite[dc['region']]:
+            return False
+        
+        return True
+
+
     def _check_volume_constraint(self, store, route_volume, max_capacity):
         """
         Notes:
@@ -108,6 +129,50 @@ class StoreAllocationACO:
             bool: True if capacity constraint is satisfied, False otherwise.
         """
         return (route_volume + store['volume']) <= max_capacity
+
+
+    def _is_angle_valid(self, prev_store, next_store, new_store):
+        """
+        Notes:
+            Check if the angle formed by (Prev -> New) and (Prev -> Next) is valid.
+
+        Args:
+            prev_store (dict): Previous store information.
+            next_store (dict): Next store information.
+            new_store (dict): New store information.
+
+        Returns:
+            bool: True if angle is valid, False otherwise.
+        """
+        prev_id = prev_store['store_id']
+        new_id = new_store['store_id']
+        next_id = next_store['store_id']
+        max_deviation = 30
+
+        dist_to_new = self.distance_matrix[prev_id][new_id] + self.distance_matrix[new_id][next_id] - self.distance_matrix[prev_id][next_id]
+        if dist_to_new < 1: 
+            max_deviation = 60
+
+        vec_AC = np.array([
+            new_store['longitude'] - prev_store['longitude'], 
+            new_store['latitude'] - prev_store['latitude']
+        ])
+
+        vec_CB = np.array([
+            new_store['longitude'] - next_store['longitude'], 
+            new_store['latitude'] - next_store['latitude']
+        ])
+
+        norm_AC = np.linalg.norm(vec_AC)
+        norm_CB = np.linalg.norm(vec_CB)
+
+        if norm_AC == 0 or norm_CB == 0:
+            return True
+
+        cos_theta = np.dot(vec_AC, vec_CB) / (norm_AC * norm_CB)
+        cos_threshold = np.cos(np.radians(180 - max_deviation))
+
+        return cos_theta <= cos_threshold
 
 
     def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
@@ -194,6 +259,9 @@ class StoreAllocationACO:
         route_volume = dc['total_volume']
         route_max_capacity = dc['max_capacity']
 
+        if not self._check_region_constraint(store, dc):
+            return -1, -1
+
         if not self._check_volume_constraint(store, route_volume, route_max_capacity):
             return -1, -1
 
@@ -205,6 +273,9 @@ class StoreAllocationACO:
         for pos, (prev_store, next_store) in enumerate(zip(route, route[1:]), start=1):
             prev_id, next_id, store_id = prev_store['store_id'], next_store['store_id'], store['store_id']
             insert_cost = (self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id])
+
+            if not self._is_angle_valid(prev_store, next_store, store):
+                continue
 
             if insert_cost < min_cost and insert_cost > 0 and self._check_time_constraint(route, pos, store):
                 best_pos = pos - 1
@@ -282,7 +353,7 @@ class StoreAllocationACO:
         key = self._encode_stores(remaining_stores)
 
         if key not in self.cost_cache:
-            support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix).run()
+            support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
             self.cost_cache[key] = support_cost
         else:
             support_cost = self.cost_cache[key]

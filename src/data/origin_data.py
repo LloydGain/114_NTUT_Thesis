@@ -23,6 +23,7 @@ class ODataManager:
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
         self.distance_matrix, self.time_matrix = osrm._compute_cost_matrices(self.routes_info)
+        self._classify_route_dist_group_and_region()
         self._classify_store_dist_group_and_region()    
 
 
@@ -212,8 +213,8 @@ class ODataManager:
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
-            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=1)).isoformat()
-            latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(hours=1)).isoformat()
+            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=60)).isoformat()
+            latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(minutes=30)).isoformat()
             pred_time = pd.to_datetime(row['預定時間']).isoformat()
             volume = row['貨量']
             load_rate = row['裝載率']
@@ -233,6 +234,7 @@ class ODataManager:
                     "total_volume": volume,
                     "load_rate": load_rate,
                     "max_capacity": max_capacity,
+                    "region": "",
                     "distance": 0,
                     "duration": 0
                 }
@@ -260,8 +262,37 @@ class ODataManager:
         return routes_info
 
 
+    def _classify_route_dist_group_and_region(self):
+        """
+        Notes:
+            Classify distance group and region for each route in routes_info.
+        
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
+        for route in self.routes_info.values():
+            dc = route['dc']
+            stores = route['stores']
+            store_num = len(stores)
+            route_lat = sum(store['latitude'] for store in stores) / store_num
+            route_lng = sum(store['longitude'] for store in stores) / store_num
+            route_region = self._region_classification(route_lat, route_lng)
+            dc['region'] = route_region
+
+
     def _classify_store_dist_group_and_region(self):
         """
+        Notes:
+            Classify distance group and region for each store in routes_info.
+        
+        Args:
+            None.
+
+        Returns:
+            None.
         """
         routes = self.routes_info.values()
         for route in routes:
