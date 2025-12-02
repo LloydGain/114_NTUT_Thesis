@@ -1,8 +1,8 @@
 import hashlib
 import numpy as np
-from route import RouteManager
+from route.route import RouteManager
 from route.allocate_aco import StoreAllocationACO
-from support_line_aco import SupportLinePlanningACO
+from route.support_line_aco import SupportLinePlanningACO
 
 # np.random.seed(1234)
 
@@ -207,8 +207,8 @@ class StoreExtractionGA:
             return self.fitness_cache[key]
         
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
-        allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix).run()
-        support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix).run()
+        allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+        support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
 
         fitness = allocate_cost + support_cost
         self.fitness_cache[key] = fitness
@@ -340,9 +340,9 @@ class StoreExtractionGA:
         population = self._init_population()
         for i in range(self.generations):
             fitnesses = [self._fitness(individual) for individual in population]
-            print(len(self.fitness_cache))
-            for idx, fitness in enumerate(fitnesses):
-                print(f'individual{idx+1} -> cost = {fitness}')
+            # print(len(self.fitness_cache))
+            # for idx, fitness in enumerate(fitnesses):
+            #     print(f'individual{idx+1} -> cost = {fitness}')
 
             current_best_index = np.argmin(fitnesses)
             current_best_cost = fitnesses[current_best_index]

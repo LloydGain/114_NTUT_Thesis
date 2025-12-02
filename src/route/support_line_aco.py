@@ -1,7 +1,7 @@
 import random
 import numpy as np
 from datetime import datetime, timedelta
-from route import RouteManager
+from route.route import RouteManager
 
 class SupportLinePlanningACO:
     """
@@ -195,6 +195,8 @@ class SupportLinePlanningACO:
 
             # current_store = max(unvisited_stores, key=lambda store: store['volume'])
             current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
+            # current_store = random.choice(unvisited_stores)
+
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
@@ -453,6 +455,9 @@ class SupportLinePlanningACO:
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
         self._initial_pheromone(greedy_cost)
+        self.best_cost = greedy_cost
+        self.best_solution = greedy_solution
+
         for i in range(self.iterations):
             for j in range(self.num_ants):
                 ant_solution = self._solution_construction()

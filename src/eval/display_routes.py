@@ -1,40 +1,41 @@
-import json
 import os
+import json
+import shutil
 import matplotlib.pyplot as plt
 from matplotlib.cm import get_cmap
 
 class DisplayRoutes():
-    def __init__(self, file_path='../output/optimized_routes_info.json'):
-        self.file_path = file_path
+    """
+    Notes:
+        Visualize and display routes.
+    """
+    def __init__(self, source_file, dest_file):
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.source_file = source_file
+        self.dest_file = dest_file
         self.routes = self._load_routes()
     
 
     def _load_routes(self):
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        """
+        Notes:
+            Load routes from a JSON file.
+
+        Args:
+            None.
+
+        Returns:
+            dict: Routes data.
+        """
+        with open(self.source_file, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data
 
 
-    def show_optimized_result(self):
-        avg_duration = 0
-        avg_distance = 0
-        num_vehicle = len(self.routes)
-        
-        for route in self.routes:
-            avg_duration += self.routes[route]['dc']['duration']
-            avg_distance += self.routes[route]['dc']['distance']
-        
-        avg_duration /= num_vehicle * 60 * 60
-        avg_distance /= num_vehicle
-        print(f'Total Vehicle: {num_vehicle}')
-        print(f'Avg Time: {avg_duration}hr')
-        print(f'Avg Distance: {avg_distance}km')
-
-
     def plot_routes(self):
-        output_dir = "../output/optimized_routes"
-        os.makedirs(output_dir, exist_ok=True)
+        if os.path.exists(self.dest_file):
+            shutil.rmtree(self.dest_file)
+        os.makedirs(self.dest_file)
 
         cmap = get_cmap("tab10")
         cmap_alt = get_cmap('Set1')
@@ -74,10 +75,7 @@ class DisplayRoutes():
             plt.title(f"Route {route_id} (load_rate: {load_rate})")
             plt.grid(True)
 
-            # ✅ Save figure instead of showing it
-            save_path = os.path.join(output_dir, f"route_{route_id}.png")
+            save_path = os.path.join(self.dest_file, f"route_{route_id}.png")
             plt.savefig(save_path, dpi=200, bbox_inches='tight')
 
             plt.close()
-
-        print(f"✅ Route images saved to: {output_dir}")
