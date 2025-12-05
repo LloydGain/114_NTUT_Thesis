@@ -16,7 +16,7 @@ from eval.display_routes import DisplayRoutes
 def main():
     file_date = '1203'
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir = f'../output/{file_date}/{dt_folder}'
+    log_dir = f'../output/{file_date}/{dt_folder}/logs'
     route_file = f'../data/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}program.xlsx'
@@ -27,24 +27,34 @@ def main():
     optimized_routes_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.json'
     route_comparison_file = f'../output/{file_date}/{dt_folder}/routes_comparison.xlsx'
 
-    # manual_routes_img = f'../output/{file_date}/manual_routes'
-    # program_routes_img = f'../output/{file_date}/program_routes'
-    optimized_routes_img = f'../output/{file_date}/{dt_folder}/optimized_routes'
+    manual_routes_dir = f'../output/{file_date}/manual_routes'
+    program_routes_dir = f'../output/{file_date}/program_routes'
+    optimized_routes_dir = f'../output/{file_date}/{dt_folder}/optimized_routes'
+    manual_routes_img = f'{manual_routes_dir}/img'
+    program_routes_img = f'{program_routes_dir}/img'
+    optimized_routes_img = f'{optimized_routes_dir}/img'
+    manual_routes_html = f'{manual_routes_dir}/routes.html'
+    program_route_html = f'{program_routes_dir}/routes.html'
+    optimized_routes_html = f'{optimized_routes_dir}/routes.html'
+
+    store_extract_log_file = 'store_extraction_log.xlsx'
+    store_allocate_log_file = 'store_allocation_log.xlsx'
+    support_line_log_file = 'support_line_log.xlsx'
 
 # -----------------------------------------------------------------------------------
 
     params = {
         'store_extraction_ga': {
-            'population_size': 100,
-            'generations': 1000
+            'p_size': 200,
+            'generations': 2000
         },
         'store_allocation_aco': {
-            'num_ants': 50,
-            'iterations': 100
+            'num_ants': 100,
+            'iterations': 200
         },
         'support_line_aco': {
-            'num_ants': 50,
-            'iterations': 100
+            'num_ants': 100,
+            'iterations': 200
         }
     }
 
@@ -66,8 +76,9 @@ def main():
     start_time = time.time()
 
     print("Starting Store Extraction using GA...")
-    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, population_size=params['store_extraction_ga']['populatin_size'], generations=params['store_extraction_ga']['generations'])
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, population_size=params['store_extraction_ga']['p_size'], generations=params['store_extraction_ga']['generations'])
     main_routes, extracted_stores = store_extract.run()
+    store_extract_log_data = store_extract.log
 
     end_time = time.time()
     print(f"店鋪抽取執行時間: {end_time - start_time:.2f} 秒")
@@ -79,6 +90,7 @@ def main():
     print("Starting Store Allocation using ACO...")
     store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, num_ants=params['store_allocation_aco']['num_ants'], iterations=params['store_allocation_aco']['iterations'])
     _, main_routes, remaining_stores = store_allocate.run()
+    store_allocate_log_data = store_allocate.log
 
     end_time = time.time()
     print(f"店鋪再分配執行時間: {end_time - start_time:.2f} 秒")
@@ -90,6 +102,7 @@ def main():
     print("Starting Support Line Planning using ACO...")
     support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, num_ants=params['support_line_aco']['num_ants'], iterations=params['support_line_aco']['iterations'])
     _, support_routes = support.run()
+    support_line_log_data = support.log
 
     end_time = time.time()
     print(f"支援線規劃執行時間: {end_time - start_time:.2f} 秒")
@@ -150,14 +163,17 @@ def main():
     start_time = time.time()
 
     print("Displaying route visualizations...")
-    # manu_routes = DisplayRoutes(manual_routes_file, manual_routes_img)
-    # manu_routes.plot_routes()
+    manu_routes = DisplayRoutes(manual_routes_file)
+    manu_routes.plot_routes_png(manual_routes_img)
+    manu_routes.plot_routes_html(manual_routes_html)
 
-    # prog_routes = DisplayRoutes(program_routes_file, program_routes_img)
-    # prog_routes.plot_routes()
+    prog_routes = DisplayRoutes(program_routes_file)
+    prog_routes.plot_routes_png(program_routes_img)
+    prog_routes.plot_routes_html(program_route_html)
 
-    opt_routes = DisplayRoutes(optimized_routes_file, optimized_routes_img)
-    opt_routes.plot_routes()
+    opt_routes = DisplayRoutes(optimized_routes_file)
+    opt_routes.plot_routes_png(optimized_routes_img)
+    opt_routes.plot_routes_html(optimized_routes_html)
 
     end_time = time.time()
     print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
@@ -169,6 +185,9 @@ def main():
     print("Logging ...")
     logger = Log(log_dir, params)
     logger.log_parameters()
+    logger.log_execution(store_extract_log_file, store_extract_log_data)
+    logger.log_execution(store_allocate_log_file, store_allocate_log_data)
+    logger.log_execution(support_line_log_file, support_line_log_data)
     
     end_time = time.time()
     print(f"記錄實驗參數和結果執行時間: {end_time - start_time:.2f} 秒")

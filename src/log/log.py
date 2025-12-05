@@ -1,4 +1,6 @@
+import os
 import json
+import pandas as pd
 from datetime import datetime
 
 class Log:
@@ -7,8 +9,11 @@ class Log:
         Notes:
             Log for recording experiment params and results.
         """
+        self.log_dir = log_dir
         self.params_file = f'{log_dir}/params.json'
         self.parameters = parameters
+        os.makedirs(log_dir, exist_ok=True)
+
     
     def log_parameters(self):
         """
@@ -28,5 +33,20 @@ class Log:
 
         with open(self.params_file, 'w', encoding='utf-8') as f:
             json.dump(record, f, indent=4)
+    
 
-        print(json.dumps(record, indent=4))
+    def log_execution(self, log_file, log_data):
+        """
+        Notes:
+            Logs execution data to a specified JSON file.
+
+        Args:
+            log_file (str): The path to the log file.
+            log_data (list): The data to be logged.
+        
+        Returns:
+            None.
+        """
+        log_dest = f'{self.log_dir}/{log_file}'
+        df = pd.DataFrame(log_data)
+        df.to_excel(log_dest, index=False)

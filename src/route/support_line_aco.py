@@ -23,6 +23,7 @@ class SupportLinePlanningACO:
         self.best_cost = float('inf')
         self.best_solution = None
         self.time_limit_per_route = 5 * 60 * 60
+        self.log = []
 
 
     def _heuristic(self, current_store, next_store):
@@ -459,15 +460,23 @@ class SupportLinePlanningACO:
         self.best_solution = greedy_solution
 
         for i in range(self.iterations):
-            for j in range(self.num_ants):
+            ant_costs = []
+            for _ in range(self.num_ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
-
+                ant_costs.append(ant_cost)
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_solution
-                
                 self._update_pheromone(ant_solution, ant_cost)
             
-                # print(f'iteration{i+1}| ant{j+1} ->  cost = {ant_cost}')
+            self.log.append({
+                'iteration': i + 1,
+                'iter_worst_cost': float(np.max(ant_costs)),
+                'iter_best_cost': float(min(ant_costs)),
+                'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
+                'std_cost': float(np.std(ant_costs)),
+                'best_cost': self.best_cost,
+            })
+
         return self.best_cost, self.best_solution

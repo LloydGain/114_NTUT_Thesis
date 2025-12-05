@@ -28,6 +28,7 @@ class StoreAllocationACO:
         self.best_solution = None
         self.best_remaining_solution = None
         self.cost_cache = {}
+        self.log = []
 
 
     def _copy_routes_info(self, routes):
@@ -460,14 +461,25 @@ class StoreAllocationACO:
         self.best_solution = greedy_routes
         self.best_remaining_solution = remaining_stores
 
-        for _ in range(self.iterations):
+        for i in range(self.iterations):
+            ant_costs = []
             for _ in range(self.num_ants):
                 ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
                 ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
+                ant_costs.append(ant_cost)
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_routes
                     self.best_remaining_solution = ant_remaining_stores
                 self._update_pheromone(ant_solution, ant_cost)
+
+            self.log.append({
+                'iteration': i + 1,
+                'iter_worst_cost': float(np.max(ant_costs)),
+                'iter_best_cost': float(min(ant_costs)),
+                'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
+                'std_cost': float(np.std(ant_costs)),
+                'best_cost': self.best_cost,
+            })
 
         return self.best_cost, self.best_solution, self.best_remaining_solution

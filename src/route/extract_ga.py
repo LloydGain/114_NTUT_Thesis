@@ -23,6 +23,7 @@ class StoreExtractionGA:
         self.best_cost = float('inf')
         self.best_individual = None
         self.fitness_cache = {}
+        self.log = []
     
 
     def _routes(self, routes):
@@ -362,5 +363,14 @@ class StoreExtractionGA:
                 self._mutate(child2)
                 new_population.extend([child1, child2])
             population = new_population
+
+            self.log.append({
+                'generation': i + 1,
+                'iter_best_cost': current_best_cost,
+                'iter_worst_cost': float(np.max(fitnesses)),
+                'iter_avg_cost': float(np.mean(fitnesses)),
+                'std_cost': float(np.std(fitnesses)),
+                'best_cost': self.best_cost,
+            })
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)
