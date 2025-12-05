@@ -3,6 +3,7 @@ import hashlib
 import numpy as np
 from datetime import datetime, timedelta
 from route.route import RouteManager
+from route.utils import EarlyStopper
 from route.support_line_aco import SupportLinePlanningACO
 
 class StoreAllocationACO:
@@ -461,6 +462,7 @@ class StoreAllocationACO:
         self.best_solution = greedy_routes
         self.best_remaining_solution = remaining_stores
 
+        early_stopper = EarlyStopper(patience=10)
         for i in range(self.iterations):
             ant_costs = []
             for _ in range(self.num_ants):
@@ -481,5 +483,8 @@ class StoreAllocationACO:
                 'std_cost': float(np.std(ant_costs)),
                 'best_cost': self.best_cost,
             })
+
+            if early_stopper.check(self.best_cost):
+                break
 
         return self.best_cost, self.best_solution, self.best_remaining_solution

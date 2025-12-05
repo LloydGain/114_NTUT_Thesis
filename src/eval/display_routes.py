@@ -53,6 +53,7 @@ class DisplayRoutes:
         os.makedirs(dest_dir, exist_ok=True)
 
         for idx, (route_id, route_info) in enumerate(self.routes.items()):
+            dc = route_info.get("dc", {})
             stores = route_info.get("stores", [])
             if not stores:
                 continue
@@ -84,7 +85,7 @@ class DisplayRoutes:
 
             plt.xlabel("Longitude")
             plt.ylabel("Latitude")
-            plt.title(f"Route {route_id}")
+            plt.title(f"Route {route_id} ({dc['load_rate']})")
             plt.grid(True)
 
             save_path = os.path.join(dest_dir, f"{route_id}.png")
@@ -144,7 +145,7 @@ class DisplayRoutes:
             for i, store in enumerate(stores, start=1):
                 lon, lat = store["longitude"], store["latitude"]
                 marker_color = main_color if route_id in store["route_code"] else self.alt_color
-                popup_text = f"{i}. {store['store_name']} ({store['route_code']})"
+                popup_text = f"{i}. {store['store_name']} ({store['route_code']}) ({store['volume']} ({store['pred_time']})"
 
                 folium.Marker(
                     location=(lat, lon),

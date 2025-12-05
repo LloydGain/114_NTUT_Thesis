@@ -2,6 +2,7 @@ import random
 import numpy as np
 from datetime import datetime, timedelta
 from route.route import RouteManager
+from route.utils import EarlyStopper
 
 class SupportLinePlanningACO:
     """
@@ -445,6 +446,7 @@ class SupportLinePlanningACO:
                 store_1 = stores[i]['store_id']
                 store_2 = stores[i+1]['store_id']
                 self.pheromone_matrix[store_1][store_2] += delta_pheromone
+                self.pheromone_matrix[store_2][store_1] += delta_pheromone
 
 
     def run(self):
@@ -459,6 +461,7 @@ class SupportLinePlanningACO:
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
 
+        early_stopper = EarlyStopper(patience=10)
         for i in range(self.iterations):
             ant_costs = []
             for _ in range(self.num_ants):
@@ -478,5 +481,8 @@ class SupportLinePlanningACO:
                 'std_cost': float(np.std(ant_costs)),
                 'best_cost': self.best_cost,
             })
+
+            if early_stopper.check(self.best_cost):
+                break
 
         return self.best_cost, self.best_solution

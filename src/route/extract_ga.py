@@ -1,6 +1,7 @@
 import hashlib
 import numpy as np
 from route.route import RouteManager
+from route.utils import EarlyStopper
 from route.allocate_aco import StoreAllocationACO
 from route.support_line_aco import SupportLinePlanningACO
 
@@ -210,8 +211,14 @@ class StoreExtractionGA:
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
         allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-
         fitness = allocate_cost + support_cost
+
+        # total_extracted_volume = sum(store['volume'] for store in stores)
+        # packing_efficiency = 0.9
+        # estimated_vehicles = np.ceil(total_extracted_volume / (7.2 * packing_efficiency))
+        # total_dist = sum(self.distance_matrix['dc'][store['store_id']] for store in stores)
+        # fitness = estimated_vehicles * 500 + total_dist
+
         self.fitness_cache[key] = fitness
         return fitness
 
@@ -339,6 +346,7 @@ class StoreExtractionGA:
             Runs the genetic algorithm for store extraction.
         """
         population = self._init_population()
+        early_stopper = EarlyStopper(patience=200)
         for i in range(self.generations):
             fitnesses = [self._fitness(individual) for individual in population]
             # print(len(self.fitness_cache))
@@ -366,11 +374,14 @@ class StoreExtractionGA:
 
             self.log.append({
                 'generation': i + 1,
-                'iter_best_cost': current_best_cost,
                 'iter_worst_cost': float(np.max(fitnesses)),
+                'iter_best_cost': current_best_cost,
                 'iter_avg_cost': float(np.mean(fitnesses)),
                 'std_cost': float(np.std(fitnesses)),
                 'best_cost': self.best_cost,
             })
+
+            if early_stopper.check(self.best_cost):
+                break
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)
