@@ -12,7 +12,7 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.8, mutation_rate=0.2):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)
@@ -20,6 +20,7 @@ class StoreExtractionGA:
         self.generations = generations
         self.cross_rate = cross_rate
         self.mutation_rate = mutation_rate
+        self.early_stop_patience = early_stop_patience
         self.overloaded_routes = self._get_overloaded_routes()
         self.best_cost = float('inf')
         self.best_individual = None
@@ -213,12 +214,6 @@ class StoreExtractionGA:
         support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         fitness = allocate_cost + support_cost
 
-        # total_extracted_volume = sum(store['volume'] for store in stores)
-        # packing_efficiency = 0.9
-        # estimated_vehicles = np.ceil(total_extracted_volume / (7.2 * packing_efficiency))
-        # total_dist = sum(self.distance_matrix['dc'][store['store_id']] for store in stores)
-        # fitness = estimated_vehicles * 500 + total_dist
-
         self.fitness_cache[key] = fitness
         return fitness
 
@@ -346,7 +341,7 @@ class StoreExtractionGA:
             Runs the genetic algorithm for store extraction.
         """
         population = self._init_population()
-        early_stopper = EarlyStopper(patience=200)
+        early_stopper = EarlyStopper(patience=self.early_stop_patience)
         for i in range(self.generations):
             fitnesses = [self._fitness(individual) for individual in population]
             # print(len(self.fitness_cache))

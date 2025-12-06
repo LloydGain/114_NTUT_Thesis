@@ -9,7 +9,7 @@ class SupportLinePlanningACO:
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.5, q=100, num_ants=10, iterations=10, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=2, rho=0.2, q=1, num_ants=10, iterations=10, early_stop_patience=10, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
@@ -18,6 +18,7 @@ class SupportLinePlanningACO:
         self.q = q
         self.num_ants = num_ants
         self.iterations = iterations
+        self.early_stop_patience = early_stop_patience
         self.support_capacity = support_capacity
         self.pheromone_matrix = dict()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
@@ -398,6 +399,7 @@ class SupportLinePlanningACO:
 
             # current_store = max(unvisited_stores, key=lambda store: store['volume'])
             current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
+
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
 
@@ -461,22 +463,43 @@ class SupportLinePlanningACO:
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
 
-        early_stopper = EarlyStopper(patience=10)
+        self.log.append({
+            'iteration': 0,
+            'iter_worst_cost': greedy_cost,
+            'iter_best_cost': greedy_cost,
+            'iter_avg_cost': greedy_cost,
+            'std_cost': 0,
+            'best_cost': self.best_cost,
+        })
+
+        early_stopper = EarlyStopper(patience=self.early_stop_patience)
         for i in range(self.iterations):
             ant_costs = []
+            iter_best_cost = float('inf')
+            iter_best_solution = None
             for _ in range(self.num_ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
+                ant_cost = ant_cost + len(ant_solution) * 500
                 ant_costs.append(ant_cost)
+
+                if ant_cost < iter_best_cost:
+                    iter_best_cost = ant_cost
+                    iter_best_solution = ant_solution
+
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_solution
-                self._update_pheromone(ant_solution, ant_cost)
+
+            self._update_pheromone(iter_best_solution, iter_best_cost)
+            self._update_pheromone(self.best_solution, self.best_cost)
             
+            print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
+
             self.log.append({
                 'iteration': i + 1,
                 'iter_worst_cost': float(np.max(ant_costs)),
-                'iter_best_cost': float(min(ant_costs)),
+                'iter_best_cost': iter_best_cost,
                 'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
                 'std_cost': float(np.std(ant_costs)),
                 'best_cost': self.best_cost,

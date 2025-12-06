@@ -45,18 +45,39 @@ def main():
 
     params = {
         'store_extraction_ga': {
-            'p_size': 200,
-            'generations': 2000
+            'p_size': 100,
+            'generations': 1000,
+            'early_stop_patience': 100
         },
         'store_allocation_aco': {
-            'num_ants': 100,
-            'iterations': 200
+            'num_ants': 50,
+            'iterations': 500,
+            'early_stop_patience': 30
         },
         'support_line_aco': {
-            'num_ants': 100,
-            'iterations': 200
+            'num_ants': 50,
+            'iterations': 500,
+            'early_stop_patience': 50
         }
     }
+
+    # params = {
+    #     'store_extraction_ga': {
+    #         'p_size': 2,
+    #         'generations': 2,
+    #         'early_stop_patience': 1
+    #     },
+    #     'store_allocation_aco': {
+    #         'num_ants': 1,
+    #         'iterations': 1,
+    #         'early_stop_patience': 1
+    #     },
+    #     'support_line_aco': {
+    #         'num_ants': 1,
+    #         'iterations': 1,
+    #         'early_stop_patience': 1
+    #     }
+    # }
 
 # -----------------------------------------------------------------------------------
 
@@ -76,7 +97,7 @@ def main():
     start_time = time.time()
 
     print("Starting Store Extraction using GA...")
-    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, population_size=params['store_extraction_ga']['p_size'], generations=params['store_extraction_ga']['generations'])
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, population_size=params['store_extraction_ga']['p_size'], generations=params['store_extraction_ga']['generations'], early_stop_patience=params['store_extraction_ga']['early_stop_patience'])
     main_routes, extracted_stores = store_extract.run()
     store_extract_log_data = store_extract.log
 
@@ -88,7 +109,7 @@ def main():
     start_time = time.time()
 
     print("Starting Store Allocation using ACO...")
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, num_ants=params['store_allocation_aco']['num_ants'], iterations=params['store_allocation_aco']['iterations'])
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, num_ants=params['store_allocation_aco']['num_ants'], iterations=params['store_allocation_aco']['iterations'], early_stop_patience=params['store_allocation_aco']['early_stop_patience'])
     _, main_routes, remaining_stores = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 
@@ -100,7 +121,7 @@ def main():
     start_time = time.time()
 
     print("Starting Support Line Planning using ACO...")
-    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, num_ants=params['support_line_aco']['num_ants'], iterations=params['support_line_aco']['iterations'])
+    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, num_ants=params['support_line_aco']['num_ants'], iterations=params['support_line_aco']['iterations'], early_stop_patience=params['support_line_aco']['early_stop_patience'])
     _, support_routes = support.run()
     support_line_log_data = support.log
 

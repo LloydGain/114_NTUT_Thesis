@@ -11,7 +11,7 @@ class StoreAllocationACO:
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.2, q=1, num_ants=10, iterations=20):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.2, q=1, num_ants=10, iterations=20, early_stop_patience=10):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -24,9 +24,11 @@ class StoreAllocationACO:
         self.q = q
         self.num_ants = num_ants
         self.iterations = iterations
+        self.early_stop_patience = early_stop_patience
         self.pheromone_matrix = dict()
         self.best_cost = float('inf')
         self.best_solution = None
+        self.best_ant_solution = None
         self.best_remaining_solution = None
         self.cost_cache = {}
         self.log = []
@@ -314,12 +316,12 @@ class StoreAllocationACO:
                     min_cost = cost
                     best_route_id = route_id
                     best_pos = pos
+
             if assigned:
                 route_manager.insert_store(store, best_route_id, best_pos)
+                solutions[store['store_id']] = best_route_id
             else:
                 unassigned_stores.append(store)
-
-            solutions[store['store_id']] = best_route_id
 
         return route_manager.routes_info, solutions, unassigned_stores
 
@@ -398,7 +400,8 @@ class StoreAllocationACO:
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
 
         stores_to_assign = self.remaining_stores[:]
-        random.shuffle(stores_to_assign)
+        # random.shuffle(stores_to_assign)
+        stores_to_assign.sort(key=lambda x: x['volume'], reverse=True)
 
         for store in stores_to_assign:
             feasible_routes = []
@@ -455,25 +458,47 @@ class StoreAllocationACO:
         Notes:
             Execute the ACO algorithm for store allocation.
         """
-        greedy_routes, _, remaining_stores = self._greedy_solution()
+        greedy_routes, greedy_solution, remaining_stores = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_routes, remaining_stores)
         self._initial_pheromone(greedy_cost)
         self.best_cost = greedy_cost
         self.best_solution = greedy_routes
+        self.best_ant_solution = greedy_solution
         self.best_remaining_solution = remaining_stores
 
-        early_stopper = EarlyStopper(patience=10)
+        self.log.append({
+            'iteration': 0,
+            'iter_worst_cost': greedy_cost,
+            'iter_best_cost': greedy_cost,
+            'iter_avg_cost': greedy_cost,
+            'std_cost': 0,
+            'best_cost': self.best_cost,
+        })
+
+        early_stopper = EarlyStopper(patience=self.early_stop_patience)
         for i in range(self.iterations):
             ant_costs = []
+            iter_best_cost = float("inf")
+            iter_best_ant_solution = None
             for _ in range(self.num_ants):
                 ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
                 ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
                 ant_costs.append(ant_cost)
+
+                if ant_cost < iter_best_cost:
+                    iter_best_cost = ant_cost
+                    iter_best_ant_solution = ant_solution
+
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_routes
+                    self.best_ant_solution = ant_solution
                     self.best_remaining_solution = ant_remaining_stores
-                self._update_pheromone(ant_solution, ant_cost)
+            
+            self._update_pheromone(iter_best_ant_solution, iter_best_cost)
+            self._update_pheromone(self.best_ant_solution, self.best_cost)
+
+            print(f'Store Allocation: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
             self.log.append({
                 'iteration': i + 1,
