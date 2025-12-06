@@ -93,7 +93,6 @@ class DisplayRoutes:
             plt.close()
 
 
-
     def plot_routes_html(self, dest_html):
         """
         Notes:
@@ -145,7 +144,7 @@ class DisplayRoutes:
             for i, store in enumerate(stores, start=1):
                 lon, lat = store["longitude"], store["latitude"]
                 marker_color = main_color if route_id in store["route_code"] else self.alt_color
-                popup_text = f"{i}. {store['store_name']} ({store['route_code']}) ({store['volume']} ({store['pred_time']})"
+                popup_text = f"{store['store_name']} ({store['route_code']}) ({store['volume']}) ({store['pred_time']})"
 
                 folium.Marker(
                     location=(lat, lon),
