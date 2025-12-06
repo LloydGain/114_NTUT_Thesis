@@ -228,6 +228,22 @@ class RouteManager:
         route['dc']['load_rate'] = load_rate
 
 
+    def _update_route_id(self, route):
+        """
+        Notes:
+            Update the store's route_id
+        
+        Args:
+            route (dict): Route information.
+
+        Returns:
+            None
+        """
+        route_id = route['dc']['route_id']
+        for store in route['stores']:
+            store["route_id"] = route_id
+
+
     def _update_route_info(self, route):
         """
         Notes:
@@ -244,6 +260,7 @@ class RouteManager:
         self._update_all_stores_pred_time(route)
         self._update_route_volume(route)
         self._update_route_load_rate(route)
+        self._update_route_id(route)
     
 
     def _update_all_routes_info(self):
