@@ -11,7 +11,7 @@ class StoreAllocationACO:
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=1, rho=0.2, q=1, num_ants=10, iterations=20, early_stop_patience=10):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -21,7 +21,9 @@ class StoreAllocationACO:
         self.alpha = alpha
         self.beta = beta
         self.rho = rho
+        self.tau_ratio = tau_ratio
         self.q = q
+        self.q0 = q0
         self.num_ants = num_ants
         self.iterations = iterations
         self.early_stop_patience = early_stop_patience
@@ -288,6 +290,32 @@ class StoreAllocationACO:
         return min_cost, best_pos
         
 
+    def _greedy_selection(self, current_store, feasible_routes):
+        """
+        Notes:
+            Select the next route based on greedy approach.
+        
+        Args:
+            current_store (dict): The current store.
+            feasible_routes (list): List of feasible routes.
+
+        Returns:
+            best_route_id (str): The selected next route.
+            best_pos (int): The position to insert the store.
+        """
+        best_route_id = None
+        best_pos = -1
+        best_value = -1
+        for route_id, cost, pos in feasible_routes:
+            value = self._transition_value(current_store, route_id, cost)
+            if value > best_value:
+                best_value = value
+                best_route_id = route_id
+                best_pos = pos
+
+        return best_route_id, best_pos
+
+
     def _greedy_solution(self):
         """
         Notes:
@@ -305,29 +333,33 @@ class StoreAllocationACO:
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
 
         for store in self.remaining_stores:
-            assigned = False
-            min_cost = float('inf')
-            best_route_id = None
-            best_pos = -1
+            feasible_routes = []
             for route_id, route_info in route_manager.routes_info.items():
                 cost, pos = self._get_store_insertion_cost_and_pos(route_info, store)
-                if pos != -1 and cost < min_cost:
-                    assigned = True
-                    min_cost = cost
-                    best_route_id = route_id
-                    best_pos = pos
+                if pos != -1:
+                    feasible_routes.append((route_id, cost, pos))
 
-            if assigned:
-                route_manager.insert_store(store, best_route_id, best_pos)
-                solutions[store['store_id']] = best_route_id
-            else:
+            if not feasible_routes:
                 unassigned_stores.append(store)
+                continue
+
+            selected_route, selected_pos = self._greedy_selection(store, feasible_routes)
+            route_manager.insert_store(store, selected_route, selected_pos)
+            solutions[store['store_id']] = selected_route
 
         return route_manager.routes_info, solutions, unassigned_stores
 
 
     def _encode_stores(self, stores):
         """
+        Notes:
+            Encode a list of stores.
+
+        Args:
+            stores (list): List of stores.
+
+        Returns:
+            str: Encoded stores.
         """
         store_set = sorted([store['store_id'] for store in stores])
         s = ','.join(map(str, store_set))
@@ -385,6 +417,32 @@ class StoreAllocationACO:
                 self.pheromone_matrix[store_id][route_id] = initial_pheromone
 
 
+    def _roulette_wheel_selection(self, current_store, feasible_routes):
+        """
+        Notes:
+            Select the next route based on roulette wheel selection.
+        
+        Args:
+            current_store (dict): The current store.
+            feasible_routes (list): List of feasible routes.
+        
+        Returns:
+            next_route (dict): The selected next route.
+        """
+        q = random.uniform(0, 1)
+        if q < self.q0:
+            return self._greedy_selection(current_store, feasible_routes)
+
+        probabilities = []
+        for route_id, cost, pos in feasible_routes:
+            prob = self._transition_value(current_store, route_id, cost)
+            probabilities.append(prob)
+        probabilities = np.array(probabilities)
+        probabilities /= probabilities.sum()
+        next_route = random.choices(feasible_routes, weights=probabilities, k=1)[0]
+        route_id, _, pos = next_route
+        return route_id, pos
+
     def _solution_construct(self):
         """
         Construct a solution for store allocation using ACO.
@@ -400,7 +458,7 @@ class StoreAllocationACO:
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
 
         stores_to_assign = self.remaining_stores[:]
-        # random.shuffle(stores_to_assign)
+        random.shuffle(stores_to_assign)
         stores_to_assign.sort(key=lambda x: x['volume'], reverse=True)
 
         for store in stores_to_assign:
@@ -414,26 +472,50 @@ class StoreAllocationACO:
                 unassigned_stores.append(store)
                 continue
 
-            probabilities = []
-            for route_id, cost, pos in feasible_routes:
-                prob = self._transition_value(store, route_id, cost)
-                probabilities.append(prob)
-            probabilities = np.array(probabilities)
-            probabilities[probabilities < 1e-12] = 1e-12
-            probabilities /= probabilities.sum()
-
-            selected = random.choices(feasible_routes, weights=probabilities, k=1)[0]
-            selected_route, _, selected_pos = selected
+            selected_route, selected_pos = self._roulette_wheel_selection(store, feasible_routes)
             route_manager.insert_store(store, selected_route, selected_pos)
             solutions[store['store_id']] = selected_route
 
         return route_manager.routes_info, solutions, unassigned_stores
 
 
-    def _update_pheromone(self, solution, cost):
+    def _evaporate_pheromone(self):
         """
         Notes:
-            Update pheromone based on the solution.
+            Evaporate Pheromone.
+        
+        Args:
+            None.
+
+        Return:
+            None.
+        """
+        for store_id in self.pheromone_matrix:
+            for route_id in self.pheromone_matrix[store_id]:
+                self.pheromone_matrix[store_id][route_id] *= (1 - self.rho)
+
+
+    def _calculate_tau_bounds(self):
+        """
+        Notes:
+            Calculate bounds of tau.
+        
+        Args:
+            None.
+
+        Returns:
+            tau_max (float): The upper bound of tau .
+            tau_min (float): The low bound of tau.
+        """
+        tau_max = self.q / (self.rho * self.best_cost)
+        tau_min = tau_max / self.tau_ratio
+        return tau_max, tau_min
+
+
+    def _deposit_pheromone(self, solution, cost):
+        """
+        Notes:
+            Deposit pheromone based on the solution.
 
         Args:
             solution (dict): The solution found by an ant.
@@ -443,21 +525,22 @@ class StoreAllocationACO:
             None.
         """
         delta = self.q / cost
-        
-        for store_id in self.pheromone_matrix:
-            for route_id in self.pheromone_matrix[store_id]:
-                self.pheromone_matrix[store_id][route_id] *= (1 - self.rho)
-
-        for store_id in solution:
-            route_id = solution[store_id]
+        tau_max, tau_min = self._calculate_tau_bounds()
+        for store_id, route_id in solution.items():
             self.pheromone_matrix[store_id][route_id] += delta
-
+            
+            if self.pheromone_matrix[store_id][route_id] > tau_max:
+                self.pheromone_matrix[store_id][route_id] = tau_max
+            elif self.pheromone_matrix[store_id][route_id] < tau_min:
+                self.pheromone_matrix[store_id][route_id] = tau_min
+        
 
     def run(self):
         """
         Notes:
             Execute the ACO algorithm for store allocation.
         """
+        self._initial_pheromone(1)
         greedy_routes, greedy_solution, remaining_stores = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_routes, remaining_stores)
         self._initial_pheromone(greedy_cost)
@@ -479,7 +562,7 @@ class StoreAllocationACO:
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float("inf")
-            iter_best_ant_solution = None
+            # iter_best_ant_solution = None
             for _ in range(self.num_ants):
                 ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
                 ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
@@ -487,7 +570,7 @@ class StoreAllocationACO:
 
                 if ant_cost < iter_best_cost:
                     iter_best_cost = ant_cost
-                    iter_best_ant_solution = ant_solution
+                    # iter_best_ant_solution = ant_solution
 
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
@@ -495,8 +578,9 @@ class StoreAllocationACO:
                     self.best_ant_solution = ant_solution
                     self.best_remaining_solution = ant_remaining_stores
             
-            self._update_pheromone(iter_best_ant_solution, iter_best_cost)
-            self._update_pheromone(self.best_ant_solution, self.best_cost)
+            self._evaporate_pheromone()
+            # self._deposit_pheromone(iter_best_ant_solution, iter_best_cost)
+            self._deposit_pheromone(self.best_ant_solution, self.best_cost)
 
             print(f'Store Allocation: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 

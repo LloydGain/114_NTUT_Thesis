@@ -9,29 +9,60 @@ class SupportLinePlanningACO:
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, alpha=1, beta=2, rho=0.2, q=1, num_ants=10, iterations=10, early_stop_patience=10, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=2, gamma=3, rho=0.2, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
         self.beta = beta
         self.rho = rho
+        self.gamma = gamma
+        self.tau_ratio = tau_ratio
         self.q = q
+        self.q0 = q0
         self.num_ants = num_ants
         self.iterations = iterations
         self.early_stop_patience = early_stop_patience
         self.support_capacity = support_capacity
         self.pheromone_matrix = dict()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
+        self.saving_matrix = self._saving_matrix()
         self.best_cost = float('inf')
         self.best_solution = None
         self.time_limit_per_route = 5 * 60 * 60
+        self.vehicle_cost = 0
         self.log = []
 
 
-    def _heuristic(self, current_store, next_store):
+    def _saving_matrix(self):
         """
         Notes:
-            Get heuristic information between current_store and next_store.
+            Compute saving matrix.
+
+        Args:
+            None.
+
+        Returns:
+            saving_matrix (dict) : saving value.
+        """
+        store_ids = [store['store_id'] for store in self.remaining_stores]
+
+        saving_matrix = {
+            store_idx: {
+                store_idy: (
+                    self.distance_matrix[self.dc['store_id']][store_idx] +
+                    self.distance_matrix[self.dc['store_id']][store_idy] - 
+                    self.distance_matrix[store_idx][store_idy]
+                ) for j, store_idy in enumerate(store_ids)
+            } for i, store_idx in enumerate(store_ids)
+        }
+        
+        return saving_matrix
+
+
+    def _dist_heuristic(self, current_store, next_store):
+        """
+        Notes:
+            Get distance heuristic information between current_store and next_store.
 
         Args:
             current_store (dict): The current store.
@@ -40,8 +71,29 @@ class SupportLinePlanningACO:
         Returns:
             float: Heuristic value (1 / distance).
         """
-        return 1 / (self.distance_matrix[current_store['store_id']][next_store['store_id']] + 1e-6)
+        if current_store['store_id'] == next_store['store_id']:
+            return 0
+
+        return 1 / (self.distance_matrix[current_store['store_id']][next_store['store_id']])
         
+
+    def _saving_heuristic(self, current_store, next_store):
+        """
+        Notes:
+            Get saving heuristic information between current_store and next_store.
+
+        Args:
+            current_store (dict): The current store.
+            next_store (dict): The candidate next store.
+
+        Returns:
+            float: Heuristic value (saving).
+        """
+        if current_store['store_id'] == next_store['store_id']:
+            return 0
+
+        return self.saving_matrix[current_store['store_id']][next_store['store_id']]
+
 
     def _pheromone(self, current_store, next_store):
         """
@@ -71,8 +123,9 @@ class SupportLinePlanningACO:
             float: The transition value.
         """
         tau = self._pheromone(current_store, next_store)
-        eta = self._heuristic(current_store, next_store)
-        return (tau ** self.alpha) * (eta ** self.beta)
+        eta = self._dist_heuristic(current_store, next_store)
+        mu = self._saving_heuristic(current_store, next_store)
+        return (tau ** self.alpha) * (eta ** self.beta) * (mu ** self.gamma)
 
 
     def _initial_route(self, vehicle_id):
@@ -150,22 +203,22 @@ class SupportLinePlanningACO:
         return feasible
 
 
-    def _greedy_selection(self, current_store, unvisited_stores):
+    def _greedy_selection(self, current_store, feasible_stores):
         """
         Notes:
             Select the next store based on greedy approach.
 
         Args:
             current_store (dict): The current store.
-            unvisited_stores (list): List of unvisited stores.
+            feasible_stores (list): List of feasible stores.
 
         Returns:
             best_store (dict): The selected next store.
         """
         best_store = None
         best_value = -1
-        for store in unvisited_stores:
-            value = self._heuristic(current_store, store)
+        for store in feasible_stores:
+            value = self._transition_value(current_store, store)
             if value > best_value:
                 best_value = value
                 best_store = store
@@ -373,6 +426,35 @@ class SupportLinePlanningACO:
         return False
 
 
+    def _roulette_wheel_selection(self, current_store, feasible_stores):
+        """
+        Notes:
+            Select the next store based on roulette wheel selection.
+        
+        Args:
+            current_store (dict): The current store.
+            feasible_stores (list): List of feasible stores.
+        
+        Returns:
+            next_store (dict): The selected next store.
+        """
+
+        q = random.uniform(0, 1)
+
+        if q < self.q0:
+            return self._greedy_selection(current_store, feasible_stores)
+
+        probabilities = []
+        for next_store in feasible_stores:
+            prob = self._transition_value(current_store, next_store)
+            probabilities.append(prob)
+        probabilities = np.array(probabilities)
+        probabilities /= probabilities.sum()
+        next_store = random.choices(feasible_stores, weights=probabilities, k=1)[0]
+
+        return next_store
+
+
     def _solution_construction(self):
         """
         Notes:
@@ -408,24 +490,42 @@ class SupportLinePlanningACO:
                 if not feasible_stores:
                     vehicle_num += 1
                     break
-
-                probabilities = []
-                for next_store in feasible_stores:
-                    prob = self._transition_value(current_store, next_store)
-                    probabilities.append(prob)
-                probabilities = np.array(probabilities)
-                probabilities[probabilities < 1e-12] = 1e-12
-                probabilities /= probabilities.sum()
-
-                next_store = random.choices(feasible_stores, weights=probabilities, k=1)[0]
+                
+                next_store = self._roulette_wheel_selection(current_store, feasible_stores)
                 route_manager.add_store(vehicle_id, next_store)
                 current_store = next_store
                 unvisited_stores.remove(next_store)
         
         return ant_solution
+    
+    def _evaporate_pheromone(self):
+        """
+        Notes:
+
+        """
+        for s in self.pheromone_matrix:
+            for t in self.pheromone_matrix[s]:
+                self.pheromone_matrix[s][t] *= (1 - self.rho)
 
 
-    def _update_pheromone(self, solution, cost):
+    def _calculate_tau_bounds(self):
+        """
+        Notes:
+            Calculate bounds of tau.
+        
+        Args:
+            None.
+
+        Returns:
+            tau_max (float): The upper bound of tau .
+            tau_min (float): The low bound of tau.
+        """
+        tau_max = self.q / (self.rho * self.best_cost)
+        tau_min = tau_max / self.tau_ratio
+        return tau_max, tau_min
+
+
+    def _deposit_pheromone(self, solution, cost):
         """
         Notes:
             Update pheromone based on the solution.
@@ -437,11 +537,8 @@ class SupportLinePlanningACO:
         Returns:
             None.
         """
-        for s in self.pheromone_matrix:
-            for t in self.pheromone_matrix[s]:
-                self.pheromone_matrix[s][t] *= (1 - self.rho)
-        
         delta_pheromone = self.q / cost
+        tau_max, tau_min = self._calculate_tau_bounds()
         for route in solution:
             stores = solution[route]['stores']
             for i in range(len(stores) - 1):
@@ -450,6 +547,13 @@ class SupportLinePlanningACO:
                 self.pheromone_matrix[store_1][store_2] += delta_pheromone
                 self.pheromone_matrix[store_2][store_1] += delta_pheromone
 
+                if self.pheromone_matrix[store_1][store_2] > tau_max:
+                    self.pheromone_matrix[store_1][store_2] = tau_max
+                    self.pheromone_matrix[store_2][store_1] = tau_max
+                elif self.pheromone_matrix[store_1][store_2] < tau_min:
+                    self.pheromone_matrix[store_1][store_2] = tau_min
+                    self.pheromone_matrix[store_2][store_1] = tau_min
+
 
     def run(self):
         """
@@ -457,8 +561,10 @@ class SupportLinePlanningACO:
             Runs the ACO algorithm for support line planning.
         """
         # print(f'Support Line stores: {len(self.remaining_stores)}')
+        self._initial_pheromone(1)
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
+        greedy_cost = greedy_cost + len(greedy_solution) * self.vehicle_cost
         self._initial_pheromone(greedy_cost)
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
@@ -476,23 +582,23 @@ class SupportLinePlanningACO:
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float('inf')
-            iter_best_solution = None
+            # iter_best_solution = None
             for _ in range(self.num_ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
-                ant_cost = ant_cost + len(ant_solution) * 500
+                ant_cost = ant_cost + len(ant_solution) * self.vehicle_cost
                 ant_costs.append(ant_cost)
 
                 if ant_cost < iter_best_cost:
                     iter_best_cost = ant_cost
-                    iter_best_solution = ant_solution
+                    # iter_best_solution = ant_solution
 
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
                     self.best_solution = ant_solution
-
-            self._update_pheromone(iter_best_solution, iter_best_cost)
-            self._update_pheromone(self.best_solution, self.best_cost)
+            self._evaporate_pheromone()
+            # self._deposit_pheromone(iter_best_solution, iter_best_cost)
+            self._deposit_pheromone(self.best_solution, self.best_cost)
             
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 

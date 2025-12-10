@@ -188,18 +188,16 @@ class PDataManager:
             route_col_value = str(row['路線編號']).strip() if not pd.isna(row['路線編號']) else None
             store_name = row['店鋪名']
             
-            # 0. 偵測主線模式
             if "主線" in str(store_name) or "主線" in str(route_col_value):
                 is_main_line_mode = True
                 continue 
 
-            # 1. 略過無效行 (非主線模式下的空行)
             if not route_col_value and not is_main_line_mode:
                 continue
+            
             if route_col_value == '爆量線':
                 continue
 
-            # 2. 一般路線邏輯 (有標題行)
             if not is_main_line_mode and pd.isna(store_name) and route_col_value:
                 current_main_route_id = route_col_value
                 if route_col_value.isdigit():
@@ -216,7 +214,6 @@ class PDataManager:
                         "stores": []
                     }
                 
-                # 處理標題行上的彙總數據
                 if not pd.isna(row['裝載率']):
                     routes_info[current_main_route_id]["dc"]["load_rate"] = row['裝載率']
                 if not pd.isna(row['距離(公里)']):
@@ -226,7 +223,6 @@ class PDataManager:
                 
                 continue
 
-            # 3. 主線邏輯 (自動分車)
             if is_main_line_mode:
                 has_load_stats = not pd.isna(row['裝載率'])
                 
@@ -250,9 +246,7 @@ class PDataManager:
                     if not pd.isna(row['時間']):
                         routes_info[current_main_route_id]["dc"]["duration"] = row['時間']
 
-            # 4. 處理店鋪資料 (加入店鋪前的關鍵檢查)
             if current_main_route_id:
-                # [重要修正] 如果這行沒有店鋪名，代表它是空行或無效行，直接跳過，避免產生 null 資料
                 if pd.isna(store_name):
                     continue
 

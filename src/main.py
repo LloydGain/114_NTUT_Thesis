@@ -45,38 +45,71 @@ def main():
 
     params = {
         'store_extraction_ga': {
-            'p_size': 100,
+            'population_size': 100,
             'generations': 1000,
+            'cross_rate': 0.8,
+            'mutation_rate': 0.2,
             'early_stop_patience': 100
         },
         'store_allocation_aco': {
             'num_ants': 50,
             'iterations': 500,
+            'alpha': 1,
+            'beta': 1,
+            'rho': 0.1, 
+            'tau_ratio': 50,
+            'q': 100,
+            'q0': 0.9,
             'early_stop_patience': 30
         },
         'support_line_aco': {
             'num_ants': 50,
             'iterations': 500,
-            'early_stop_patience': 50
+            'alpha': 2,
+            'beta': 2,
+            'gamma': 3,
+            'rho': 0.2,
+            'tau_ratio': 50,
+            'q': 100,
+            'q0': 0.9,
+            'early_stop_patience': 50,
+            'support_capacity': 7.2
         }
     }
 
     # params = {
     #     'store_extraction_ga': {
-    #         'p_size': 2,
+    #         'population_size': 2,
     #         'generations': 2,
+    #         'cross_rate': 0.8,
+    #         'mutation_rate': 0.2,
     #         'early_stop_patience': 1
     #     },
     #     'store_allocation_aco': {
     #         'num_ants': 1,
     #         'iterations': 1,
+    #         'alpha': 1,
+    #         'beta': 1,
+    #         'rho': 0.1, 
+    #         'tau_ratio': 50,
+    #         'q': 1,
+    #         'q0': 0.9,
     #         'early_stop_patience': 1
     #     },
     #     'support_line_aco': {
     #         'num_ants': 1,
     #         'iterations': 1,
-    #         'early_stop_patience': 1
-    #     }
+    #         'alpha': 1,
+    #         'beta': 1,
+    #         'gamma': 1,
+    #         'rho': 0.2,
+    #         'tau_ratio': 50,
+    #         'q': 1,
+    #         'q0': 0.9,
+    #         'early_stop_patience': 1,
+    #         'support_capacity': 7.2
+    #     },
+    #     'Test': True
     # }
 
 # -----------------------------------------------------------------------------------
@@ -97,7 +130,8 @@ def main():
     start_time = time.time()
 
     print("Starting Store Extraction using GA...")
-    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, population_size=params['store_extraction_ga']['p_size'], generations=params['store_extraction_ga']['generations'], early_stop_patience=params['store_extraction_ga']['early_stop_patience'])
+    ga_params = params['store_extraction_ga']
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, **ga_params)
     main_routes, extracted_stores = store_extract.run()
     store_extract_log_data = store_extract.log
 
@@ -109,7 +143,8 @@ def main():
     start_time = time.time()
 
     print("Starting Store Allocation using ACO...")
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, num_ants=params['store_allocation_aco']['num_ants'], iterations=params['store_allocation_aco']['iterations'], early_stop_patience=params['store_allocation_aco']['early_stop_patience'])
+    allocate_params = params['store_allocation_aco']
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, **allocate_params)
     _, main_routes, remaining_stores = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 
@@ -121,7 +156,8 @@ def main():
     start_time = time.time()
 
     print("Starting Support Line Planning using ACO...")
-    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, num_ants=params['support_line_aco']['num_ants'], iterations=params['support_line_aco']['iterations'], early_stop_patience=params['support_line_aco']['early_stop_patience'])
+    support_params = params['support_line_aco']
+    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, **support_params)
     _, support_routes = support.run()
     support_line_log_data = support.log
 
@@ -183,26 +219,6 @@ def main():
 
     start_time = time.time()
 
-    print("Displaying route visualizations...")
-    manu_routes = DisplayRoutes(manual_routes_file)
-    manu_routes.plot_routes_png(manual_routes_img)
-    manu_routes.plot_routes_html(manual_routes_html)
-
-    prog_routes = DisplayRoutes(program_routes_file)
-    prog_routes.plot_routes_png(program_routes_img)
-    prog_routes.plot_routes_html(program_route_html)
-
-    opt_routes = DisplayRoutes(optimized_routes_file)
-    opt_routes.plot_routes_png(optimized_routes_img)
-    opt_routes.plot_routes_html(optimized_routes_html)
-
-    end_time = time.time()
-    print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
-
-# -----------------------------------------------------------------------------------
-
-    start_time = time.time()
-
     print("Logging ...")
     logger = Log(log_dir, params)
     logger.log_parameters()
@@ -212,6 +228,26 @@ def main():
     
     end_time = time.time()
     print(f"記錄實驗參數和結果執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
+
+    start_time = time.time()
+
+    print("Displaying route visualizations...")
+    # manu_routes = DisplayRoutes(manual_routes_file)
+    # manu_routes.plot_routes_png(manual_routes_img)
+    # manu_routes.plot_routes_html(manual_routes_html)
+
+    # prog_routes = DisplayRoutes(program_routes_file)
+    # prog_routes.plot_routes_png(program_routes_img)
+    # prog_routes.plot_routes_html(program_route_html)
+
+    opt_routes = DisplayRoutes(optimized_routes_file)
+    opt_routes.plot_routes_png(optimized_routes_img)
+    opt_routes.plot_routes_html(optimized_routes_html)
+
+    end_time = time.time()
+    print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
 # ---------------------------------------------------------------------------
 
