@@ -19,7 +19,7 @@ class MDataManager:
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
-        self.stores_id = self._load_store_id()
+        self.store_ids = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_manual_routes()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
@@ -45,18 +45,18 @@ class MDataManager:
             return 7.2
 
 
-    def _get_store_id_by_route_code(self, route_code):
+    def _get_store_id_by_name(self, store_name):
         """
         Notes:
-            Get the store ID based on the route code.
+            Get the store ID based on the store name.
 
         Args:
-            route_code (str): Route code.
+            store_name (str): Store Name.
 
         Returns:
             str: Store ID.
         """
-        return self.stores_id.get(route_code, None)
+        return self.store_ids.get(store_name, None)
 
 
     def _get_coordinates(self, store_id):
@@ -164,16 +164,41 @@ class MDataManager:
         Returns:
             dict: stores ID with route code as key.
         """
-        stores_id = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_ID_SHEET, skiprows=0)
+        store_ids = {}
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
 
         for _, row in stores_df.iterrows():
-            route_code = row['車次']
-            if len(str(route_code)) > 2:
-                store_id = str(int(row['ID']) if not pd.isna(row['ID']) else None)
-                stores_id[route_code] = store_id
+            store_id = row['店鋪編號']
+            store_name = row['店鋪名稱']
+            if not pd.isna(store_id):
+                store_id = str(int(store_id))
+                store_ids[store_name] = store_id
 
-        return stores_id
+        return store_ids
+
+
+    def _load_store_coordinates(self):
+        """
+        Notes:
+            Load store coordinates from an Excel file into dict.
+
+        Args:
+            file (str): Path to the Excel file.
+
+        Returns:
+            dict: Dictionary with store IDs as keys and their coordinates as values.
+                Example: {'store_01': {'longitude': 121.5, 'latitude': 25.03}, ...}
+        """
+        stores_info = {}
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
+        
+        for _, row in stores_df.iterrows():
+            store_id = str(row['店鋪編號'])
+            longitude = row['經度']
+            latitude = row['緯度']
+            stores_info[store_id] = {'longitude': longitude, 'latitude': latitude}
+        
+        return stores_info
 
 
     def _load_manual_routes(self):
@@ -194,8 +219,8 @@ class MDataManager:
         main_route_code = None
         for _, row in routes_df.iterrows():
             route_code = str(row['車次'])
-            store_id = self._get_store_id_by_route_code(route_code)
             store_name = row['店名']
+            store_id = self._get_store_id_by_name(store_name)
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()

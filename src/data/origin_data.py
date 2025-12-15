@@ -20,6 +20,7 @@ class ODataManager:
         self.excel_files = excel_files
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
+        self.store_ids = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
         self.distance_matrix, self.time_matrix = osrm._compute_cost_matrices(self.routes_info)
@@ -168,6 +169,44 @@ class ODataManager:
         return dwell_info
 
 
+    def _load_store_id(self):
+        """
+        Notes:
+            Load store IDs from an Excel file into dict.
+        
+        Args:
+            None.
+        
+        Returns:
+            dict: stores ID with route code as key.
+        """
+        store_ids = {}
+        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
+
+        for _, row in stores_df.iterrows():
+            store_id = row['店鋪編號']
+            store_name = row['店鋪名稱']
+            if not pd.isna(store_id):
+                store_id = str(int(store_id))
+                store_ids[store_name] = store_id
+
+        return store_ids
+
+
+    def _get_store_id_by_name(self, store_name):
+        """
+        Notes:
+            Get the store ID based on the store name.
+
+        Args:
+            store_name (str): Store Name.
+
+        Returns:
+            str: Store ID.
+        """
+        return self.store_ids.get(store_name, None)
+
+
     def _load_store_coordinates(self):
         """
         Notes:
@@ -208,8 +247,8 @@ class ODataManager:
         i = 0
         for _, row in routes_df.iterrows():
             route_code = str(row['車次'])
-            store_id = str(int(row['ID'])) if not pd.isna(row['ID']) else None
             store_name = row['店名']
+            store_id = self._get_store_id_by_name(store_name)
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
