@@ -1,5 +1,10 @@
+import os
 import copy
 import time
+import random
+import numpy as np
+import argparse
+from dotenv import load_dotenv
 from datetime import datetime
 from data.origin_data import ODataManager
 from data.manual_data import MDataManager
@@ -9,17 +14,33 @@ from route.route import RouteManager
 from route.extract_ga import StoreExtractionGA
 from route.allocate_aco import StoreAllocationACO
 from route.support_line_aco import SupportLinePlanningACO
+from route.local_search import LocalSearch
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
 
+load_dotenv()
+r_seed = os.getenv("RANDOM_SEED")
+r_seed = int(r_seed)
+random.seed(r_seed)
+np.random.seed(r_seed)
 
-def main():
-    file_date = '1203'
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file_date", type=str, required=True)
+    parser.add_argument("--test", action="store_true", help="Run in test mode with reduced parameters")
+    return parser.parse_args()
+
+
+def main(file_date, test_mode=False):
+    # file_date = '1203'
+    # file_date = '1205'
+    # file_date = '1207'
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = f'../output/{file_date}/{dt_folder}/logs'
-    route_file = f'../data/{file_date}route.xlsx'
-    manual_file = f'../data/{file_date}manual.xlsx'
-    program_file = f'../data/{file_date}program.xlsx'
+    route_file = f'../data/{file_date}/{file_date}route.xlsx'
+    manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
+    program_file = f'../data/{file_date}/{file_date}program.xlsx'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     original_route = f'../output/{file_date}/original_routes_info.json'
     manual_routes_file = f'../output/{file_date}/manual_routes_info.json'
@@ -37,19 +58,20 @@ def main():
     program_route_html = f'{program_routes_dir}/routes.html'
     optimized_routes_html = f'{optimized_routes_dir}/routes.html'
 
+    store_count_log_file = 'store_count_log.xlsx'
     store_extract_log_file = 'store_extraction_log.xlsx'
     store_allocate_log_file = 'store_allocation_log.xlsx'
     support_line_log_file = 'support_line_log.xlsx'
 
 # -----------------------------------------------------------------------------------
 
-    params = {
+    production_params = {
         'store_extraction_ga': {
             'population_size': 100,
             'generations': 1000,
             'cross_rate': 0.8,
             'mutation_rate': 0.2,
-            'early_stop_patience': 100
+            'early_stop_patience': 30
         },
         'store_allocation_aco': {
             'num_ants': 50,
@@ -60,7 +82,7 @@ def main():
             'tau_ratio': 50,
             'q': 100,
             'q0': 0.9,
-            'early_stop_patience': 30
+            'early_stop_patience': 10
         },
         'support_line_aco': {
             'num_ants': 50,
@@ -74,43 +96,49 @@ def main():
             'q0': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2
-        }
+        },
+        'random.seed': r_seed
     }
 
-    # params = {
-    #     'store_extraction_ga': {
-    #         'population_size': 2,
-    #         'generations': 2,
-    #         'cross_rate': 0.8,
-    #         'mutation_rate': 0.2,
-    #         'early_stop_patience': 1
-    #     },
-    #     'store_allocation_aco': {
-    #         'num_ants': 1,
-    #         'iterations': 1,
-    #         'alpha': 1,
-    #         'beta': 1,
-    #         'rho': 0.1, 
-    #         'tau_ratio': 50,
-    #         'q': 1,
-    #         'q0': 0.9,
-    #         'early_stop_patience': 1
-    #     },
-    #     'support_line_aco': {
-    #         'num_ants': 1,
-    #         'iterations': 1,
-    #         'alpha': 1,
-    #         'beta': 1,
-    #         'gamma': 1,
-    #         'rho': 0.2,
-    #         'tau_ratio': 50,
-    #         'q': 1,
-    #         'q0': 0.9,
-    #         'early_stop_patience': 1,
-    #         'support_capacity': 7.2
-    #     },
-    #     'Test': True
-    # }
+    test_params = {
+        'store_extraction_ga': {
+            'population_size': 2,
+            'generations': 2,
+            'cross_rate': 0.8,
+            'mutation_rate': 0.2,
+            'early_stop_patience': 1
+        },
+        'store_allocation_aco': {
+            'num_ants': 1,
+            'iterations': 1,
+            'alpha': 1,
+            'beta': 1,
+            'rho': 0.1, 
+            'tau_ratio': 50,
+            'q': 1,
+            'q0': 0.9,
+            'early_stop_patience': 1
+        },
+        'support_line_aco': {
+            'num_ants': 1,
+            'iterations': 1,
+            'alpha': 1,
+            'beta': 1,
+            'gamma': 1,
+            'rho': 0.1,
+            'tau_ratio': 50,
+            'q': 1,
+            'q0': 0.9,
+            'early_stop_patience': 1,
+            'support_capacity': 7.2
+        },
+        'Test': True
+    }
+
+    if test_mode:
+        params = test_params
+    else:
+        params = production_params
 
 # -----------------------------------------------------------------------------------
 
@@ -167,9 +195,23 @@ def main():
 # -----------------------------------------------------------------------------------
 
     optimized_routes = {**support_routes, **main_routes}
+    # optimized_routes = {**main_routes, **support_routes}
     print(f'Extracted Store Count: {len(extracted_stores)}')
     print(f'Allocate Store Count: {len(extracted_stores) - len(remaining_stores)}')
     print(f'Support Line Store Count: {len(remaining_stores)}')
+
+# -----------------------------------------------------------------------------------
+
+    start_time = time.time()
+
+    print("Starting Local Search...")
+    optimized_cost = sum(route['dc']['distance'] for route in optimized_routes.values())
+    ls = LocalSearch(distance_matrix, time_matrix)
+    optimized_routes, optimized_cost = ls.optimize_inter_route(optimized_routes, optimized_cost)
+    optimized_routes, optimized_cost = ls.optimize_intra_route(optimized_routes, optimized_cost)
+    
+    end_time = time.time()
+    print(f"Local Search 執行時間: {end_time - start_time:.2f} 秒")
 
 # -----------------------------------------------------------------------------------
 
@@ -195,21 +237,22 @@ def main():
 
 # -----------------------------------------------------------------------------------
 
-    start_time = time.time()
+    # start_time = time.time()
 
-    print("Loading program route data...")
-    m_data = PDataManager([program_file, route_network_file], distance_matrix, time_matrix)
-    m_data.save_routes_to_json(program_routes_file)
+    # print("Loading program route data...")
+    # m_data = PDataManager([program_file, route_network_file], distance_matrix, time_matrix)
+    # m_data.save_routes_to_json(program_routes_file)
 
-    end_time = time.time()
-    print(f"學長編排資料讀取執行時間: {end_time - start_time:.2f} 秒")
+    # end_time = time.time()
+    # print(f"學長編排資料讀取執行時間: {end_time - start_time:.2f} 秒")
 
 # -----------------------------------------------------------------------------------
 
     start_time = time.time()
 
     print("Evaluating and comparing routes...")
-    eval = EvalRoutes(manual_routes_file, program_routes_file, optimized_routes_file)
+    # eval = EvalRoutes(manual_routes_file, optimized_routes_file, program_routes_file) # 1203
+    eval = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
     eval.export_to_excel(route_comparison_file)
 
     end_time = time.time()
@@ -222,6 +265,7 @@ def main():
     print("Logging ...")
     logger = Log(log_dir, params)
     logger.log_parameters()
+    logger.log_route(store_count_log_file, o_data.routes_info, m_data.routes_info, optimized_routes)
     logger.log_execution(store_extract_log_file, store_extract_log_data)
     logger.log_execution(store_allocate_log_file, store_allocate_log_data)
     logger.log_execution(support_line_log_file, support_line_log_data)
@@ -251,6 +295,6 @@ def main():
 
 # ---------------------------------------------------------------------------
 
-
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.file_date, args.test)

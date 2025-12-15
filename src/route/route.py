@@ -74,7 +74,35 @@ class RouteManager:
             route = self.routes_info[route_id]
             stores = self.routes_info[route_id]['stores']
             self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] != removed_store['route_code']]
+            # self._remove_unused_route(route_id)
             self._update_route_info(route)
+
+
+    def move_store_to_route(self, route1_id, store, route2_id, position):
+        """
+        """
+        self.remove_store(route1_id, store)
+        self.insert_store(store, route2_id, position)
+
+
+    def replace_stores(self, route_id, stores):
+        """
+        Notes:
+            Replace route's stores.
+        
+        Args:
+            route_id (str): Route ID.
+            stores (list): [store1, store2, ...]
+        
+        Returns:
+            None.
+        """
+        route = self.routes_info.get(route_id)
+        
+        if not route: return
+
+        route['stores'] = stores
+        self._update_route_info(route)
 
 
     def remove_stores(self, route_id, removed_stores):
@@ -95,6 +123,55 @@ class RouteManager:
             removed_route_codes = {store['route_code'] for store in removed_stores}
             self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] not in removed_route_codes]
             self._update_route_info(route)
+
+
+    def _remove_unused_routes(self):
+        """
+        Notes:
+            Remove Unused route (0 store).
+        
+        Args:
+            route_id (str): Route ID.
+
+        Returns:
+            None.
+        """
+        removed_route_ids = []
+        for route_id in self.routes_info:
+            stores = self.routes_info[route_id]['stores']
+            if len(stores) == 0: 
+                removed_route_ids.append(route_id)
+                
+        for route_id in removed_route_ids:
+            self.routes_info.pop(route_id)
+
+
+    def swap_stores(self, r1_id, s1, r2_id, s2):
+        """
+        Notes:
+            Swap store.
+
+        Args:
+            r1_id (str): Route1 ID.
+            s1 (dict): Store1 in Route1. 
+            r2_id (str): Route2 ID.
+            s2 (dict): Store2 in Route2.
+        
+        Returns:
+            None.
+        """
+        r1 = self.routes_info[r1_id]
+        r2 = self.routes_info[r2_id]
+        r1_stores = r1['stores']
+        r2_stores = r2['stores']
+
+        i = r1_stores.index(s1)
+        j = r2_stores.index(s2)
+
+        r1_stores[i], r2_stores[j] = r2_stores[j], r1_stores[i]
+
+        self._update_route_info(r1)
+        self._update_route_info(r2)
 
 
     def get_route_info(self, route_id, field=None):
