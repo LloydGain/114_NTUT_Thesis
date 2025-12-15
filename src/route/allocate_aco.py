@@ -562,7 +562,7 @@ class StoreAllocationACO:
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float("inf")
-            # iter_best_ant_solution = None
+            iter_best_ant_solution = None
             for _ in range(self.num_ants):
                 ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
                 ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
@@ -570,7 +570,7 @@ class StoreAllocationACO:
 
                 if ant_cost < iter_best_cost:
                     iter_best_cost = ant_cost
-                    # iter_best_ant_solution = ant_solution
+                    iter_best_ant_solution = ant_solution
 
                 if ant_cost < self.best_cost:
                     self.best_cost = ant_cost
@@ -579,8 +579,8 @@ class StoreAllocationACO:
                     self.best_remaining_solution = ant_remaining_stores
             
             self._evaporate_pheromone()
-            # self._deposit_pheromone(iter_best_ant_solution, iter_best_cost)
-            self._deposit_pheromone(self.best_ant_solution, self.best_cost)
+            self._deposit_pheromone(iter_best_ant_solution, iter_best_cost)
+            # self._deposit_pheromone(self.best_ant_solution, self.best_cost)
 
             print(f'Store Allocation: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 

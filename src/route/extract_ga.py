@@ -1,3 +1,4 @@
+import os
 import hashlib
 import numpy as np
 from route.route import RouteManager
@@ -5,14 +6,13 @@ from route.utils import EarlyStopper
 from route.allocate_aco import StoreAllocationACO
 from route.support_line_aco import SupportLinePlanningACO
 
-# np.random.seed(1234)
-
 class StoreExtractionGA:
     """
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
     def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)
@@ -41,8 +41,7 @@ class StoreExtractionGA:
         """
 
         route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
-        for route_id in routes:
-            route_manager._update_route_info(routes[route_id])
+        route_manager._update_all_routes_info()
         
         return routes
 
@@ -96,6 +95,39 @@ class StoreExtractionGA:
         return {route_id: route_info for route_id, route_info in self.main_routes.items() if route_info['dc']['load_rate'] > 1.0}
 
 
+    def _calculate_removal_weights(self, stores):
+        """
+        Notes:
+            Calculate the store's weight to be removed.
+
+        Args:
+            stores (list): [store1, store2, ...]
+
+        Return:
+            probs (list): store's removing probability.
+        """
+        depot_id = self.dc['store_id']
+        weights = []
+        store_ids = [depot_id] + [store['store_id'] for store in stores] + [depot_id]
+
+        for i in range(1, len(store_ids) - 1):
+            pre_id = store_ids[i-1]
+            cur_id = store_ids[i]
+            next_id = store_ids[i+1]
+            d_pre_cur = self.distance_matrix[pre_id][cur_id]
+            d_cur_next = self.distance_matrix[cur_id][next_id]
+            d_pre_next = self.distance_matrix[pre_id][next_id]
+
+            saving = d_pre_cur + d_cur_next - d_pre_next
+
+            weights.append(max(saving, 1e-12))
+        
+        weights = np.array(weights)
+        probs = weights / np.sum(weights)
+
+        return probs 
+
+
     def _extract_stores(self, route_id):
         """
         Notes:
@@ -109,17 +141,16 @@ class StoreExtractionGA:
         """
         copy_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
-        selected_idxs = []
         selected_stores = []
-        stores = self.overloaded_routes[route_id]['stores']
 
         while route_manager.get_route_info(route_id, field='load_rate') > 1.0:
-            idx = np.random.randint(len(stores))
-            if idx not in selected_idxs:
-                selected_idxs.append(idx)
-                selected_store = stores[idx]
-                selected_stores.append(selected_store)
-                route_manager.remove_store(route_id, selected_store)
+            stores = route_manager.routes_info[route_id]['stores']
+            probabilities = self._calculate_removal_weights(stores)
+            idx_to_remove = np.random.choice(len(stores), p=probabilities)
+            
+            selected_store = stores[idx_to_remove]
+            selected_stores.append(selected_store)
+            route_manager.remove_store(route_id, selected_store)
 
         return selected_stores
 
@@ -211,8 +242,9 @@ class StoreExtractionGA:
         
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
         allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-        support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-        fitness = allocate_cost + support_cost
+        # support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+        # fitness = allocate_cost + support_cost
+        fitness = allocate_cost
 
         self.fitness_cache[key] = fitness
         return fitness
@@ -380,3 +412,4 @@ class StoreExtractionGA:
                 break
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)
+    

@@ -2,6 +2,7 @@ import random
 import numpy as np
 from datetime import datetime, timedelta
 from route.route import RouteManager
+from route.local_search import LocalSearch
 from route.utils import EarlyStopper
 
 class SupportLinePlanningACO:
@@ -26,6 +27,7 @@ class SupportLinePlanningACO:
         self.pheromone_matrix = dict()
         self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
         self.saving_matrix = self._saving_matrix()
+        self.ls = LocalSearch(self.distance_matrix, self.time_matrix)
         self.best_cost = float('inf')
         self.best_solution = None
         self.time_limit_per_route = 5 * 60 * 60
@@ -49,11 +51,11 @@ class SupportLinePlanningACO:
         saving_matrix = {
             store_idx: {
                 store_idy: (
-                    self.distance_matrix[self.dc['store_id']][store_idx] +
+                    abs(self.distance_matrix[self.dc['store_id']][store_idx] +
                     self.distance_matrix[self.dc['store_id']][store_idy] - 
-                    self.distance_matrix[store_idx][store_idy]
-                ) for j, store_idy in enumerate(store_ids)
-            } for i, store_idx in enumerate(store_ids)
+                    self.distance_matrix[store_idx][store_idy])
+                ) for store_idy in store_ids
+            } for store_idx in store_ids
         }
         
         return saving_matrix
@@ -216,7 +218,7 @@ class SupportLinePlanningACO:
             best_store (dict): The selected next store.
         """
         best_store = None
-        best_value = -1
+        best_value = float("-inf")
         for store in feasible_stores:
             value = self._transition_value(current_store, store)
             if value > best_value:
@@ -480,7 +482,8 @@ class SupportLinePlanningACO:
             ant_solution[vehicle_id] = route
 
             # current_store = max(unvisited_stores, key=lambda store: store['volume'])
-            current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
+            # current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
+            current_store = random.choice(unvisited_stores)
 
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
@@ -582,7 +585,7 @@ class SupportLinePlanningACO:
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float('inf')
-            # iter_best_solution = None
+            iter_best_solution = None
             for _ in range(self.num_ants):
                 ant_solution = self._solution_construction()
                 ant_cost = self._cost_function(ant_solution)
@@ -591,15 +594,19 @@ class SupportLinePlanningACO:
 
                 if ant_cost < iter_best_cost:
                     iter_best_cost = ant_cost
-                    # iter_best_solution = ant_solution
+                    iter_best_solution = ant_solution
 
-                if ant_cost < self.best_cost:
-                    self.best_cost = ant_cost
-                    self.best_solution = ant_solution
-            self._evaporate_pheromone()
-            # self._deposit_pheromone(iter_best_solution, iter_best_cost)
-            self._deposit_pheromone(self.best_solution, self.best_cost)
+            optimized_routes, optimized_cost = self.ls.optimize(iter_best_solution, iter_best_cost)
             
+            if iter_best_cost < self.best_cost:
+                self.best_cost = optimized_cost
+                self.best_solution = optimized_routes
+
+            self._evaporate_pheromone()
+            self._deposit_pheromone(optimized_routes, optimized_cost)
+            # self._deposit_pheromone(iter_best_solution, iter_best_cost)
+            # self._deposit_pheromone(self.best_solution, self.best_cost)
+
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
             self.log.append({
