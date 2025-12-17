@@ -68,12 +68,12 @@ class EvalRoutes:
         average_duration = total_duration / total_vehicles
         average_main_distance = total_main_distance / main_vehicles
         average_main_duration = total_main_duration / main_vehicles
-        average_support_distance = total_support_distance / support_vehicles
-        average_support_duration = total_support_duration / support_vehicles
+        average_support_distance = total_support_distance / support_vehicles if not support_vehicles == 0 else 0
+        average_support_duration = total_support_duration / support_vehicles if not support_vehicles == 0 else 0
 
         average_load_rate = sum(route['dc']['load_rate'] for route in routes.values()) / total_vehicles
         average_main_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'][0] != '1') / main_vehicles
-        average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'][0] == '1') / support_vehicles
+        average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'][0] == '1') / support_vehicles if not support_vehicles == 0 else 0
 
         summary = {
             'total_vehicles': total_vehicles,

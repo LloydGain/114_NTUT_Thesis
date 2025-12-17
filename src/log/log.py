@@ -58,7 +58,7 @@ class Log:
             stores1 = routes1[route_id]['stores'] if route1_data else []
             stores2 = routes2[route_id]['stores'] if route2_data else []
             stores3 = routes3[route_id]['stores'] if route3_data else []
-            original_load_rate = stores1[route_id]['dc']['load_rate']
+            original_load_rate = round(route1_data['dc']['load_rate'], 3)
             maunal_same_code_count = sum(1 for store in stores2 if store['route_code'].startswith(store['route_id']))
             optimized_same_code_count = sum(1 for store in stores3 if store['route_code'].startswith(store['route_id']))
 
