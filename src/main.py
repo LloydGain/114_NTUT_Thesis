@@ -6,6 +6,7 @@ import numpy as np
 import argparse
 from dotenv import load_dotenv
 from datetime import datetime
+from data.store_data import StoreData
 from data.origin_data import ODataManager
 from data.manual_data import MDataManager
 from data.program_data import PDataManager
@@ -28,20 +29,19 @@ np.random.seed(r_seed)
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_date", type=str, required=True)
+    parser.add_argument("--seed", type=int, default=None, help="Random seed (optional). If not set, use env or random behavior.")
     parser.add_argument("--test", action="store_true", help="Run in test mode with reduced parameters")
     return parser.parse_args()
 
 
-def main(file_date, test_mode=False):
-    # file_date = '1203'
-    # file_date = '1205'
-    # file_date = '1207'
+def main(file_date, random_seed=None, test_mode=False):
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = f'../output/{file_date}/{dt_folder}/logs'
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}/{file_date}program.xlsx'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
+    store_info_file = '../data/store_info.xlsx'
     original_route = f'../output/{file_date}/original_routes_info.json'
     manual_routes_file = f'../output/{file_date}/manual_routes_info.json'
     program_routes_file = f'../output/{file_date}/program_routes_info.json'
@@ -64,6 +64,18 @@ def main(file_date, test_mode=False):
     support_line_log_file = 'support_line_log.xlsx'
 
 # -----------------------------------------------------------------------------------
+
+    if random_seed is None:
+        env_seed = os.getenv("RANDOM_SEED")
+        random_seed = int(env_seed)
+    
+    if random_seed is not None:
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+
+# -----------------------------------------------------------------------------------
+
+    comment = ""
 
     production_params = {
         'store_extraction_ga': {
@@ -97,7 +109,8 @@ def main(file_date, test_mode=False):
             'early_stop_patience': 50,
             'support_capacity': 7.2
         },
-        'random.seed': r_seed
+        'random.seed': random_seed,
+        'comment': comment
     }
 
     test_params = {
@@ -132,7 +145,8 @@ def main(file_date, test_mode=False):
             'early_stop_patience': 1,
             'support_capacity': 7.2
         },
-        'Test': True
+        'Test': True,
+        'comment': comment
     }
 
     if test_mode:
@@ -144,11 +158,21 @@ def main(file_date, test_mode=False):
 
     start_time = time.time()
 
+    print("Calculating store distance & time...")
+    s_data = StoreData(store_info_file)
+    distance_matrix, time_matrix = s_data.distance_matrix, s_data.time_matrix
+
+    end_time = time.time()
+    print(f"計算店鋪矩陣執行時間: {end_time - start_time:.2f} 秒")
+
+# -----------------------------------------------------------------------------------
+
+    start_time = time.time()
+
     print("Loading route data...")
-    o_data = ODataManager([route_file, route_network_file])
+    o_data = ODataManager([route_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     o_data.save_routes_to_json(original_route)
     routes = copy.deepcopy(o_data.routes_info)
-    distance_matrix, time_matrix = o_data.distance_matrix, o_data.time_matrix
 
     end_time = time.time()
     print(f"資料讀取執行時間: {end_time - start_time:.2f} 秒")
@@ -194,8 +218,8 @@ def main(file_date, test_mode=False):
 
 # -----------------------------------------------------------------------------------
 
-    optimized_routes = {**support_routes, **main_routes}
-    # optimized_routes = {**main_routes, **support_routes}
+    # optimized_routes = {**support_routes, **main_routes}
+    optimized_routes = {**main_routes, **support_routes}
     print(f'Extracted Store Count: {len(extracted_stores)}')
     print(f'Allocate Store Count: {len(extracted_stores) - len(remaining_stores)}')
     print(f'Support Line Store Count: {len(remaining_stores)}')
@@ -229,7 +253,7 @@ def main(file_date, test_mode=False):
     start_time = time.time()
 
     print("Loading manual route data...")
-    m_data = MDataManager([manual_file, route_network_file], distance_matrix, time_matrix)
+    m_data = MDataManager([manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     m_data.save_routes_to_json(manual_routes_file)
 
     end_time = time.time()
@@ -240,7 +264,7 @@ def main(file_date, test_mode=False):
     # start_time = time.time()
 
     # print("Loading program route data...")
-    # m_data = PDataManager([program_file, route_network_file], distance_matrix, time_matrix)
+    # m_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     # m_data.save_routes_to_json(program_routes_file)
 
     # end_time = time.time()
@@ -297,4 +321,4 @@ def main(file_date, test_mode=False):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.file_date, args.test)
+    main(args.file_date, args.seed, args.test)

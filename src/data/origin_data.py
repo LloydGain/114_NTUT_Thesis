@@ -12,18 +12,21 @@ class ODataManager:
     _DC_CENTER = "DC"
     _ROUTE_DATA_SHEET = 0
     _DWELL_TIME_SHEET = 1
-    _STORE_COORD_SHEET = 2
+    _STORE_COORD_SHEET = 0
 
-    def __init__(self, excel_files):
-        osrm = OSRM()
+    def __init__(self, excel_files, distance_matrix, time_matrix):
         self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
         self.excel_files = excel_files
+        self.distance_matrix = distance_matrix
+        self.time_matrix = time_matrix
+        self.routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, skiprows=3)
+        self.dwells_df = pd.read_excel(self.excel_files[1], sheet_name=self._DWELL_TIME_SHEET, skiprows=0)
+        self.stores_df = pd.read_excel(self.excel_files[2], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
         self.store_ids = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
         self.routes_info = self._load_original_routes()
-        self.distance_matrix, self.time_matrix = osrm._compute_cost_matrices(self.routes_info)
         self._classify_route_dist_group_and_region()
         self._classify_store_dist_group_and_region()    
 
@@ -160,8 +163,7 @@ class ODataManager:
             dict: A dictionary mapping store IDs to their average dwell times.
         """
         dwell_info = {}
-        dwells_df = pd.read_excel(self.excel_files[1], sheet_name=self._DWELL_TIME_SHEET, skiprows=0)
-        for _, row in dwells_df.iterrows():
+        for _, row in self.dwells_df.iterrows():
             store_id = str(row['店舖ID'])
             dwell_time = row['平均滯店時間']
             dwell_info[store_id] = dwell_time
@@ -181,9 +183,7 @@ class ODataManager:
             dict: stores ID with route code as key.
         """
         store_ids = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
-
-        for _, row in stores_df.iterrows():
+        for _, row in self.stores_df.iterrows():
             store_id = row['店鋪編號']
             store_name = row['店鋪名稱']
             if not pd.isna(store_id):
@@ -220,9 +220,7 @@ class ODataManager:
                 Example: {'store_01': {'longitude': 121.5, 'latitude': 25.03}, ...}
         """
         stores_info = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
-        
-        for _, row in stores_df.iterrows():
+        for _, row in self.stores_df.iterrows():
             store_id = str(row['店鋪編號'])
             longitude = row['經度']
             latitude = row['緯度']
@@ -243,9 +241,8 @@ class ODataManager:
             dict: routes information, with route code as key.
         """
         routes_info = {}
-        routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, skiprows=3)
         i = 0
-        for _, row in routes_df.iterrows():
+        for _, row in self.routes_df.iterrows():
             route_code = str(row['車次'])
             store_name = row['店名']
             store_id = self._get_store_id_by_name(store_name)

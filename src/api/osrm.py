@@ -38,7 +38,7 @@ class OSRM:
             raise ValueError(f'OSRM table query failed.')
     
 
-    def _compute_cost_matrices(self, routes_info):
+    def _compute_cost_matrices(self, stores):
         """
         Notes:
             Compute distance and time matrices.
@@ -49,11 +49,10 @@ class OSRM:
         Returns:
             tuple: (distance_matrix, time_matrix)
         """
-        routes = routes_info.values()
-        stores_id = [self.dc['store_id']] + [store['store_id'] for route in routes for store in route['stores']]
-        coordinates = [self.dc] + [store for route in routes for store in route['stores']]
+        stores = [self.dc] + stores
+        stores_id = [store['store_id'] for store in stores]
 
-        dist, time = self.get_distance_and_time_matrix(coordinates)
+        dist, time = self.get_distance_and_time_matrix(stores)
 
         dist_matrix = {
             store_id: {

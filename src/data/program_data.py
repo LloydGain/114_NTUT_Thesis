@@ -12,11 +12,14 @@ class PDataManager:
     _ROUTE_DATA_SHEET = 0
     _DWELL_TIME_SHEET = 1
     _STORE_ID_SHEET = 1
-    _STORE_COORD_SHEET = 2
+    _STORE_COORD_SHEET = 0
 
     def __init__(self, excel_files, distance_matrix, time_matrix):
         self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
         self.excel_files = excel_files
+        self.routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, dtype={'路線編號': str})
+        self.dwells_df = pd.read_excel(self.excel_files[1], sheet_name=self._DWELL_TIME_SHEET, skiprows=0)
+        self.stores_df = pd.read_excel(self.excel_files[2], sheet_name=self._STORE_ID_SHEET, skiprows=0)
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
         self.stores_id = self._load_store_id()
@@ -120,8 +123,7 @@ class PDataManager:
             dict: A dictionary mapping store IDs to their average dwell times.
         """
         dwell_info = {}
-        dwells_df = pd.read_excel(self.excel_files[1], sheet_name=self._DWELL_TIME_SHEET, skiprows=0)
-        for _, row in dwells_df.iterrows():
+        for _, row in self.dwells_df.iterrows():
             store_id = str(row['店舖ID'])
             dwell_time = row['平均滯店時間']
             dwell_info[store_id] = dwell_time
@@ -142,9 +144,7 @@ class PDataManager:
                 Example: {'store_01': {'longitude': 121.5, 'latitude': 25.03}, ...}
         """
         stores_info = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_COORD_SHEET, skiprows=0)
-        
-        for _, row in stores_df.iterrows():
+        for _, row in self.stores_df.iterrows():
             store_id = str(row['店鋪編號'])
             longitude = row['經度']
             latitude = row['緯度']
@@ -165,9 +165,7 @@ class PDataManager:
             dict: stores ID with route code as key.
         """
         stores_id = {}
-        stores_df = pd.read_excel(self.excel_files[0], sheet_name=self._STORE_ID_SHEET, skiprows=0)
-
-        for _, row in stores_df.iterrows():
+        for _, row in self.stores_df.iterrows():
             route_code = row['車次']
             if len(str(route_code)) > 2:
                 store_id = str(int(row['ID']) if not pd.isna(row['ID']) else None)
@@ -178,13 +176,12 @@ class PDataManager:
 
     def _load_program_routes(self):
         routes_info = {}
-        routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, dtype={'路線編號': str})
         
         current_main_route_id = None
         max_route_id_counter = 100
         is_main_line_mode = False
 
-        for _, row in routes_df.iterrows():
+        for _, row in self.routes_df.iterrows():
             route_col_value = str(row['路線編號']).strip() if not pd.isna(row['路線編號']) else None
             store_name = row['店鋪名']
             
@@ -295,7 +292,7 @@ class PDataManager:
             None.
         """
         route_manager = RouteManager(self.routes_info, self.distance_matrix, self.time_matrix)
-        route_manager._update_all_routes_info()
+        route_manager.update_all_routes_info()
 
 
     def save_routes_to_json(self, json_file):
