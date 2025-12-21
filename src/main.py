@@ -31,10 +31,11 @@ def parse_args():
     parser.add_argument("--file_date", type=str, required=True)
     parser.add_argument("--seed", type=int, default=None, help="Random seed (optional). If not set, use env or random behavior.")
     parser.add_argument("--test", action="store_true", help="Run in test mode with reduced parameters")
+    parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
     return parser.parse_args()
 
 
-def main(file_date, random_seed=None, test_mode=False):
+def main(file_date, random_seed=None, test_mode=False, google=False):
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = f'../output/{file_date}/{dt_folder}/logs'
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
@@ -75,15 +76,17 @@ def main(file_date, random_seed=None, test_mode=False):
 
 # -----------------------------------------------------------------------------------
 
-    comment = ""
+    times = {}
+    comment = "With local search. after optimization.（Google)"
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 100,
-            'generations': 1000,
-            'cross_rate': 0.8,
+            'population_size': 50,
+            'elite_size': 10,
+            'generations': 10000,
+            'cross_rate': 0.9,
             'mutation_rate': 0.2,
-            'early_stop_patience': 30
+            'early_stop_patience': 1000
         },
         'store_allocation_aco': {
             'num_ants': 50,
@@ -93,29 +96,31 @@ def main(file_date, random_seed=None, test_mode=False):
             'rho': 0.1, 
             'tau_ratio': 50,
             'q': 100,
-            'q0': 0.9,
             'early_stop_patience': 10
         },
         'support_line_aco': {
             'num_ants': 50,
             'iterations': 500,
-            'alpha': 2,
-            'beta': 2,
-            'gamma': 3,
-            'rho': 0.2,
+            'alpha': 1,
+            'beta': 1,
+            'gamma': 1,
+            'local_rho': 0.1,
+            'global_rho': 0.1,
             'tau_ratio': 50,
             'q': 100,
-            'q0': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2
         },
-        'random.seed': random_seed,
-        'comment': comment
+        'comment': comment,
+        'date': file_date,
+        'google': google,
+        'random.seed': random_seed
     }
 
     test_params = {
         'store_extraction_ga': {
             'population_size': 2,
+            'elite_size': 2,
             'generations': 2,
             'cross_rate': 0.8,
             'mutation_rate': 0.2,
@@ -129,7 +134,6 @@ def main(file_date, random_seed=None, test_mode=False):
             'rho': 0.1, 
             'tau_ratio': 50,
             'q': 1,
-            'q0': 0.9,
             'early_stop_patience': 1
         },
         'support_line_aco': {
@@ -138,7 +142,8 @@ def main(file_date, random_seed=None, test_mode=False):
             'alpha': 1,
             'beta': 1,
             'gamma': 1,
-            'rho': 0.1,
+            'local_rho': 0.1,
+            'global_rho': 0.1,
             'tau_ratio': 50,
             'q': 1,
             'q0': 0.9,
@@ -163,7 +168,10 @@ def main(file_date, random_seed=None, test_mode=False):
     distance_matrix, time_matrix = s_data.distance_matrix, s_data.time_matrix
 
     end_time = time.time()
-    print(f"計算店鋪矩陣執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"計算店鋪矩陣執行時間: {time_consume} 秒")
+
+    times['Calculating store distance & time'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -175,7 +183,10 @@ def main(file_date, random_seed=None, test_mode=False):
     routes = copy.deepcopy(o_data.routes_info)
 
     end_time = time.time()
-    print(f"資料讀取執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"資料讀取執行時間: {time_consume} 秒")
+
+    times['Loading route data...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -188,7 +199,10 @@ def main(file_date, random_seed=None, test_mode=False):
     store_extract_log_data = store_extract.log
 
     end_time = time.time()
-    print(f"店鋪抽取執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"店鋪抽取執行時間: {time_consume} 秒")
+
+    times['Starting Store Extraction using GA...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -201,7 +215,10 @@ def main(file_date, random_seed=None, test_mode=False):
     store_allocate_log_data = store_allocate.log
 
     end_time = time.time()
-    print(f"店鋪再分配執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"店鋪再分配執行時間: {time_consume} 秒")
+
+    times['Starting Store Allocation using ACO...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -214,12 +231,15 @@ def main(file_date, random_seed=None, test_mode=False):
     support_line_log_data = support.log
 
     end_time = time.time()
-    print(f"支援線規劃執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"支援線規劃執行時間: {time_consume} 秒")
+
+    times['Starting Support Line Planning using ACO...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
-    # optimized_routes = {**support_routes, **main_routes}
-    optimized_routes = {**main_routes, **support_routes}
+    optimized_routes = {**support_routes, **main_routes}
+    # optimized_routes = {**main_routes, **support_routes}
     print(f'Extracted Store Count: {len(extracted_stores)}')
     print(f'Allocate Store Count: {len(extracted_stores) - len(remaining_stores)}')
     print(f'Support Line Store Count: {len(remaining_stores)}')
@@ -235,7 +255,10 @@ def main(file_date, random_seed=None, test_mode=False):
     optimized_routes, optimized_cost = ls.optimize_intra_route(optimized_routes, optimized_cost)
     
     end_time = time.time()
-    print(f"Local Search 執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"Local Search 執行時間: {time_consume} 秒")
+
+    times['Starting Local Search...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -243,10 +266,15 @@ def main(file_date, random_seed=None, test_mode=False):
 
     print("Exporting optimized route data...")
     route_manager = RouteManager(optimized_routes)
+    if google:
+        route_manager.update_all_routes_distance_and_duration_with_GoogleAPI()
     route_manager.export_routes_info(optimized_routes_file)
 
     end_time = time.time()
-    print(f"最佳化路線匯出執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"最佳化路線匯出執行時間: {time_consume} 秒")
+
+    times['Exporting optimized route data...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -254,18 +282,24 @@ def main(file_date, random_seed=None, test_mode=False):
 
     print("Loading manual route data...")
     m_data = MDataManager([manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
+    if google:
+        m_route_manager = RouteManager(m_data.routes_info, distance_matrix, time_matrix)
+        m_route_manager.update_all_routes_distance_and_duration_with_GoogleAPI()
     m_data.save_routes_to_json(manual_routes_file)
 
     end_time = time.time()
-    print(f"手動編排資料讀取執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"手動編排資料讀取執行時間: {time_consume} 秒")
+
+    times['Loading manual route data...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
     # start_time = time.time()
 
     # print("Loading program route data...")
-    # m_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
-    # m_data.save_routes_to_json(program_routes_file)
+    # p_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
+    # p_data.save_routes_to_json(program_routes_file)
 
     # end_time = time.time()
     # print(f"學長編排資料讀取執行時間: {end_time - start_time:.2f} 秒")
@@ -280,15 +314,19 @@ def main(file_date, random_seed=None, test_mode=False):
     eval.export_to_excel(route_comparison_file)
 
     end_time = time.time()
-    print(f"最佳化路線與手動編排路線比較執行時間: {end_time - start_time:.2f} 秒")
+    time_consume = round(end_time - start_time, 2)
+    print(f"最佳化路線與手動編排路線比較執行時間: {time_consume} 秒")
+    
+    times['Evaluating and comparing routes...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
     start_time = time.time()
 
     print("Logging ...")
-    logger = Log(log_dir, params)
+    logger = Log(log_dir, params, times)
     logger.log_parameters()
+    logger.log_times()
     logger.log_route(store_count_log_file, o_data.routes_info, m_data.routes_info, optimized_routes)
     logger.log_execution(store_extract_log_file, store_extract_log_data)
     logger.log_execution(store_allocate_log_file, store_allocate_log_data)
@@ -302,9 +340,9 @@ def main(file_date, random_seed=None, test_mode=False):
     start_time = time.time()
 
     print("Displaying route visualizations...")
-    # manu_routes = DisplayRoutes(manual_routes_file)
-    # manu_routes.plot_routes_png(manual_routes_img)
-    # manu_routes.plot_routes_html(manual_routes_html)
+    manu_routes = DisplayRoutes(manual_routes_file)
+    manu_routes.plot_routes_png(manual_routes_img)
+    manu_routes.plot_routes_html(manual_routes_html)
 
     # prog_routes = DisplayRoutes(program_routes_file)
     # prog_routes.plot_routes_png(program_routes_img)
@@ -321,4 +359,4 @@ def main(file_date, random_seed=None, test_mode=False):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.file_date, args.seed, args.test)
+    main(args.file_date, args.seed, args.test, args.google)

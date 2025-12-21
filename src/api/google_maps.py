@@ -147,7 +147,7 @@ class GoogleRoutesAPI:
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": self.api_key,
-            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline,routes.legs.startLocation,routes.legs.endLocation"
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline,routes.legs.startLocation,routes.legs.endLocation,routes.legs.distanceMeters,routes.legs.staticDuration"
         }
 
         response = requests.post(self.routes_base_url, json=body, headers=headers)
@@ -159,6 +159,14 @@ class GoogleRoutesAPI:
         distance, duration = self.distance_meter_to_km(data['routes'][0]['distanceMeters']), self.parse_duration(data['routes'][0]['duration'])
         duration += sum(wp['dwell_time'] for wp in waypoints)
 
-        encoded_polyline = data['routes'][0]['polyline']['encodedPolyline']
+        # encoded_polyline = data['routes'][0]['polyline']['encodedPolyline']
 
-        return distance, duration, encoded_polyline
+        durations = []
+        distances = []
+        for leg in data['routes'][0]['legs']:
+            leg_static_duration = self.parse_duration(leg['staticDuration'])
+            durations.append(leg_static_duration)
+
+        durations = durations[1:-1]
+            
+        return distance, duration, durations 

@@ -10,13 +10,15 @@ class SupportLinePlanningACO:
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=2, gamma=3, rho=0.2, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, local_rho=0.1, global_rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2):
         self.remaining_stores = remaining_stores
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.alpha = alpha
         self.beta = beta
-        self.rho = rho
+        self.local_rho = local_rho
+        self.global_rho = global_rho
         self.gamma = gamma
+        self.tau0 = 0
         self.tau_ratio = tau_ratio
         self.q = q
         self.q0 = q0
@@ -311,6 +313,7 @@ class SupportLinePlanningACO:
             None.
         """
         initial_pheromone = self.q / cost
+        self.tau0 = initial_pheromone
         for s in self.remaining_stores:
             self.pheromone_matrix[s['store_id']] = {
                 store['store_id']: initial_pheromone for store in self.remaining_stores if store['store_id'] != s['store_id']
@@ -496,6 +499,7 @@ class SupportLinePlanningACO:
                 
                 next_store = self._roulette_wheel_selection(current_store, feasible_stores)
                 route_manager.add_store(vehicle_id, next_store)
+                self._deposit_local_pheromone(current_store, next_store)
                 current_store = next_store
                 unvisited_stores.remove(next_store)
         
@@ -508,7 +512,7 @@ class SupportLinePlanningACO:
         """
         for s in self.pheromone_matrix:
             for t in self.pheromone_matrix[s]:
-                self.pheromone_matrix[s][t] *= (1 - self.rho)
+                self.pheromone_matrix[s][t] *= (1 - self.global_rho)
 
 
     def _calculate_tau_bounds(self):
@@ -523,12 +527,26 @@ class SupportLinePlanningACO:
             tau_max (float): The upper bound of tau .
             tau_min (float): The low bound of tau.
         """
-        tau_max = self.q / (self.rho * self.best_cost)
+        tau_max = self.q / (self.global_rho * self.best_cost)
         tau_min = tau_max / self.tau_ratio
         return tau_max, tau_min
 
 
-    def _deposit_pheromone(self, solution, cost):
+    def _deposit_local_pheromone(self, current_store, next_store):
+        """
+        Docstring for _deposit_local_pheromone
+        
+        :param self: Description
+        :param current_store: Description
+        :param next_store: Description
+        """
+        s1_d = current_store['store_id']
+        s2_d = next_store['store_id']
+        self.pheromone_matrix[s1_d][s2_d] = (1 - self.local_rho) * self.pheromone_matrix[s1_d][s2_d] + self.local_rho * self.tau0
+        self.pheromone_matrix[s2_d][s1_d] = (1 - self.local_rho) * self.pheromone_matrix[s2_d][s1_d] + self.local_rho * self.tau0
+
+
+    def _deposit_global_pheromone(self, solution, cost):
         """
         Notes:
             Update pheromone based on the solution.
@@ -598,14 +616,13 @@ class SupportLinePlanningACO:
 
             optimized_routes, optimized_cost = self.ls.optimize(iter_best_solution, iter_best_cost)
             
-            if iter_best_cost < self.best_cost:
+            if optimized_cost < self.best_cost:
                 self.best_cost = optimized_cost
                 self.best_solution = optimized_routes
 
             self._evaporate_pheromone()
-            self._deposit_pheromone(optimized_routes, optimized_cost)
-            # self._deposit_pheromone(iter_best_solution, iter_best_cost)
-            # self._deposit_pheromone(self.best_solution, self.best_cost)
+            # self._deposit_global_pheromone(optimized_routes, optimized_cost)
+            self._deposit_global_pheromone(iter_best_solution, iter_best_cost)
 
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 

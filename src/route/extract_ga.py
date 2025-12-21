@@ -11,12 +11,13 @@ class StoreExtractionGA:
     Notes: 
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size = 2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)
         self.population_size = population_size
+        self.elite_size = elite_size
         self.generations = generations
         self.cross_rate = cross_rate
         self.mutation_rate = mutation_rate
@@ -41,7 +42,7 @@ class StoreExtractionGA:
         """
 
         route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
-        route_manager._update_all_routes_info()
+        route_manager.update_all_routes_info()
         
         return routes
 
@@ -118,9 +119,9 @@ class StoreExtractionGA:
             d_cur_next = self.distance_matrix[cur_id][next_id]
             d_pre_next = self.distance_matrix[pre_id][next_id]
 
-            saving = d_pre_cur + d_cur_next - d_pre_next
+            detour_cost = d_pre_cur + d_cur_next - d_pre_next
 
-            weights.append(max(saving, 1e-12))
+            weights.append(max(detour_cost, 1e-12))
         
         weights = np.array(weights)
         probs = weights / np.sum(weights)
@@ -241,10 +242,12 @@ class StoreExtractionGA:
             return self.fitness_cache[key]
         
         routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
-        allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+        # allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         # support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         # fitness = allocate_cost + support_cost
-        fitness = allocate_cost
+        # fitness = allocate_cost
+
+        fitness = len(stores)
 
         self.fitness_cache[key] = fitness
         return fitness
@@ -390,8 +393,11 @@ class StoreExtractionGA:
 
             print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
 
-            new_population = []
-            for _ in range(self.population_size // 2):
+            sorted_indices = np.argsort(fitnesses)
+            elites_indices = sorted_indices[:self.elite_size]
+            new_population = [self._copy_individual(population[idx]) for idx in elites_indices]
+            remaining_slots = self.population_size - self.elite_size
+            for _ in range(remaining_slots // 2):
                 parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
                 child1, child2 = self._crossover(parent1, parent2)
                 self._mutate(child1)
@@ -412,4 +418,3 @@ class StoreExtractionGA:
                 break
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)
-    

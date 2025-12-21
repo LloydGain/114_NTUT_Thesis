@@ -11,7 +11,7 @@ class StoreAllocationACO:
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, tau_ratio=50, q=1, early_stop_patience=10):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -23,7 +23,6 @@ class StoreAllocationACO:
         self.rho = rho
         self.tau_ratio = tau_ratio
         self.q = q
-        self.q0 = q0
         self.num_ants = num_ants
         self.iterations = iterations
         self.early_stop_patience = early_stop_patience
@@ -429,10 +428,6 @@ class StoreAllocationACO:
         Returns:
             next_route (dict): The selected next route.
         """
-        q = random.uniform(0, 1)
-        if q < self.q0:
-            return self._greedy_selection(current_store, feasible_routes)
-
         probabilities = []
         for route_id, cost, pos in feasible_routes:
             prob = self._transition_value(current_store, route_id, cost)
@@ -459,7 +454,7 @@ class StoreAllocationACO:
 
         stores_to_assign = self.remaining_stores[:]
         random.shuffle(stores_to_assign)
-        stores_to_assign.sort(key=lambda x: x['volume'], reverse=True)
+        # stores_to_assign.sort(key=lambda x: x['volume'], reverse=True)
 
         for store in stores_to_assign:
             feasible_routes = []
