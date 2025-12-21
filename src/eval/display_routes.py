@@ -53,6 +53,7 @@ class DisplayRoutes:
         os.makedirs(dest_dir, exist_ok=True)
 
         for idx, (route_id, route_info) in enumerate(self.routes.items()):
+            print('Plotting route:', route_id)
             dc = route_info.get("dc", {})
             stores = route_info.get("stores", [])
             if not stores:
