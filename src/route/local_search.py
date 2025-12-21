@@ -4,6 +4,8 @@ from route.route import RouteManager
 
 class LocalSearch:
     """
+    Notes:
+        Local Search for route optimization.
     """
     def __init__(self, distance_matrix, time_matrix):
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
@@ -13,6 +15,14 @@ class LocalSearch:
 
     def _calculate_route_distance(self, stores):
         """
+        Notes:
+            Calculate the total distance of a single route.
+        
+        Args:
+            stores (list): List of store dicts in the route.
+
+        Returns:
+            float: Total distance of the route in km.
         """
         total_dist = 0
         depot_id = self.dc['store_id']
@@ -27,6 +37,14 @@ class LocalSearch:
 
     def _calculate_routes_cost(self, routes):
         """
+        Notes:
+            Calculate the total cost of all routes.
+
+        Args:
+            routes (dict): Routes information.
+
+        Returns:
+            total_cost (float): Total cost of all routes.
         """
         total_cost = 0
         for route_id in routes:
@@ -48,15 +66,22 @@ class LocalSearch:
             latest_time (datetime): Latest time (end of time window).
 
         Returns:
-            bool: True if arrival_time is within the [earliest_time, latest_time] window, False otherwise.
+            bool: True if within time window, False otherwise.
         """
         return earliest_time <= arrival_time <= latest_time
 
 
     def _check_time_constraint(self, stores):
         """
-        """
+        Notes:
+            Check if the route satisfies time window constraints.
 
+        Args:
+            stores (list): List of store dicts in the route.
+
+        Returns:
+            bool: True if time constraints are satisfied, False otherwise.
+        """
         if len(stores) == 0: return True
 
         prev_store = stores[0]
@@ -82,6 +107,15 @@ class LocalSearch:
 
     def _check_capacity_constraint(self, route, store):
         """
+        Notes:
+            Check if adding a store to the route satisfies capacity constraint.
+
+        Args:
+            route (dict): Route information.
+            store (dict): Store to be added.
+
+        Returns:
+            bool: True if capacity constraint is satisfied, False otherwise.
         """
         vehicle_capacity = route['dc']['max_capacity']
         route_stores = route['stores']
@@ -91,8 +125,32 @@ class LocalSearch:
         return total_vol <= vehicle_capacity
 
 
+    def _check_order_principle(self, route_id, stores):
+        """
+        Notes:
+            Check if the stores in the route follow the order principle based on route code.
+
+        Args:
+            stores (list): List of store dicts.
+
+        Returns:
+            bool: True if the stores follow the order principle, False otherwise.
+        """
+        route_codes = [store['route_code'][2:] for store in stores if store['route_code'].startswith(route_id)]
+        return route_codes == sorted(route_codes)
+
+
     def _two_opt(self, stores, cost):
         """
+        Notes:
+            Intra-route 2-opt optimization.
+
+        Args:
+            stores (list): List of store dicts in the route.
+            cost (float): Current cost of the route.
+
+        Returns:
+            tuple: (best_stores (list), best_cost (float))
         """
         best_stores = stores
         best_cost = cost
@@ -113,8 +171,17 @@ class LocalSearch:
 
 
     def _relocate(self, routes, route1_id, route2_id):
-
         """
+        Notes:
+            Inter-route relocate: move one store from route1 to route2.
+
+        Args:
+            routes (dict): Routes information.
+            route1_id (str): Source route ID.
+            route2_id (str): Destination route ID.
+
+        Returns:
+            tuple: (moved_store (dict or None), moved_position (int or -1))
         """
         r2 = routes[route2_id]
         r1_stores = routes[route1_id]['stores']
@@ -146,16 +213,26 @@ class LocalSearch:
 
                 if diff < best_reduction:
                     if self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2):
-                        best_reduction = diff
-                        moved_store = r1_store
-                        moved_position = idy
+                        if self._check_order_principle(route2_id, new_r2):
+                            best_reduction = diff
+                            moved_store = r1_store
+                            moved_position = idy
 
         return moved_store, moved_position
 
 
     def _swap(self, routes, route1_id, route2_id):
         """
-        Inter-route swap: swap one store from route1 with one store from route2.
+        Notes:
+            Inter-route swap: swap one store from route1 with one store from route2.
+
+        Args:
+            routes (dict): Routes information.
+            route1_id (str): First route ID.
+            route2_id (str): Second route ID.
+
+        Returns:
+            tuple: (store_from_route1 (dict or None), store_from_route2 (dict or None))
         """
         r1 = routes[route1_id]
         r2 = routes[route2_id]
@@ -191,6 +268,11 @@ class LocalSearch:
                 if not self._check_time_constraint(new_r2):
                     continue
 
+                if not self._check_order_principle(route1_id, new_r1):
+                    continue
+                if not self._check_order_principle(route2_id, new_r2):
+                    continue
+
                 new_cost = (
                     self._calculate_route_distance(new_r1)
                     + self._calculate_route_distance(new_r2)
@@ -207,6 +289,15 @@ class LocalSearch:
 
     def optimize_intra_route(self, routes_info, routes_cost):
         """
+        Notes:
+            Intra-route optimization using 2-opt.
+
+        Args:
+            routes_info (dict): Routes information.
+            routes_cost (float): Current total cost of all routes.
+
+        Returns:
+            tuple: (optimized_routes (dict), optimized_cost (float))
         """
         routes = copy.deepcopy(routes_info)
         route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
@@ -238,6 +329,15 @@ class LocalSearch:
     
     def optimize_inter_route(self, routes_info, routes_cost):
         """
+        Notes:
+            Inter-route optimization using relocate and swap.
+
+        Args:
+            routes_info (dict): Routes information.
+            routes_cost (float): Current total cost of all routes.
+
+        Returns:
+            tuple: (optimized_routes (dict), optimized_cost (float))
         """
         routes = copy.deepcopy(routes_info)
         route_ids = list(routes.keys())
@@ -251,7 +351,6 @@ class LocalSearch:
                 for r2_id in route_ids:
                     if r1_id == r2_id: continue
 
-                    # if r2_id.startswith('1'):
                     store, position = self._relocate(routes, r1_id, r2_id)
                     if store is not None:
                         route_manager.move_store_to_route(r1_id, store, r2_id, position)
@@ -268,7 +367,7 @@ class LocalSearch:
 
                 if improved: break
         
-        route_manager._remove_unused_routes()
+        route_manager.update_all_routes_info()
         routes = route_manager.routes_info
         new_routes_cost = self._calculate_routes_cost(routes)
 
@@ -277,6 +376,15 @@ class LocalSearch:
 
     def optimize(self, routes_info, routes_cost):
         """
+        Notes:
+            Perform local search optimization (intra-route and inter-route).
+
+        Args:
+            routes_info (dict): Routes information.
+            routes_cost (float): Current total cost of all routes.
+
+        Returns:
+            tuple: (optimized_routes (dict), optimized_cost (float))
         """
         routes_info, routes_cost = self.optimize_intra_route(routes_info, routes_cost)
         routes_info, routes_cost = self.optimize_inter_route(routes_info, routes_cost)

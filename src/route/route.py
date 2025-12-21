@@ -74,15 +74,121 @@ class RouteManager:
             route = self.routes_info[route_id]
             stores = self.routes_info[route_id]['stores']
             self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] != removed_store['route_code']]
-            # self._remove_unused_route(route_id)
             self._update_route_info(route)
+
+
+    def _get_max_capacity_by_route_id(self, route_id):
+        """
+        Notes:
+            Get the maximum vehicle capacity based on the route code.
+
+        Args:
+            route_code (str): Route code. (e.g., '2N', '2S', '2U', etc.)
+
+        Returns:
+            float: Maximum capacity for the vehicle.
+        """
+        if '2N' in route_id or '2S' in route_id:
+            return 14.4
+        elif '2U' in route_id:
+            return 10
+        else:
+            return 7.2
+
+
+    def _new_route(self, route_id):
+        """
+        Notes:
+            Create a new route.
+        
+        Args:
+            route_id (str): Route ID.
+        
+        Returns:
+            None.
+        """
+        self.routes_info[route_id] = {"dc" : None, "stores": []}
+        self.routes_info[route_id]["dc"] = {
+            "route_id": route_id,
+            "route_code": route_id,
+            "store_id": "DC",
+            "store_name": "林口ＤＣ",
+            "total_volume": 0,
+            "load_rate": 0,
+            "max_capacity": self._get_max_capacity_by_route_id(route_id),
+            "region": "",
+            "distance": 0,
+            "duration": 0
+        }
+
+        self.routes_info[route_id]['stores'] = []
 
 
     def move_store_to_route(self, route1_id, store, route2_id, position):
         """
+        Notes:
+            Move store to specific route position.
+
+        Args:
+            route1_id (str): Route1 ID.
+            store (dict): Store information.
+            route2_id (str): Route2 ID.
+            position (int): Insert position.
+        
+        Returns:
+            None.
         """
         self.remove_store(route1_id, store)
         self.insert_store(store, route2_id, position)
+
+
+    def get_origin_route_position(self, route_id, store):
+        """
+        Notes:
+            Get the store original position.
+        
+        Args:
+            route_id (str): Route ID.
+            store (dict): Store information.
+        
+        Returns:
+            pos (int): Insert position index.
+        """
+        if not route_id in self.routes_info:
+            self._new_route(route_id)
+            return 0
+
+        stores = self.routes_info[route_id]['stores']
+        store_pos = int(store['route_code'][2:])
+        
+        for idx, s in enumerate(stores):
+            route_pos = int(s['route_code'][2:])
+            if route_pos > store_pos:
+                return idx
+        
+        return len(stores)
+
+
+    def move_store_to_original_route(self):
+        """
+        Notes:
+            Move all stores to original route.
+        
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
+        for route_id in list(self.routes_info.keys()):
+            stores = self.routes_info[route_id]['stores']
+            for store in stores:
+                origin_route_id = store['route_code'][:2]
+                if not route_id == origin_route_id:
+                    origin_route_pos = self.get_origin_route_position(origin_route_id, store)
+                    self.move_store_to_route(route_id, store, origin_route_id, origin_route_pos)
+        
+        self.update_all_routes_info()
 
 
     def replace_stores(self, route_id, stores):
@@ -210,12 +316,12 @@ class RouteManager:
         
         total_distance = 0
         stores = [self.dc] + route['stores'] + [self.dc]
-
         for prev, curr in zip(stores[:-1], stores[1:]):
-            prev_id, cur_id = prev['store_id'], curr['store_id']
-            distance = self.distance_matrix[prev_id][cur_id]
+            prev_id = prev['store_id']
+            curr_id = curr['store_id']
+            distance = self.distance_matrix[prev_id][curr_id]
             total_distance += distance
-        
+
         route['dc']['distance'] = total_distance
 
 
@@ -340,7 +446,7 @@ class RouteManager:
         self._update_route_id(route)
     
 
-    def _update_all_routes_info(self):
+    def update_all_routes_info(self):
         """
         Notes:
             Update route information for all routes.
@@ -351,30 +457,60 @@ class RouteManager:
         Returns:
             None.
         """
+        self._remove_unused_routes()
         for _, route in self.routes_info.items():
             self._update_route_info(route)
 
 
-    # def compute_route_via_routes_api(self):
-    #     """
-    #     Notes:
-    #         Compute route distance and duration via Google Maps Routes API.
-
-    #     Args:
-    #         None.
-
-    #     Returns:
-    #         None.
-    #     """
-    #     routes_api = GoogleRoutesAPI()
-
-    #     for _, route in self.routes_info.items():
-    #         waypoints = route['stores']
-    #         distance, duration = routes_api.compute_route(waypoints)
-    #         route['dc']['distance'] = distance
-    #         route['dc']['duration'] = duration
-    #     # pred_time update
+    def _update_predicted_times(self, stores, leg_durations):
+        """
+        Notes:
+            Update predicted times for stores based on leg durations.
         
+        Args:
+            stores (list): List of store information.
+            leg_durations (list): List of leg durations in seconds.
+
+        Returns:
+            None.
+        """
+        for i in range(1, len(stores)):
+            prev_store = stores[i - 1]
+            curr_store = stores[i]
+
+            travel_time = leg_durations[i - 1]
+
+            prev_time = datetime.fromisoformat(prev_store["pred_time"])
+            curr_time = (
+                prev_time
+                + timedelta(seconds=prev_store["dwell_time"])
+                + timedelta(seconds=travel_time)
+            )
+
+            curr_store["pred_time"] = curr_time.isoformat(timespec="seconds")
+
+
+    def update_all_routes_distance_and_duration_with_GoogleAPI(self):
+        """
+        Notes:
+            Update all routes distance and duration using Google Maps Routes API.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
+        api = GoogleRoutesAPI()
+        for route_id, route in self.routes_info.items():
+            print(f'Update Route ID: {route_id}')
+            stores = route['stores']
+            distance, duration, durations = api._compute_route(stores)
+            route['dc']['distance'] = distance
+            route['dc']['duration'] = duration
+            
+            self._update_predicted_times(stores, durations)
+
 
     def export_routes_info(self, json_file='optimized_routes_info.json'):
         """
