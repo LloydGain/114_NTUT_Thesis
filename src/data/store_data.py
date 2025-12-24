@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 from api.osrm import OSRM
 
@@ -8,8 +9,7 @@ class StoreData:
     """
     def __init__(self, excel_file):
         self.file = excel_file
-        self.stores = self._load_stores_info() 
-        self.distance_matrix, self.time_matrix = self._get_cost_matrices()
+        self.stores = self._load_stores_info()
 
 
     def _load_stores_info(self):
@@ -36,7 +36,7 @@ class StoreData:
         return stores
 
 
-    def _get_cost_matrices(self):
+    def get_cost_matrices(self, dist_file=None, time_file=None):
         """
         Notes:
             Get the distance and time matrix.
@@ -48,4 +48,26 @@ class StoreData:
             distance_matrix, time_matrix (tuple): Store distance matrix and time matrix. 
         """
         osrm = OSRM()
-        return osrm._compute_cost_matrices(self.stores)
+        return osrm._compute_cost_matrices(self.stores, dist_file, time_file)
+    
+
+    def load_matrices_from_file(self, dist_file, time_file):
+        """
+        Notes:
+            Load distance and time matrices from files.
+
+        Args:
+            dist_file (str): File path of distance matrix.
+            time_file (str): File path of time matrix.
+        
+        Returns:
+            distance_matrix (dict): Distance matrix.
+            time_matrix (dict): Time matrix.
+        """
+        with open(dist_file, 'r') as df:
+            dist_matrix = json.load(df)
+        
+        with open(time_file, 'r') as tf:
+            time_matrix = json.load(tf)
+        
+        return dist_matrix, time_matrix

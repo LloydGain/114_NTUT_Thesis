@@ -41,6 +41,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}/{file_date}program.xlsx'
+    dist_file = f'../data/store_distance_matrix.json'
+    time_file = f'../data/store_time_matrix.json'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     store_info_file = '../data/store_info.xlsx'
     original_route = f'../output/{file_date}/original_routes_info.json'
@@ -77,12 +79,12 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 # -----------------------------------------------------------------------------------
 
     times = {}
-    comment = "With local search. after optimization.（Google)"
+    comment = "With local search. after optimization (OSRM Time * 1.75)."
 
     production_params = {
         'store_extraction_ga': {
             'population_size': 50,
-            'elite_size': 10,
+            'elite_size': 2,
             'generations': 10000,
             'cross_rate': 0.9,
             'mutation_rate': 0.2,
@@ -165,7 +167,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
     print("Calculating store distance & time...")
     s_data = StoreData(store_info_file)
-    distance_matrix, time_matrix = s_data.distance_matrix, s_data.time_matrix
+    # distance_matrix, time_matrix = s_data.get_cost_matrices(dist_file, time_file)
+    distance_matrix, time_matrix = s_data.load_matrices_from_file(dist_file, time_file)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
