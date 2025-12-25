@@ -1,9 +1,9 @@
 import random
 import numpy as np
 from datetime import datetime, timedelta
-from route.route import RouteManager
-from route.local_search import LocalSearch
-from route.utils import EarlyStopper
+from models.route_manager import RouteManager
+from solvers.local_search import LocalSearch
+from utils.early_stopper import EarlyStopper
 
 class SupportLinePlanningACO:
     """

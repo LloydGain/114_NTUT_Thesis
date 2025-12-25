@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from api.osrm import OSRM
+from services.osrm import OSRM
 
 class StoreData:
     """

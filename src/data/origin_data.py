@@ -2,7 +2,7 @@ import os
 import json
 import math
 import pandas as pd
-from api.osrm import OSRM
+from services.osrm import OSRM
 
 class ODataManager:
     """

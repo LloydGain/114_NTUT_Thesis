@@ -1,6 +1,6 @@
 import copy
 from datetime import datetime, timedelta
-from route.route import RouteManager
+from models.route_manager import RouteManager
 
 class LocalSearch:
     """
@@ -195,6 +195,10 @@ class LocalSearch:
         base_cost_r2 = self._calculate_route_distance(r2_stores)
         base_total_cost = base_cost_r1 + base_cost_r2
 
+        # -----------------------------------------------
+        if not route2_id.startswith('1'): return None, -1
+        # -----------------------------------------------
+
         for idx, r1_store in enumerate(r1_stores):
 
             if not self._check_capacity_constraint(r2, r1_store): continue
@@ -248,6 +252,10 @@ class LocalSearch:
             self._calculate_route_distance(r1_stores)
             + self._calculate_route_distance(r2_stores)
         )
+
+        # -----------------------------------------------   
+        if not route1_id.startswith('1') or not route2_id.startswith('1'): return (None, None)
+        # -----------------------------------------------
 
         for i, s1 in enumerate(r1_stores):
             for j, s2 in enumerate(r2_stores):

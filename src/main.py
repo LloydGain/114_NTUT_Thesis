@@ -1,3 +1,6 @@
+import sys
+sys.dont_write_bytecode = True
+
 import os
 import copy
 import time
@@ -10,12 +13,12 @@ from data.store_data import StoreData
 from data.origin_data import ODataManager
 from data.manual_data import MDataManager
 from data.program_data import PDataManager
-from log.log import Log
-from route.route import RouteManager
-from route.extract_ga import StoreExtractionGA
-from route.allocate_aco import StoreAllocationACO
-from route.support_line_aco import SupportLinePlanningACO
-from route.local_search import LocalSearch
+from utils.logger import Log
+from models.route_manager import RouteManager
+from solvers.extract_ga import StoreExtractionGA
+from solvers.allocate_aco import StoreAllocationACO
+from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.local_search import LocalSearch
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
 

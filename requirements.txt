@@ -1,2 +1,8 @@
-osrm-py==3.11.3
-matplotlib==3.10.7
+numpy
+pandas
+openpyxl
+python-dotenv
+requests
+matplotlib
+folium
+polyline

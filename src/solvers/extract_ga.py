@@ -1,10 +1,9 @@
 import os
 import hashlib
 import numpy as np
-from route.route import RouteManager
-from route.utils import EarlyStopper
-from route.allocate_aco import StoreAllocationACO
-from route.support_line_aco import SupportLinePlanningACO
+from models.route_manager import RouteManager
+from utils.early_stopper import EarlyStopper
+from solvers.allocate_aco import StoreAllocationACO
 
 class StoreExtractionGA:
     """

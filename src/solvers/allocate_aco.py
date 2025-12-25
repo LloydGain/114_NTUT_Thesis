@@ -2,9 +2,9 @@ import random
 import hashlib
 import numpy as np
 from datetime import datetime, timedelta
-from route.route import RouteManager
-from route.utils import EarlyStopper
-from route.support_line_aco import SupportLinePlanningACO
+from models.route_manager import RouteManager
+from utils.early_stopper import EarlyStopper
+from solvers.support_line_aco import SupportLinePlanningACO
 
 class StoreAllocationACO:
     """

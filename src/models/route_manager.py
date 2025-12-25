@@ -1,7 +1,7 @@
 import os
 import json
 from datetime import datetime, timedelta
-from api.google_maps import GoogleRoutesAPI
+from services.google_maps import GoogleRoutesAPI
 
 class RouteManager:
     """
