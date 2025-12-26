@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [ "main" ]
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        file_date: ["1203", "1205", "1207", "1208", "1209", "1210", "1212", "1213", "1214", "1215"]
+    
     env:
       RANDOM_SEED: 0
 
@@ -21,16 +22,15 @@ jobs:
       uses: actions/setup-python@v3
       with:
         python-version: "3.12"
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Run main program for all folders in /data
+        
+    - name: Run experiment for specific date
       run: |
         cd src
-        for folder in ../data/*/; do
-            folder_name=$(basename "$folder")
-            echo "Running for file_date=$folder_name with RANDOM_SEED=$RANDOM_SEED"
-            python main.py --file_date "$folder_name" --test
-            echo "Finished for file_date=$folder_name"
-        done
+        echo "Running for file_date=${{ matrix.file_date }} with RANDOM_SEED=$RANDOM_SEED"
+        python main.py --file_date "${{ matrix.file_date }}" --test
+        echo "Experiment completed for file_date=${{ matrix.file_date }} with RANDOM_SEED=$RANDOM_SEED"
