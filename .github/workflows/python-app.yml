@@ -32,6 +32,6 @@ jobs:
         for folder in ../data/*/; do
             folder_name=$(basename "$folder")
             echo "Running for file_date=$folder_name"
-            python main.py --file_date "$folder_name" --test
+            python main.py --file_date "$folder_name" --seed 0 --test
         done
 
