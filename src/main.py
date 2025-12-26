@@ -44,8 +44,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}/{file_date}program.xlsx'
-    dist_file = f'../data/store_distance_matrix.json'
-    time_file = f'../data/store_time_matrix.json'
+    dist_file = f'../data/osrm/store_distance_matrix.json'
+    time_file = f'../data/osrm/store_time_matrix.json'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     store_info_file = '../data/store_info.xlsx'
     original_route = f'../output/{file_date}/original_routes_info.json'
@@ -343,23 +343,24 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
 # -----------------------------------------------------------------------------------
 
-    start_time = time.time()
+    if not test_mode:
+        start_time = time.time()
 
-    print("Displaying route visualizations...")
-    manu_routes = DisplayRoutes(manual_routes_file)
-    manu_routes.plot_routes_png(manual_routes_img)
-    manu_routes.plot_routes_html(manual_routes_html)
+        print("Displaying route visualizations...")
+        manu_routes = DisplayRoutes(manual_routes_file)
+        manu_routes.plot_routes_png(manual_routes_img)
+        manu_routes.plot_routes_html(manual_routes_html)
 
-    # prog_routes = DisplayRoutes(program_routes_file)
-    # prog_routes.plot_routes_png(program_routes_img)
-    # prog_routes.plot_routes_html(program_route_html)
+        # prog_routes = DisplayRoutes(program_routes_file)
+        # prog_routes.plot_routes_png(program_routes_img)
+        # prog_routes.plot_routes_html(program_route_html)
 
-    opt_routes = DisplayRoutes(optimized_routes_file)
-    opt_routes.plot_routes_png(optimized_routes_img)
-    opt_routes.plot_routes_html(optimized_routes_html)
+        opt_routes = DisplayRoutes(optimized_routes_file)
+        opt_routes.plot_routes_png(optimized_routes_img)
+        opt_routes.plot_routes_html(optimized_routes_html)
 
-    end_time = time.time()
-    print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
+        end_time = time.time()
+        print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
 # ---------------------------------------------------------------------------
 

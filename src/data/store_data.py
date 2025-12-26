@@ -48,10 +48,37 @@ class StoreData:
             distance_matrix, time_matrix (tuple): Store distance matrix and time matrix. 
         """
         osrm = OSRM()
-        return osrm._compute_cost_matrices(self.stores, dist_file, time_file)
+        dist_matrix, time_matrix = osrm._compute_cost_matrices(self.stores)
+        
+        if dist_file and time_file:
+            self.save_matrices_to_file(dist_matrix, time_matrix, dist_file, time_file)
+
+        return dist_matrix, time_matrix
+    
+
+    def save_matrices_to_file(self, distance_matrix, time_matrix, dist_file, time_file):
+        """
+        Notes:
+            Save distance and time matrices to files.
+
+        Args:
+            distance_matrix (dict): Distance matrix.
+            time_matrix (dict): Time matrix.
+            dist_file (str): File path to save distance matrix.
+            time_file (str): File path to save time matrix.
+        
+        Returns:
+            None.
+        """
+        with open(dist_file, 'w') as df:
+            json.dump(distance_matrix, df, indent=4)
+
+        with open(time_file, 'w') as tf:
+            json.dump(time_matrix, tf, indent=4)
     
 
     def load_matrices_from_file(self, dist_file, time_file):
+
         """
         Notes:
             Load distance and time matrices from files.

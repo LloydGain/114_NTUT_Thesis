@@ -6,3 +6,5 @@ requests
 matplotlib
 folium
 polyline
+pytest
+flake8
