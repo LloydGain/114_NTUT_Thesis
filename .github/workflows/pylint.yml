@@ -5,6 +5,8 @@ on:
     paths:
       - "src/**"
       - "data/**"
+      - ".github/workflows/**"
+      - ".pylintrc"
 
 jobs:
   build:

@@ -6,11 +6,13 @@ on:
     paths:
       - "src/**"
       - "data/**"
+      - ".github/workflows/**"
   pull_request:
     branches: [ "main" ]
     paths:
       - "src/**"
       - "data/**"
+      - ".github/workflows/**"
 
 jobs:
   build:
@@ -22,9 +24,9 @@ jobs:
     
     env:
       RANDOM_SEED: 0
-      OSRM_HOST: http://localhost:5000
-      DC_LONGITUDE: 121.40712
-      DC_LATITUDE: 25.083282
+      OSRM_HOST: "http://localhost:5000"
+      DC_LONGITUDE: "121.40712"
+      DC_LATITUDE: "25.083282"
 
     steps:
     - uses: actions/checkout@v4
