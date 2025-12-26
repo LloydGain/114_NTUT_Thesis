@@ -23,10 +23,6 @@ from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
 
 load_dotenv()
-r_seed = os.getenv("RANDOM_SEED")
-r_seed = int(r_seed)
-random.seed(r_seed)
-np.random.seed(r_seed)
 
 
 def parse_args():
