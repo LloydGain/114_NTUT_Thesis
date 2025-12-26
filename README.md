@@ -32,11 +32,21 @@ This project implements a hybrid metaheuristic approach combining **Genetic Algo
    pip install -r requirements.txt
    ```
 3. **Environment Configuration**
-   Create a `.env` file in the `src` directory if you plan to use Google Maps API or set a default seed.
+   Create a `.env` file in the **project root** directory. This is required for configuring the OSRM server, Distribution Center (DC) coordinates, and optional Google Maps API.
 
    ```env
+   # Optional: Google Maps API Key
    GOOGLE_API_KEY=your_google_maps_api_key
-   RANDOM_SEED=your_seed
+
+   # Optional: Fixed Random Seed
+   RANDOM_SEED=42
+
+   # OSRM Server URL (Default: http://localhost:5000)
+   OSRM_HOST=http://localhost:5000
+
+   # Distribution Center (DC) Coordinates
+   DC_LONGITUDE=121.40712
+   DC_LATITUDE=25.083282
    ```
 
 ## OSRM Setup

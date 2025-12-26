@@ -1,13 +1,14 @@
 import requests
+import config
 
 class OSRM:
     """
     Notes:
         Initialize the OSRM with a server URL.
     """
-    def __init__(self, url='http://localhost:5000'):
-        self.url = url
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+    def __init__(self):
+        self.url = config.OSRM_HOST
+        self.dc = config.DC_CONFIG
         self.timeout = 10
 
 

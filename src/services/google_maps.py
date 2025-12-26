@@ -1,6 +1,6 @@
 import os
 import requests
-from dotenv import load_dotenv
+import config
 
 class GoogleRoutesAPI:
     """
@@ -8,11 +8,10 @@ class GoogleRoutesAPI:
         Routes API (Google Maps).
     """
     def __init__(self):
-        load_dotenv()
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.api_key = config.GOOGLE_API_KEY
         self.routes_base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
         self.dist_matrix_base_url = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.max_elements_per_request = 625
         self.timeout = 10
 

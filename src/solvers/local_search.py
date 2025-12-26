@@ -1,6 +1,7 @@
 import copy
 from datetime import datetime, timedelta
 from models.route_manager import RouteManager
+import config
 
 class LocalSearch:
     """
@@ -8,7 +9,7 @@ class LocalSearch:
         Local Search for route optimization.
     """
     def __init__(self, distance_matrix, time_matrix):
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
 

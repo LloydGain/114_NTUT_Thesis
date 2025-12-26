@@ -1,4 +1,5 @@
 import numpy as np
+import config
 
 class BaseACO:
     """
@@ -6,7 +7,7 @@ class BaseACO:
         Base class for Ant Colony Optimization algorithms.
     """
     def __init__(self, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, q=1, early_stop_patience=1):
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.num_ants = num_ants
         self.iterations = iterations
         self.alpha = alpha

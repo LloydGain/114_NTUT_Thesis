@@ -3,6 +3,7 @@ import numpy as np
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 # from solvers.allocate_aco import StoreAllocationACO
+import config
 
 class StoreExtractionGA:
     """
@@ -10,7 +11,7 @@ class StoreExtractionGA:
         Genetic Algorithm for Store Extraction.
     """
     def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size = 2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)

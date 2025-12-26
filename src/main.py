@@ -4,7 +4,7 @@ import time
 import random
 import numpy as np
 import argparse
-from dotenv import load_dotenv
+import config
 from datetime import datetime
 from data.store_data import StoreData
 from data.origin_data import ODataManager
@@ -18,8 +18,6 @@ from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.local_search import LocalSearch
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
-
-load_dotenv()
 
 def parse_args():
     """
@@ -72,8 +70,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 # -----------------------------------------------------------------------------------
 
     if random_seed is None:
-        env_seed = os.getenv("RANDOM_SEED")
-        random_seed = int(env_seed)
+        random_seed = config.RANDOM_SEED
 
     if random_seed is not None:
         random.seed(random_seed)

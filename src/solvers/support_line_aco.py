@@ -5,6 +5,7 @@ from models.route_manager import RouteManager
 from solvers.local_search import LocalSearch
 from utils.early_stopper import EarlyStopper
 from solvers.base_aco import BaseACO
+import config
 
 class SupportLinePlanningACO(BaseACO):
     """
@@ -16,7 +17,7 @@ class SupportLinePlanningACO(BaseACO):
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.local_rho = local_rho
         self.global_rho = global_rho
         self.gamma = gamma

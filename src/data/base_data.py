@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 from models.route_manager import RouteManager
+import config
 
 class BaseDataManager:
     """
@@ -15,7 +16,7 @@ class BaseDataManager:
     _STORE_COORD_SHEET = 0
 
     def __init__(self, excel_files, distance_matrix, time_matrix):
-        self.dc = {'store_id': 'dc', 'latitude': 25.083282, 'longitude': 121.40712}
+        self.dc = config.DC_CONFIG
         self.excel_files = excel_files
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix

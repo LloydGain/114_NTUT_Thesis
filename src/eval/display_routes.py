@@ -6,6 +6,7 @@ import folium
 from folium.features import DivIcon
 from folium.plugins import AntPath
 import matplotlib.pyplot as plt
+import config
 
 class DisplayRoutes:
     """
@@ -13,7 +14,7 @@ class DisplayRoutes:
         Display delivery routes using Folium for HTML output and Matplotlib for PNG output.
     """
     def __init__(self, source_file):
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.source_file = source_file
         self.routes = self._load_routes()
         self.main_colors = ["blue", "green", "purple", "orange", "cadetblue", "pink", "darkgreen", "darkblue", "darkorange"]
@@ -123,7 +124,7 @@ class DisplayRoutes:
             coords.append(f"{self.dc['longitude']},{self.dc['latitude']}")
             coord_str = ";".join(coords)
 
-            url = f"http://localhost:5000/route/v1/driving/{coord_str}?overview=full&geometries=polyline"
+            url = f"{config.OSRM_HOST}/route/v1/driving/{coord_str}?overview=full&geometries=polyline"
             res = requests.get(url, timeout=self.timeout).json()
 
             encoded = res["routes"][0]["geometry"]

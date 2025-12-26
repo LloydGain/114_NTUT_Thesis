@@ -1,5 +1,6 @@
 import os
 import json
+import config
 from datetime import datetime, timedelta
 from services.google_maps import GoogleRoutesAPI
 
@@ -10,7 +11,7 @@ class RouteManager:
     """
     def __init__(self, routes_info, distance_matrix=None, time_matrix=None):
         self.routes_info = routes_info
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
+        self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
 
