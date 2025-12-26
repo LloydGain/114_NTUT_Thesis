@@ -3,8 +3,14 @@ name: Python application
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "src/**"
+      - "data/**"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - "src/**"
+      - "data/**"
 
 jobs:
   build:
