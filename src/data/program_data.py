@@ -9,44 +9,8 @@ class PDataManager(BaseDataManager):
     def __init__(self, excel_files, distance_matrix, time_matrix):
         super().__init__(excel_files, distance_matrix, time_matrix)
         self.routes_df = pd.read_excel(self.excel_files[0], sheet_name=self._ROUTE_DATA_SHEET, dtype={'路線編號': str})
-        self.stores_id = self._load_store_id()
         self.routes_info = self._load_program_routes()
         self._update_routes_info()
-
-
-    def _get_store_id_by_route_code(self, route_code):
-        """
-        Notes:
-            Get the store ID based on the route code.
-
-        Args:
-            route_code (str): Route code.
-
-        Returns:
-            str: Store ID.
-        """
-        return self.stores_id.get(route_code, None)
-
-
-    def _load_store_id(self):
-        """
-        Notes:
-            Load store IDs from an Excel file into dict.
-
-        Args:
-            None.
-
-        Returns:
-            dict: stores ID with route code as key.
-        """
-        stores_id = {}
-        for _, row in self.stores_df.iterrows():
-            route_code = row['車次']
-            if len(str(route_code)) > 2:
-                store_id = str(int(row['ID']) if not pd.isna(row['ID']) else None)
-                stores_id[route_code] = store_id
-
-        return stores_id
 
 
     def _load_program_routes(self):
@@ -133,7 +97,7 @@ class PDataManager(BaseDataManager):
                     continue
 
                 sub_route_code = route_col_value
-                store_id = self._get_store_id_by_route_code(sub_route_code)
+                store_id = self._get_store_id_by_name(store_name)
 
                 lng, lat = self._get_coordinates(store_id)
                 dwell_time = self._get_dwell_time(store_id)

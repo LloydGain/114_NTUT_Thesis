@@ -26,7 +26,7 @@ class BaseDataManager:
 
         self.stores_info = self._load_store_coordinates()
         self.dwell_info = self._load_store_dwell_time()
-        self.store_ids = self._load_store_id_by_name()
+        self.store_ids = self._load_store_id()
         self.avg_dwell_time = self._calculate_average_dwell_time()
 
         self.routes_info = {}
@@ -153,7 +153,7 @@ class BaseDataManager:
         return stores_info
 
 
-    def _load_store_id_by_name(self):
+    def _load_store_id(self):
         """
         Notes:
             Load store IDs from an Excel file into dict.
