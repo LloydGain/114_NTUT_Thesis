@@ -78,8 +78,8 @@ class SupportLinePlanningACO:
         if current_store['store_id'] == next_store['store_id']:
             return 0
 
-        return 1 / (self.distance_matrix[current_store['store_id']][next_store['store_id']])
-        
+        return 1 / (self.distance_matrix[current_store['store_id']][next_store['store_id']] + 1e-12)
+
 
     def _saving_heuristic(self, current_store, next_store):
         """

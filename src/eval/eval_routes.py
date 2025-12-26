@@ -50,19 +50,19 @@ class EvalRoutes:
             dict: Summary statistics.
         """
         total_vehicles = len(routes)
-        main_vehicles = sum(1 for route in routes.values() if route['dc']['route_id'][0] != '1')
-        support_vehicles = sum(1 for route in routes.values() if route['dc']['route_id'][0] == '1')
+        main_vehicles = sum(1 for route in routes.values() if not route['dc']['route_id'].isdigit())
+        support_vehicles = sum(1 for route in routes.values() if route['dc']['route_id'].isdigit())
 
         total_stores = sum(len(route['stores']) for route in routes.values())
-        main_stores = sum(len(route['stores']) for route in routes.values() if route['dc']['route_id'][0] != '1')
-        support_stores = sum(len(route['stores']) for route in routes.values() if route['dc']['route_id'][0] == '1')
+        main_stores = sum(len(route['stores']) for route in routes.values() if not route['dc']['route_id'].isdigit())
+        support_stores = sum(len(route['stores']) for route in routes.values() if route['dc']['route_id'].isdigit())
 
         total_distance = sum(route['dc']['distance'] for route in routes.values())
         total_duration = sum(route['dc']['duration'] for route in routes.values()) / (60 * 60) 
-        total_main_distance = sum(route['dc']['distance'] for route in routes.values() if route['dc']['route_id'][0] != '1')
-        total_main_duration = sum(route['dc']['duration'] for route in routes.values() if route['dc']['route_id'][0] != '1') / (60 * 60)
-        total_support_distance = sum(route['dc']['distance'] for route in routes.values() if route['dc']['route_id'][0] == '1')
-        total_support_duration = sum(route['dc']['duration'] for route in routes.values() if route['dc']['route_id'][0] == '1') / (60 * 60)
+        total_main_distance = sum(route['dc']['distance'] for route in routes.values() if not route['dc']['route_id'].isdigit())
+        total_main_duration = sum(route['dc']['duration'] for route in routes.values() if not route['dc']['route_id'].isdigit()) / (60 * 60)
+        total_support_distance = sum(route['dc']['distance'] for route in routes.values() if route['dc']['route_id'].isdigit())
+        total_support_duration = sum(route['dc']['duration'] for route in routes.values() if route['dc']['route_id'].isdigit()) / (60 * 60)
 
         average_distance = total_distance / total_vehicles
         average_duration = total_duration / total_vehicles
@@ -72,8 +72,8 @@ class EvalRoutes:
         average_support_duration = total_support_duration / support_vehicles if not support_vehicles == 0 else 0
 
         average_load_rate = sum(route['dc']['load_rate'] for route in routes.values()) / total_vehicles
-        average_main_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'][0] != '1') / main_vehicles
-        average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'][0] == '1') / support_vehicles if not support_vehicles == 0 else 0
+        average_main_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if not route['dc']['route_id'].isdigit()) / main_vehicles
+        average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'].isdigit()) / support_vehicles if not support_vehicles == 0 else 0
 
         summary = {
             'total_vehicles': total_vehicles,

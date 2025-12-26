@@ -65,7 +65,7 @@ class StoreAllocationACO:
         Returns:
             float: Heuristic value (1 / cost).
         """
-        return 1 / cost
+        return 1 / (cost + 1e-12)
         
 
     def _pheromone(self, store, route_id):
