@@ -4,37 +4,30 @@ from datetime import datetime, timedelta
 from models.route_manager import RouteManager
 from solvers.local_search import LocalSearch
 from utils.early_stopper import EarlyStopper
+from solvers.base_aco import BaseACO
 
-class SupportLinePlanningACO:
+class SupportLinePlanningACO(BaseACO):
     """
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
     def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, local_rho=0.1, global_rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2):
+        super().__init__(num_ants, iterations, alpha, beta, global_rho, q, early_stop_patience)
         self.remaining_stores = remaining_stores
+        self.distance_matrix = distance_matrix
+        self.time_matrix = time_matrix
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
-        self.alpha = alpha
-        self.beta = beta
         self.local_rho = local_rho
         self.global_rho = global_rho
         self.gamma = gamma
         self.tau0 = 0
-        self.tau_ratio = tau_ratio
-        self.q = q
         self.q0 = q0
-        self.num_ants = num_ants
-        self.iterations = iterations
-        self.early_stop_patience = early_stop_patience
         self.support_capacity = support_capacity
-        self.pheromone_matrix = dict()
-        self.distance_matrix, self.time_matrix = distance_matrix, time_matrix
+        self.tau_ratio = tau_ratio
+
         self.saving_matrix = self._saving_matrix()
         self.ls = LocalSearch(self.distance_matrix, self.time_matrix)
-        self.best_cost = float('inf')
-        self.best_solution = None
-        self.time_limit_per_route = 5 * 60 * 60
         self.vehicle_cost = 0
-        self.log = []
 
 
     def _saving_matrix(self):
@@ -54,12 +47,12 @@ class SupportLinePlanningACO:
             store_idx: {
                 store_idy: (
                     abs(self.distance_matrix[self.dc['store_id']][store_idx] +
-                    self.distance_matrix[self.dc['store_id']][store_idy] - 
+                    self.distance_matrix[self.dc['store_id']][store_idy] -
                     self.distance_matrix[store_idx][store_idy])
                 ) for store_idy in store_ids
             } for store_idx in store_ids
         }
-        
+
         return saving_matrix
 
 
@@ -103,11 +96,11 @@ class SupportLinePlanningACO:
         """
         Notes:
             Get pheromone value between current_store and next_store.
-        
+
         Args:
             current_store (dict): The current store.
             next_store (dict): The candidate next store.
-        
+
         Returns:
             float: The pheromone value.
         """
@@ -118,7 +111,7 @@ class SupportLinePlanningACO:
         """
         Notes:
             Calculate the transition value for moving from current_store to next_store.
-        
+
         Args:
             current_store (dict): The current store.
             next_store (dict): The candidate next store.
@@ -162,7 +155,7 @@ class SupportLinePlanningACO:
         """
         Notes:
             Determine which stores are feasible to visit next from the current route.
-        
+
         Args:
             route (dict): Current route.
             unvisited_stores (list): List of stores unvisited.
@@ -227,7 +220,7 @@ class SupportLinePlanningACO:
                 best_value = value
                 best_store = store
         return best_store
-    
+
 
     def _greedy_solution(self):
         """
@@ -242,9 +235,9 @@ class SupportLinePlanningACO:
         """
         if not self.remaining_stores:
             return {}
-        
+
+        solution = {}
         vehicle_num = 101
-        solution = dict()
         unvisited_stores = [store.copy() for store in self.remaining_stores]
         route_manager = RouteManager(solution, self.distance_matrix, self.time_matrix)
 
@@ -270,7 +263,7 @@ class SupportLinePlanningACO:
                 route_manager.add_store(vehicle_id, next_store)
                 current_store = next_store
                 unvisited_stores.remove(next_store)
-    
+
         return solution
 
 
@@ -305,7 +298,7 @@ class SupportLinePlanningACO:
         """
         Notes:
             Initialize pheromone based on the cost of a greedy solution.
-        
+
         Args:
             cost (float): Cost of the greedy solution.
 
@@ -335,46 +328,16 @@ class SupportLinePlanningACO:
         return (route_volumn + store['volume']) <= self.support_capacity
 
 
-    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
-        """
-        Notes:
-            Check if a given arrival time within store time window.
-
-        Args:
-            arrival_time (datetime): Arrival time.
-            earliest_time (datetime): Earliest time (start of time window).
-            latest_time (datetime): Latest time (end of time window).
-
-        Returns:
-            bool: True if arrival_time is within the [earliest_time, latest_time] window, False otherwise.
-        """
-        return earliest_time <= arrival_time <= latest_time
-
-
-    def _is_within_time_limit(self, duration):
-        """
-        Notes:
-            Check route duration is within time limit per route.
-
-        Args:
-            duration (int): The total duration of the route in seconds.
-
-        Returns:
-            bool: True if duration is within the route time limit, False otherwise.
-        """
-        return duration <= self.time_limit_per_route
-            
-
     def _check_time_constraint(self, stores, store, duration):
         """
         Notes:
             Check if adding a store violates the time window constraint.
-        
+
         Args:
             route (list): Current route (list of stores).
             store (dict): Store information.
             duration (float): Current total duration of the route in seconds.
-        
+
         Returns:
             bool: True if time window constraint is satisfied, False otherwise.
         """
@@ -383,7 +346,7 @@ class SupportLinePlanningACO:
         cur_id = store['store_id']
         prev_dwell_time = prev_store['dwell_time']
         pre_to_cur_time = self.time_matrix[prev_id][cur_id]
-        pre_pred_time = datetime.fromisoformat(prev_store['pred_time']) 
+        pre_pred_time = datetime.fromisoformat(prev_store['pred_time'])
         arrival_time = pre_pred_time + timedelta(seconds=pre_to_cur_time + prev_dwell_time)
         arrival_time = arrival_time.replace(microsecond=0)
         earliest_time = datetime.fromisoformat(store['earliest_time'])
@@ -393,10 +356,10 @@ class SupportLinePlanningACO:
         cur_to_dc_time = self.time_matrix[cur_id]['dc']
         cur_dwell_time = store['dwell_time']
         new_duration = duration + (pre_to_cur_time + cur_to_dc_time - pre_to_dc_time) + cur_dwell_time
-            
+
         if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
             return False
-        
+
         if not self._is_within_time_limit(new_duration):
             return False
 
@@ -407,7 +370,7 @@ class SupportLinePlanningACO:
         """
         Notes:
             Check if adding a store to a route violates capacity and time constraints.
-        
+
         Args:
             route (dict): The current route.
             store (dict): The candidate store to add.
@@ -435,11 +398,11 @@ class SupportLinePlanningACO:
         """
         Notes:
             Select the next store based on roulette wheel selection.
-        
+
         Args:
             current_store (dict): The current store.
             feasible_stores (list): List of feasible stores.
-        
+
         Returns:
             next_store (dict): The selected next store.
         """
@@ -467,15 +430,15 @@ class SupportLinePlanningACO:
 
         Args:
             None.
-        
+
         Returns:
             solution (dict): { dc: {...}, stores: [...] }.
         """
         if not self.remaining_stores:
             return {}
 
+        ant_solution = {}
         vehicle_num = 101
-        ant_solution = dict()
         unvisited_stores = [store.copy() for store in self.remaining_stores]
         route_manager = RouteManager(ant_solution, self.distance_matrix, self.time_matrix)
 
@@ -496,46 +459,36 @@ class SupportLinePlanningACO:
                 if not feasible_stores:
                     vehicle_num += 1
                     break
-                
+
                 next_store = self._roulette_wheel_selection(current_store, feasible_stores)
                 route_manager.add_store(vehicle_id, next_store)
                 self._deposit_local_pheromone(current_store, next_store)
                 current_store = next_store
                 unvisited_stores.remove(next_store)
-        
+
         return ant_solution
-    
+
+
     def _evaporate_pheromone(self):
         """
         Notes:
+            Evaporate pheromone.
 
+        Args:
+            None.
+
+        Returns:
+            None.
         """
         for s in self.pheromone_matrix:
             for t in self.pheromone_matrix[s]:
                 self.pheromone_matrix[s][t] *= (1 - self.global_rho)
 
 
-    def _calculate_tau_bounds(self):
-        """
-        Notes:
-            Calculate bounds of tau.
-        
-        Args:
-            None.
-
-        Returns:
-            tau_max (float): The upper bound of tau .
-            tau_min (float): The low bound of tau.
-        """
-        tau_max = self.q / (self.global_rho * self.best_cost)
-        tau_min = tau_max / self.tau_ratio
-        return tau_max, tau_min
-
-
     def _deposit_local_pheromone(self, current_store, next_store):
         """
         Docstring for _deposit_local_pheromone
-        
+
         :param self: Description
         :param current_store: Description
         :param next_store: Description
@@ -544,6 +497,22 @@ class SupportLinePlanningACO:
         s2_d = next_store['store_id']
         self.pheromone_matrix[s1_d][s2_d] = (1 - self.local_rho) * self.pheromone_matrix[s1_d][s2_d] + self.local_rho * self.tau0
         self.pheromone_matrix[s2_d][s1_d] = (1 - self.local_rho) * self.pheromone_matrix[s2_d][s1_d] + self.local_rho * self.tau0
+
+
+    def _calculate_tau_bounds(self):
+        """
+        Notes:
+            Calculate bounds of tau.
+
+        Args:
+            None.
+
+        Returns:
+            tuple: (tau_max, tau_min).
+        """
+        tau_max = self.q / (self.global_rho * self.best_cost)
+        tau_min = tau_max / self.tau_ratio
+        return tau_max, tau_min
 
 
     def _deposit_global_pheromone(self, solution, cost):
@@ -590,14 +559,7 @@ class SupportLinePlanningACO:
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
 
-        self.log.append({
-            'iteration': 0,
-            'iter_worst_cost': greedy_cost,
-            'iter_best_cost': greedy_cost,
-            'iter_avg_cost': greedy_cost,
-            'std_cost': 0,
-            'best_cost': self.best_cost,
-        })
+        self._log_iteration(0, [greedy_cost], greedy_cost, greedy_cost)
 
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         for i in range(self.iterations):
@@ -615,7 +577,7 @@ class SupportLinePlanningACO:
                     iter_best_solution = ant_solution
 
             optimized_routes, optimized_cost = self.ls.optimize(iter_best_solution, iter_best_cost)
-            
+
             if optimized_cost < self.best_cost:
                 self.best_cost = optimized_cost
                 self.best_solution = optimized_routes
@@ -626,14 +588,7 @@ class SupportLinePlanningACO:
 
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
-            self.log.append({
-                'iteration': i + 1,
-                'iter_worst_cost': float(np.max(ant_costs)),
-                'iter_best_cost': iter_best_cost,
-                'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
-                'std_cost': float(np.std(ant_costs)),
-                'best_cost': self.best_cost,
-            })
+            self._log_iteration(i, ant_costs, iter_best_cost)
 
             if early_stopper.check(self.best_cost):
                 break

@@ -14,10 +14,10 @@ class EarlyStopper:
         """
         Notes:
             Check if early stopping condition is met.
-    
+
         Args:
             current_cost (float): The current cost to evaluate.
-            
+
         Returns:
             bool: True if early stopping condition is met, False otherwise.
         """
@@ -29,5 +29,5 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 self.early_stop = True
                 return True
-        
+
         return False

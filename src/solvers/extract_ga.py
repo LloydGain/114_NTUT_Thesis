@@ -1,13 +1,12 @@
-import os
 import hashlib
 import numpy as np
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-from solvers.allocate_aco import StoreAllocationACO
+# from solvers.allocate_aco import StoreAllocationACO
 
 class StoreExtractionGA:
     """
-    Notes: 
+    Notes:
         Genetic Algorithm for Store Extraction.
     """
     def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size = 2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
@@ -26,7 +25,7 @@ class StoreExtractionGA:
         self.best_individual = None
         self.fitness_cache = {}
         self.log = []
-    
+
 
     def _routes(self, routes):
         """
@@ -42,7 +41,7 @@ class StoreExtractionGA:
 
         route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
         route_manager.update_all_routes_info()
-        
+
         return routes
 
 
@@ -50,7 +49,7 @@ class StoreExtractionGA:
         """
         Notes:
             Create a shallow copy of routes info.
-        
+
         Args:
             routes (dict): Original routes info.
 
@@ -69,7 +68,7 @@ class StoreExtractionGA:
         """
         Notes:
             Create a shallow copy of individual.
-        
+
         Args:
             routes (dict): Original individual.
 
@@ -121,11 +120,11 @@ class StoreExtractionGA:
             detour_cost = d_pre_cur + d_cur_next - d_pre_next
 
             weights.append(max(detour_cost, 1e-12))
-        
+
         weights = np.array(weights)
         probs = weights / np.sum(weights)
 
-        return probs 
+        return probs
 
 
     def _extract_stores(self, route_id):
@@ -147,7 +146,7 @@ class StoreExtractionGA:
             stores = route_manager.routes_info[route_id]['stores']
             probabilities = self._calculate_removal_weights(stores)
             idx_to_remove = np.random.choice(len(stores), p=probabilities)
-            
+
             selected_store = stores[idx_to_remove]
             selected_stores.append(selected_store)
             route_manager.remove_store(route_id, selected_store)
@@ -194,10 +193,10 @@ class StoreExtractionGA:
         """
         Notes:
             Remove the extracted stores from main routes.
-        
+
         Args:
             individual (dict): { route_id: [store1, store2, ...] }
-        
+
         Returns:
             dict: route info { dc: {...}, stores: [...] }.
         """
@@ -205,10 +204,10 @@ class StoreExtractionGA:
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         for route_id in indiviudal:
             route_manager.remove_stores(route_id, indiviudal[route_id])
-        
+
         return route_manager.routes_info
 
-    
+
     def _encode_individual(self, individual):
         """
         Notes:
@@ -229,18 +228,19 @@ class StoreExtractionGA:
         """
         Notes:
             Calculates the fitness value for an individual solution
-        
+
         Args:
             individual (dict): { route_id: [store1, store2, ...] }
-        
+
         Returns:
             float: The fitness value
         """
         key = self._encode_individual(individual)
         if key in self.fitness_cache:
             return self.fitness_cache[key]
-        
-        routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
+
+        stores = self._individual_to_list(individual)
+        # routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
         # allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         # support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
         # fitness = allocate_cost + support_cost
@@ -251,7 +251,7 @@ class StoreExtractionGA:
         self.fitness_cache[key] = fitness
         return fitness
 
-    
+
     def _roulette_wheel_selection(self, population, fitnesses):
         """
         Notes:
@@ -286,13 +286,13 @@ class StoreExtractionGA:
         """
         child1 = self._copy_individual(parent1)
         child2 = self._copy_individual(parent2)
-        
+
         route_ids = list(self.overloaded_routes.keys())
-        
+
         for r in route_ids:
             if np.random.rand() < 0.5:
                 child1[r], child2[r] = child2[r], child1[r]
-        
+
         return child1, child2
 
 
@@ -312,7 +312,7 @@ class StoreExtractionGA:
         if cross < self.cross_rate:
             return self._uniform_crossover(parent1, parent2)
         return self._copy_individual(parent1), self._copy_individual(parent2)
-    
+
 
     def _mutate(self, individual):
         """
@@ -355,10 +355,10 @@ class StoreExtractionGA:
         """
         Notes:
             Converts an individual to a set of store IDs.
-        
+
         Args:
             individual (dict): The individual to convert.
-        
+
         Returns:
             extracted_stores (list): List of extracted stores.
         """

@@ -12,9 +12,10 @@ class GoogleRoutesAPI:
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.routes_base_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
         self.dist_matrix_base_url = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
-        self.max_elements_per_request = 625
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
-    
+        self.max_elements_per_request = 625
+        self.timeout = 10
+
 
     def parse_duration(self, duration_str):
         """
@@ -23,7 +24,7 @@ class GoogleRoutesAPI:
 
         Args:
             duration_str (str): Duration string (e.g., '730s').
-        
+
         Returns:
             int: Duration in seconds.
         """
@@ -71,10 +72,10 @@ class GoogleRoutesAPI:
             "X-Goog-FieldMask": "originIndex,destinationIndex,duration,distanceMeters"
         }
 
-        response = requests.post(self.dist_matrix_base_url, json=body, headers=headers)
+        response = requests.post(self.dist_matrix_base_url, json=body, headers=headers, timeout=self.timeout)
 
         if response.status_code != 200:
-            raise Exception(f"Error in route matrix request: {response.status_code}, {response.text}")
+            raise RuntimeError(f"Error in route matrix request: {response.status_code}, {response.text}")
 
         return response.json()
 
@@ -119,19 +120,19 @@ class GoogleRoutesAPI:
 
                     distance_matrix[origin_store_id][dest_store_id] = self.distance_meter_to_km(element['distanceMeters'])
                     time_matrix[origin_store_id][dest_store_id] = self.parse_duration(element['duration'])
-        
-        return distance_matrix, time_matrix
-    
 
-    def _compute_route(self, waypoints, travel_mode="DRIVE"):
+        return distance_matrix, time_matrix
+
+
+    def compute_route(self, waypoints, travel_mode="DRIVE"):
         """
         Notes:
             Compute route using Google Maps Directions API.
-        
+
         Args:
             waypoints (list): List of waypoint coordinates.
             travel_mode (str): Mode of travel.
-        
+
         Returns:
             tuple: (distance in km, duration in seconds).
         """
@@ -150,10 +151,10 @@ class GoogleRoutesAPI:
             "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline,routes.legs.startLocation,routes.legs.endLocation,routes.legs.distanceMeters,routes.legs.staticDuration"
         }
 
-        response = requests.post(self.routes_base_url, json=body, headers=headers)
+        response = requests.post(self.routes_base_url, json=body, headers=headers, timeout=self.timeout)
 
         if response.status_code != 200:
-            raise Exception(f"Error in route request: {response.status_code}, {response.text}")
+            raise RuntimeError(f"Error in route request: {response.status_code}, {response.text}")
 
         data = response.json()
         distance, duration = self.distance_meter_to_km(data['routes'][0]['distanceMeters']), self.parse_duration(data['routes'][0]['duration'])
@@ -162,11 +163,10 @@ class GoogleRoutesAPI:
         # encoded_polyline = data['routes'][0]['polyline']['encodedPolyline']
 
         durations = []
-        distances = []
         for leg in data['routes'][0]['legs']:
             leg_static_duration = self.parse_duration(leg['staticDuration'])
             durations.append(leg_static_duration)
 
         durations = durations[1:-1]
-            
-        return distance, duration, durations 
+
+        return distance, duration, durations

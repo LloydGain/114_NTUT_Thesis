@@ -1,6 +1,5 @@
 import os
 import json
-import shutil
 import requests
 import polyline
 import folium
@@ -19,6 +18,7 @@ class DisplayRoutes:
         self.routes = self._load_routes()
         self.main_colors = ["blue", "green", "purple", "orange", "cadetblue", "pink", "darkgreen", "darkblue", "darkorange"]
         self.alt_color = "darkred"
+        self.timeout = 10
 
 
     def _load_routes(self):
@@ -49,7 +49,6 @@ class DisplayRoutes:
         Returns:
             None.
         """
-
         os.makedirs(dest_dir, exist_ok=True)
 
         for idx, (route_id, route_info) in enumerate(self.routes.items()):
@@ -98,7 +97,7 @@ class DisplayRoutes:
         """
         Notes:
             Plot routes and save as an interactive HTML file.
-        
+
         Args:
             dest_html (str): Path to save the HTML file.
 
@@ -125,7 +124,7 @@ class DisplayRoutes:
             coord_str = ";".join(coords)
 
             url = f"http://localhost:5000/route/v1/driving/{coord_str}?overview=full&geometries=polyline"
-            res = requests.get(url).json()
+            res = requests.get(url, timeout=self.timeout).json()
 
             encoded = res["routes"][0]["geometry"]
             decoded_points = polyline.decode(encoded)

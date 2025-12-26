@@ -5,41 +5,30 @@ from datetime import datetime, timedelta
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.base_aco import BaseACO
 
-class StoreAllocationACO:
+class StoreAllocationACO(BaseACO):
     """
     Notes:
         Store Allocation using Ant Colony Optimization (ACO).
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, tau_ratio=50, q=1, early_stop_patience=10):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, rho=0.1, q=1, early_stop_patience=1):
+        super().__init__(num_ants, iterations, alpha, beta, rho, q, early_stop_patience)
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
-        self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
-        self.time_limit_per_route = 5 * 60 * 60
-        self.alpha = alpha
-        self.beta = beta
-        self.rho = rho
-        self.tau_ratio = tau_ratio
-        self.q = q
-        self.num_ants = num_ants
-        self.iterations = iterations
-        self.early_stop_patience = early_stop_patience
-        self.pheromone_matrix = dict()
-        self.best_cost = float('inf')
-        self.best_solution = None
+
         self.best_ant_solution = None
         self.best_remaining_solution = None
         self.cost_cache = {}
-        self.log = []
 
 
     def _copy_routes_info(self, routes):
         """
         Notes:
             Create a shallow copy of routes info.
-        
+
         Args:
             routes (dict): Original routes info.
 
@@ -51,7 +40,7 @@ class StoreAllocationACO:
                 "dc": route_data["dc"].copy(),
                 "stores": [store.copy() for store in route_data["stores"]]
             } for route_id, route_data in routes.items()
-        }                   
+        }
 
 
     def _heuristic(self, cost):
@@ -66,17 +55,17 @@ class StoreAllocationACO:
             float: Heuristic value (1 / cost).
         """
         return 1 / (cost + 1e-12)
-        
+
 
     def _pheromone(self, store, route_id):
         """
         Notes:
             Get pheromone value between store and route.
-        
+
         Args:
             store (dict): The current store.
             route_id (str): The candidate route.
-        
+
         Returns:
             float: The pheromone value.
         """
@@ -87,7 +76,7 @@ class StoreAllocationACO:
         """
         Notes:
             Calculate the transition value for moving from current_store to next_store.
-        
+
         Args:
             store (dict): The current store.
             route_id (str): The candidate route.
@@ -104,11 +93,11 @@ class StoreAllocationACO:
         """
         Notes:
             Check if a store is not within the opposite region.
-            
+
         Args:
             store (dict): Store information.
             dc (dict): DC information.
-        
+
         Returns:
             bool: True if region constraint is satisfied, False otherwise.
         """
@@ -116,7 +105,7 @@ class StoreAllocationACO:
 
         if store['region'] == opposite[dc['region']]:
             return False
-        
+
         return True
 
 
@@ -128,7 +117,7 @@ class StoreAllocationACO:
         Args:
             store (dict): Store information.
             route_volume (float): Current route volume.
-            max_capacity (float): Route max capacity, 
+            max_capacity (float): Route max capacity,
 
         Returns:
             bool: True if capacity constraint is satisfied, False otherwise.
@@ -155,75 +144,46 @@ class StoreAllocationACO:
         max_deviation = 30
 
         dist_to_new = self.distance_matrix[prev_id][new_id] + self.distance_matrix[new_id][next_id] - self.distance_matrix[prev_id][next_id]
-        if dist_to_new < 1: 
+        if dist_to_new < 1:
             max_deviation = 60
 
-        vec_AC = np.array([
-            new_store['longitude'] - prev_store['longitude'], 
+        vec_ac = np.array([
+            new_store['longitude'] - prev_store['longitude'],
             new_store['latitude'] - prev_store['latitude']
         ])
 
-        vec_CB = np.array([
-            new_store['longitude'] - next_store['longitude'], 
+        vec_cb = np.array([
+            new_store['longitude'] - next_store['longitude'],
             new_store['latitude'] - next_store['latitude']
         ])
 
-        norm_AC = np.linalg.norm(vec_AC)
-        norm_CB = np.linalg.norm(vec_CB)
+        norm_ac = np.linalg.norm(vec_ac)
+        norm_cb = np.linalg.norm(vec_cb)
 
-        if norm_AC == 0 or norm_CB == 0:
+        if norm_ac == 0 or norm_cb == 0:
             return True
 
-        cos_theta = np.dot(vec_AC, vec_CB) / (norm_AC * norm_CB)
+        cos_theta = np.dot(vec_ac, vec_cb) / (norm_ac * norm_cb)
         cos_threshold = np.cos(np.radians(180 - max_deviation))
 
         return cos_theta <= cos_threshold
-
-
-    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
-        """
-        Check if a given arrival time within store time window.
-
-        Args:
-            arrival_time (datetime): Arrival time.
-            earliest_time (datetime): Earliest time (start of time window).
-            latest_time (datetime): Latest time (end of time window).
-
-        Returns:
-            bool: True if arrival_time is within the [earliest_time, latest_time] window, False otherwise.
-        """
-        return earliest_time <= arrival_time <= latest_time
-
-
-    def _is_within_time_limit(self, duration):
-        """
-        Notes:
-            Check route duration is within time limit per route.
-
-        Args:
-            duration (int): The total duration of the route in seconds.
-
-        Returns:
-            bool: True if duration is within the route time limit, False otherwise.
-        """
-        return duration <= self.time_limit_per_route
 
 
     def _check_time_constraint(self, route, pos, store):
         """
         Notes:
             Check if adding a store violates the time window constraint.
-        
+
         Args:
             route (list): Current route (list of stores).
             pos (int): Position to insert the store.
             store (dict): Store information.
-        
+
         Returns:
             bool: True if time window constraint is satisfied, False otherwise.
         """
         new_route = route[:pos] + [store] + route[pos:]
-        duration = self.time_matrix['dc'][new_route[1]['store_id']] + self.time_matrix[new_route[-2]['store_id']]['dc'] 
+        duration = self.time_matrix['dc'][new_route[1]['store_id']] + self.time_matrix[new_route[-2]['store_id']]['dc']
 
         for i in range(2, len(new_route) - 1):
             prev_store, cur_store = new_route[i - 1], new_route[i]
@@ -239,10 +199,10 @@ class StoreAllocationACO:
 
             if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
                 return False
-        
+
         if not self._is_within_time_limit(duration):
             return False
-            
+
         return True
 
 
@@ -250,11 +210,11 @@ class StoreAllocationACO:
         """
         Notes:
             Calculate the insertion cost of adding a store to a route.
-        
+
         Args:
             route_info (dict): Route information.
             store (dict): Store information.
-            
+
         Returns:
             min_cost (float): Insertion cost.
             best_pos (int): Best position to insert the store.
@@ -277,23 +237,23 @@ class StoreAllocationACO:
         route = [self.dc] + stores + [self.dc]
         for pos, (prev_store, next_store) in enumerate(zip(route, route[1:]), start=1):
             prev_id, next_id, store_id = prev_store['store_id'], next_store['store_id'], store['store_id']
-            insert_cost = (self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id])
+            insert_cost = self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id]
 
             if not self._is_angle_valid(prev_store, next_store, store):
                 continue
 
-            if insert_cost < min_cost and insert_cost > 0 and self._check_time_constraint(route, pos, store):
+            if 0 < insert_cost < min_cost and self._check_time_constraint(route, pos, store):
                 best_pos = pos - 1
                 min_cost = insert_cost
 
         return min_cost, best_pos
-        
+
 
     def _greedy_selection(self, current_store, feasible_routes):
         """
         Notes:
             Select the next route based on greedy approach.
-        
+
         Args:
             current_store (dict): The current store.
             feasible_routes (list): List of feasible routes.
@@ -369,15 +329,15 @@ class StoreAllocationACO:
         """
         Notes:
             Calculate the cost of a solution.
-        
+
         Args:
             routes (dict): { dc: {...}, stores: [...] }.
             remaining_stores (list): [store1, store2, ...].
-        
+
         Returns:
             cost (float): Total cost of the solution.
         """
-        greedy_cost = 0        
+        greedy_cost = 0
         for _, route_info in routes.items():
             prev_store = self.dc
             for store in route_info['stores']:
@@ -392,7 +352,7 @@ class StoreAllocationACO:
             self.cost_cache[key] = support_cost
         else:
             support_cost = self.cost_cache[key]
-        
+
         return greedy_cost + support_cost
 
 
@@ -411,7 +371,7 @@ class StoreAllocationACO:
         for store in self.remaining_stores:
             store_id = store['store_id']
             self.pheromone_matrix[store_id] = {}
-        
+
             for route_id in self.main_routes.keys():
                 self.pheromone_matrix[store_id][route_id] = initial_pheromone
 
@@ -420,11 +380,11 @@ class StoreAllocationACO:
         """
         Notes:
             Select the next route based on roulette wheel selection.
-        
+
         Args:
             current_store (dict): The current store.
             feasible_routes (list): List of feasible routes.
-        
+
         Returns:
             next_route (dict): The selected next route.
         """
@@ -438,14 +398,19 @@ class StoreAllocationACO:
         route_id, _, pos = next_route
         return route_id, pos
 
+
     def _solution_construct(self):
         """
-        Construct a solution for store allocation using ACO.
+        Notes:
+            Construct a solution for store allocation using ACO.
+
+        Args:
+            None.
 
         Returns:
-            route_manager.routes_info: dict of routes with assigned stores
-            solution: dict {store_id: route_id} for assigned stores
-            unassigned_stores: list of stores that couldn't be assigned
+            solutions (dict): Solutions for store allocation.
+            unassigned_stores (list): List of unassigned stores.
+            copy_routes (dict): Copy of routes.
         """
         solutions = {}
         unassigned_stores = []
@@ -478,7 +443,7 @@ class StoreAllocationACO:
         """
         Notes:
             Evaporate Pheromone.
-        
+
         Args:
             None.
 
@@ -488,23 +453,6 @@ class StoreAllocationACO:
         for store_id in self.pheromone_matrix:
             for route_id in self.pheromone_matrix[store_id]:
                 self.pheromone_matrix[store_id][route_id] *= (1 - self.rho)
-
-
-    def _calculate_tau_bounds(self):
-        """
-        Notes:
-            Calculate bounds of tau.
-        
-        Args:
-            None.
-
-        Returns:
-            tau_max (float): The upper bound of tau .
-            tau_min (float): The low bound of tau.
-        """
-        tau_max = self.q / (self.rho * self.best_cost)
-        tau_min = tau_max / self.tau_ratio
-        return tau_max, tau_min
 
 
     def _deposit_pheromone(self, solution, cost):
@@ -520,15 +468,9 @@ class StoreAllocationACO:
             None.
         """
         delta = self.q / cost
-        tau_max, tau_min = self._calculate_tau_bounds()
         for store_id, route_id in solution.items():
             self.pheromone_matrix[store_id][route_id] += delta
-            
-            if self.pheromone_matrix[store_id][route_id] > tau_max:
-                self.pheromone_matrix[store_id][route_id] = tau_max
-            elif self.pheromone_matrix[store_id][route_id] < tau_min:
-                self.pheromone_matrix[store_id][route_id] = tau_min
-        
+
 
     def run(self):
         """
@@ -544,20 +486,15 @@ class StoreAllocationACO:
         self.best_ant_solution = greedy_solution
         self.best_remaining_solution = remaining_stores
 
-        self.log.append({
-            'iteration': 0,
-            'iter_worst_cost': greedy_cost,
-            'iter_best_cost': greedy_cost,
-            'iter_avg_cost': greedy_cost,
-            'std_cost': 0,
-            'best_cost': self.best_cost,
-        })
+        self._log_iteration(0, [greedy_cost], greedy_cost, greedy_cost)
 
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float("inf")
             iter_best_ant_solution = None
+
+            self._evaporate_pheromone()
             for _ in range(self.num_ants):
                 ant_routes, ant_solution, ant_remaining_stores = self._solution_construct()
                 ant_cost = self._cost_function(ant_routes, ant_remaining_stores)
@@ -572,21 +509,13 @@ class StoreAllocationACO:
                     self.best_solution = ant_routes
                     self.best_ant_solution = ant_solution
                     self.best_remaining_solution = ant_remaining_stores
-            
-            self._evaporate_pheromone()
-            self._deposit_pheromone(iter_best_ant_solution, iter_best_cost)
+
+                self._deposit_pheromone(iter_best_ant_solution, iter_best_cost)
             # self._deposit_pheromone(self.best_ant_solution, self.best_cost)
 
             print(f'Store Allocation: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
-            self.log.append({
-                'iteration': i + 1,
-                'iter_worst_cost': float(np.max(ant_costs)),
-                'iter_best_cost': float(min(ant_costs)),
-                'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
-                'std_cost': float(np.std(ant_costs)),
-                'best_cost': self.best_cost,
-            })
+            self._log_iteration(i, ant_costs, iter_best_cost)
 
             if early_stopper.check(self.best_cost):
                 break

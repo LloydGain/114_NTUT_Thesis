@@ -11,13 +11,13 @@ class LocalSearch:
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
-    
+
 
     def _calculate_route_distance(self, stores):
         """
         Notes:
             Calculate the total distance of a single route.
-        
+
         Args:
             stores (list): List of store dicts in the route.
 
@@ -27,7 +27,7 @@ class LocalSearch:
         total_dist = 0
         depot_id = self.dc['store_id']
         stores_id = [depot_id] + [store['store_id'] for store in stores] + [depot_id]
-        
+
         for store_idx, store_idy in zip(stores_id[:-1], stores_id[1:]):
             dist = self.distance_matrix[store_idx][store_idy]
             total_dist += dist
@@ -82,14 +82,15 @@ class LocalSearch:
         Returns:
             bool: True if time constraints are satisfied, False otherwise.
         """
-        if len(stores) == 0: return True
+        if len(stores) == 0:
+            return True
 
         prev_store = stores[0]
         prev_dwell = prev_store['dwell_time']
         cur_time = datetime.fromisoformat(prev_store['sched_time'])
         cur_time = cur_time + timedelta(seconds=prev_dwell)
 
-        for cur_store in stores[1:]:   
+        for cur_store in stores[1:]:
             cur_earliest_time = datetime.fromisoformat(cur_store['earliest_time'])
             cur_lastest_time = datetime.fromisoformat(cur_store['latest_time'])
             travel_time = self.time_matrix[prev_store['store_id']][cur_store['store_id']]
@@ -101,7 +102,7 @@ class LocalSearch:
             cur_dwell = cur_store['dwell_time']
             cur_time = cur_time + timedelta(seconds=cur_dwell)
             prev_store = cur_store
-        
+
         return True
 
 
@@ -161,12 +162,12 @@ class LocalSearch:
                 new_route_stores[i:j+1] = new_route_stores[i:j+1][::-1]
 
                 new_cost = self._calculate_route_distance(new_route_stores)
-                
+
                 if new_cost < best_cost:
                     if self._check_time_constraint(new_route_stores):
                         best_cost = new_cost
                         best_stores = new_route_stores
-                
+
         return best_stores, best_cost
 
 
@@ -196,12 +197,14 @@ class LocalSearch:
         base_total_cost = base_cost_r1 + base_cost_r2
 
         # -----------------------------------------------
-        if not route2_id.startswith('1'): return None, -1
+        if not route2_id.startswith('1'):
+            return None, -1
         # -----------------------------------------------
 
         for idx, r1_store in enumerate(r1_stores):
 
-            if not self._check_capacity_constraint(r2, r1_store): continue
+            if not self._check_capacity_constraint(r2, r1_store):
+                continue
 
             for idy, _ in enumerate(r2_stores):
                 if len(r1_stores) == 1:
@@ -253,8 +256,9 @@ class LocalSearch:
             + self._calculate_route_distance(r2_stores)
         )
 
-        # -----------------------------------------------   
-        if not route1_id.startswith('1') or not route2_id.startswith('1'): return (None, None)
+        # -----------------------------------------------
+        if not route1_id.startswith('1') or not route2_id.startswith('1'):
+            return (None, None)
         # -----------------------------------------------
 
         for i, s1 in enumerate(r1_stores):
@@ -315,12 +319,16 @@ class LocalSearch:
         while improved:
             improved = False
             for route_id, route_data in routes.items():
-                if not route_id.startswith('1'): continue
+
+                if not route_id.startswith('1'):
+                    continue
 
                 original_route = route_data['dc']
                 original_stores = route_data['stores']
                 original_cost = original_route['distance']
-                if len(original_stores) < 4: continue
+
+                if len(original_stores) < 4:
+                    continue
 
                 new_stores, new_cost = self._two_opt(original_stores, original_cost)
 
@@ -331,10 +339,10 @@ class LocalSearch:
                     # print([s['store_id'] for s in new_stores])
                     route_manager.replace_stores(route_id, new_stores)
                     new_routes_cost = new_routes_cost - (original_cost - new_cost)
-        
+
         return routes, new_routes_cost
 
-    
+
     def optimize_inter_route(self, routes_info, routes_cost):
         """
         Notes:
@@ -357,7 +365,8 @@ class LocalSearch:
             improved = False
             for r1_id in route_ids:
                 for r2_id in route_ids:
-                    if r1_id == r2_id: continue
+                    if r1_id == r2_id:
+                        continue
 
                     store, position = self._relocate(routes, r1_id, r2_id)
                     if store is not None:
@@ -373,8 +382,9 @@ class LocalSearch:
                         improved = True
                         break
 
-                if improved: break
-        
+                if improved:
+                    break
+
         route_manager.update_all_routes_info()
         routes = route_manager.routes_info
         new_routes_cost = self._calculate_routes_cost(routes)

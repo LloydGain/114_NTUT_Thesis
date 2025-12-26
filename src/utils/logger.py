@@ -4,11 +4,11 @@ import pandas as pd
 from datetime import datetime
 
 class Log:
+    """
+    Notes:
+        Log for recording experiment params and results.
+    """
     def __init__(self, log_dir, parameters, times):
-        """
-        Notes:
-            Log for recording experiment params and results.
-        """
         self.log_dir = log_dir
         self.parameters = parameters
         self.times = times
@@ -16,7 +16,7 @@ class Log:
         self.times_file = f'{log_dir}/times.json'
         os.makedirs(log_dir, exist_ok=True)
 
-    
+
     def log_parameters(self):
         """
         Notes:
@@ -24,7 +24,7 @@ class Log:
 
         Args:
             None.
-        
+
         Returns:
             None.
         """
@@ -44,13 +44,13 @@ class Log:
 
         Args:
             None.
-        
+
         Returns:
             None.
         """
         with open(self.times_file, 'w', encoding='utf-8') as f:
             json.dump(self.times, f, indent=4)
-    
+
 
     def log_route(self, log_file, routes1, routes2, routes3):
         """
@@ -62,7 +62,7 @@ class Log:
             routes1 (dict): routes info.
             routes2 (dict): routes info.
             routes3 (dict): routes info.
-        
+
         Returns:
             None.
         """
@@ -145,7 +145,7 @@ class Log:
         Args:
             log_file (str): The path to the log file.
             log_data (list): The data to be logged.
-        
+
         Returns:
             None.
         """

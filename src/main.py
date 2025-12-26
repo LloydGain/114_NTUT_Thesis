@@ -1,6 +1,3 @@
-import sys
-sys.dont_write_bytecode = True
-
 import os
 import copy
 import time
@@ -24,8 +21,11 @@ from eval.display_routes import DisplayRoutes
 
 load_dotenv()
 
-
 def parse_args():
+    """
+    Notes:
+        Parse command line arguments.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_date", type=str, required=True)
     parser.add_argument("--seed", type=int, default=None, help="Random seed (optional). If not set, use env or random behavior.")
@@ -35,13 +35,17 @@ def parse_args():
 
 
 def main(file_date, random_seed=None, test_mode=False, google=False):
+    """
+    Notes:
+        Main function for running the program.
+    """
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = f'../output/{file_date}/{dt_folder}/logs'
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}/{file_date}program.xlsx'
-    dist_file = f'../data/osrm/store_distance_matrix.json'
-    time_file = f'../data/osrm/store_time_matrix.json'
+    dist_file = '../data/osrm/store_distance_matrix.json'
+    time_file = '../data/osrm/store_time_matrix.json'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     store_info_file = '../data/store_info.xlsx'
     original_route = f'../output/{file_date}/original_routes_info.json'
@@ -70,7 +74,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     if random_seed is None:
         env_seed = os.getenv("RANDOM_SEED")
         random_seed = int(env_seed)
-    
+
     if random_seed is not None:
         random.seed(random_seed)
         np.random.seed(random_seed)
@@ -94,8 +98,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
             'iterations': 500,
             'alpha': 1,
             'beta': 1,
-            'rho': 0.1, 
-            'tau_ratio': 50,
+            'rho': 0.1,
             'q': 100,
             'early_stop_patience': 10
         },
@@ -132,8 +135,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
             'iterations': 1,
             'alpha': 1,
             'beta': 1,
-            'rho': 0.1, 
-            'tau_ratio': 50,
+            'rho': 0.1,
             'q': 1,
             'early_stop_patience': 1
         },
@@ -255,7 +257,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     ls = LocalSearch(distance_matrix, time_matrix)
     optimized_routes, optimized_cost = ls.optimize_inter_route(optimized_routes, optimized_cost)
     optimized_routes, optimized_cost = ls.optimize_intra_route(optimized_routes, optimized_cost)
-    
+
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
     print(f"Local Search 執行時間: {time_consume} 秒")
@@ -269,7 +271,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     print("Exporting optimized route data...")
     route_manager = RouteManager(optimized_routes)
     if google:
-        route_manager.update_all_routes_distance_and_duration_with_GoogleAPI()
+        route_manager.update_all_routes_distance_and_duration_with_google_api()
     route_manager.export_routes_info(optimized_routes_file)
 
     end_time = time.time()
@@ -286,7 +288,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     m_data = MDataManager([manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     if google:
         m_route_manager = RouteManager(m_data.routes_info, distance_matrix, time_matrix)
-        m_route_manager.update_all_routes_distance_and_duration_with_GoogleAPI()
+        m_route_manager.update_all_routes_distance_and_duration_with_google_api()
     m_data.save_routes_to_json(manual_routes_file)
 
     end_time = time.time()
@@ -297,14 +299,21 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
 # -----------------------------------------------------------------------------------
 
-    # start_time = time.time()
+    if os.path.exists(program_file):
+        start_time = time.time()
 
-    # print("Loading program route data...")
-    # p_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
-    # p_data.save_routes_to_json(program_routes_file)
+        print("Loading program route data...")
+        p_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
+        if google:
+            p_route_manager = RouteManager(p_data.routes_info, distance_matrix, time_matrix)
+            p_route_manager.update_all_routes_distance_and_duration_with_google_api()
+        p_data.save_routes_to_json(program_routes_file)
 
-    # end_time = time.time()
-    # print(f"學長編排資料讀取執行時間: {end_time - start_time:.2f} 秒")
+        end_time = time.time()
+        time_consume = round(end_time - start_time, 2)
+        print(f"學長編排資料讀取執行時間: {time_consume} 秒")
+
+        times['Loading program route data...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -312,13 +321,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
     print("Evaluating and comparing routes...")
     # eval = EvalRoutes(manual_routes_file, optimized_routes_file, program_routes_file) # 1203
-    eval = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
-    eval.export_to_excel(route_comparison_file)
+    eval_routes = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
+    eval_routes.export_to_excel(route_comparison_file)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
     print(f"最佳化路線與手動編排路線比較執行時間: {time_consume} 秒")
-    
+
     times['Evaluating and comparing routes...'] = time_consume
 
 # -----------------------------------------------------------------------------------
@@ -333,7 +342,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     logger.log_execution(store_extract_log_file, store_extract_log_data)
     logger.log_execution(store_allocate_log_file, store_allocate_log_data)
     logger.log_execution(support_line_log_file, support_line_log_data)
-    
+
     end_time = time.time()
     print(f"記錄實驗參數和結果執行時間: {end_time - start_time:.2f} 秒")
 
@@ -347,9 +356,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
         manu_routes.plot_routes_png(manual_routes_img)
         manu_routes.plot_routes_html(manual_routes_html)
 
-        # prog_routes = DisplayRoutes(program_routes_file)
-        # prog_routes.plot_routes_png(program_routes_img)
-        # prog_routes.plot_routes_html(program_route_html)
+        if os.path.exists(program_routes_file):
+            prog_routes = DisplayRoutes(program_routes_file)
+            prog_routes.plot_routes_png(program_routes_img)
+            prog_routes.plot_routes_html(program_route_html)
 
         opt_routes = DisplayRoutes(optimized_routes_file)
         opt_routes.plot_routes_png(optimized_routes_img)

@@ -1,21 +1,21 @@
-import json
 import requests
 
 class OSRM:
+    """
+    Notes:
+        Initialize the OSRM with a server URL.
+    """
     def __init__(self, url='http://localhost:5000'):
-        """
-        Notes:
-            Initialize the OSRM with a server URL.
-        """
-        self.OSRM_URL = url
+        self.url = url
         self.dc = {'store_id': 'dc', 'longitude': 121.40712, 'latitude': 25.083282}
-    
+        self.timeout = 10
+
 
     def get_distance_and_time_matrix(self, stores):
         """
         Notes:
             Calculate the distance and duration matrices between a list of stores.
-        
+
         Args:
             stores (list): List of store.
 
@@ -24,22 +24,23 @@ class OSRM:
            durations (list): Duration marix in seconds.
         """
         if len(stores) == 0:
-            raise Exception('Store list is empty. Cannot calculate matrices.')
+            raise ValueError('Store list is empty. Cannot calculate matrices.')
 
         coords = ';'.join([f"{store['longitude']},{store['latitude']}" for store in stores])
-        table_url = f'{self.OSRM_URL}/table/v1/driving/{coords}?annotations=distance,duration'
-        response = requests.get(table_url)
+        table_url = f'{self.url}/table/v1/driving/{coords}?annotations=distance,duration'
+        response = requests.get(table_url, timeout=self.timeout)
         data = response.json()
 
         if 'distances' in data and 'durations' in data:
             distances = [[d / 1000 for d in row] for row in data['distances']]
             durations = [[t * 1.75 for t in row] for row in data['durations']]
-            return distances, durations
         else:
-            raise ValueError(f'OSRM table query failed.')
-    
+            raise ValueError('OSRM table query failed.')
 
-    def _compute_cost_matrices(self, stores):
+        return distances, durations
+
+
+    def compute_cost_matrices(self, stores):
         """
         Notes:
             Compute distance and time matrices.
@@ -48,7 +49,7 @@ class OSRM:
             Stores (list): List of store.
             dist_file (str): File path to save distance matrix.
             time_file (str): File path to save time matrix.
-        
+
         Returns:
             tuple: (distance_matrix, time_matrix)
         """
