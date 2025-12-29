@@ -39,6 +39,10 @@ class MDataManager(BaseDataManager):
 
             store_name = row['店名']
             store_id = self._get_store_id_by_name(store_name)
+
+            if store_id is None and ('ＤＣ' not in store_name and '專車' not in store_name):
+                raise ValueError(f"Store ID not found for store name: {store_name}")
+
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()

@@ -27,7 +27,7 @@ def main(file_date):
     store_info_file = '../data/store_info.xlsx'
 
     s_data = StoreData(store_info_file)
-    distance_matrix, time_matrix = s_data.load_matrices_from_file(dist_file, time_file)
+    distance_matrix, time_matrix = s_data.get_cost_matrices(dist_file, time_file)
 
     m_data = MDataManager([source_manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     m_data.create_data_folder(data_dir, source_manual_file, dest_manual_file)

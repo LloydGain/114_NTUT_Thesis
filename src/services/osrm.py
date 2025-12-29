@@ -9,7 +9,7 @@ class OSRM:
     def __init__(self):
         self.url = config.OSRM_HOST
         self.dc = config.DC_CONFIG
-        self.timeout = 10
+        self.timeout = 60
 
 
     def get_distance_and_time_matrix(self, stores):
