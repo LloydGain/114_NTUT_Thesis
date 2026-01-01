@@ -46,18 +46,21 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
     time_file = '../data/osrm/store_time_matrix.json'
     route_network_file = '../data/route_network_and_dwell_times.xlsx'
     store_info_file = '../data/store_info.xlsx'
-    original_route = f'../output/{file_date}/original_routes_info.json'
+    original_routes_file = f'../output/{file_date}/original_routes_info.json'
     manual_routes_file = f'../output/{file_date}/manual_routes_info.json'
     program_routes_file = f'../output/{file_date}/program_routes_info.json'
     optimized_routes_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.json'
     route_comparison_file = f'../output/{file_date}/{dt_folder}/routes_comparison.xlsx'
 
+    original_routes_dir = f'../output/{file_date}/original_routes'
     manual_routes_dir = f'../output/{file_date}/manual_routes'
     program_routes_dir = f'../output/{file_date}/program_routes'
     optimized_routes_dir = f'../output/{file_date}/{dt_folder}/optimized_routes'
+    original_routes_img = f'{original_routes_dir}/img'
     manual_routes_img = f'{manual_routes_dir}/img'
     program_routes_img = f'{program_routes_dir}/img'
     optimized_routes_img = f'{optimized_routes_dir}/img'
+    original_routes_html = f'{original_routes_dir}/routes.html'
     manual_routes_html = f'{manual_routes_dir}/routes.html'
     program_route_html = f'{program_routes_dir}/routes.html'
     optimized_routes_html = f'{optimized_routes_dir}/routes.html'
@@ -180,7 +183,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
     print("Loading route data...")
     o_data = ODataManager([route_file, route_network_file, store_info_file], distance_matrix, time_matrix)
-    o_data.save_routes_to_json(original_route)
+    o_data.save_routes_to_json(original_routes_file)
     routes = copy.deepcopy(o_data.routes_info)
 
     end_time = time.time()
@@ -349,9 +352,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
         start_time = time.time()
 
         print("Displaying route visualizations...")
-        manu_routes = DisplayRoutes(manual_routes_file)
-        manu_routes.plot_routes_png(manual_routes_img)
-        manu_routes.plot_routes_html(manual_routes_html)
+        original_routes = DisplayRoutes(original_routes_file)
+        original_routes.plot_routes_png(original_routes_img)
+        original_routes.plot_routes_html(original_routes_html)
+
+        manual_routes = DisplayRoutes(manual_routes_file)
+        manual_routes.plot_routes_png(manual_routes_img)
+        manual_routes.plot_routes_html(manual_routes_html)
 
         if os.path.exists(program_routes_file):
             prog_routes = DisplayRoutes(program_routes_file)

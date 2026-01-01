@@ -407,6 +407,8 @@ class SupportLinePlanningACO(BaseACO):
         Returns:
             next_store (dict): The selected next store.
         """
+        if len(feasible_stores) == 1:
+            return feasible_stores[0]
 
         q = random.uniform(0, 1)
 
