@@ -2,6 +2,10 @@ import os
 import copy
 import shutil
 import pandas as pd
+from datetime import datetime, timedelta
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
 from models.route_manager import RouteManager
 from data.base_data import BaseDataManager
 
@@ -10,10 +14,11 @@ class MDataManager(BaseDataManager):
     Notes:
         Load route-related data from source files (manual).
     """
-    def __init__(self, excel_files, distance_matrix, time_matrix):
+    def __init__(self, excel_files, distance_matrix=None, time_matrix=None):
         super().__init__(excel_files, distance_matrix, time_matrix)
         self.routes_info = self._load_manual_routes()
-        self._update_routes_info()
+        if distance_matrix is not None and time_matrix is not None:
+            self._update_routes_info()
 
 
     def _load_manual_routes(self):
@@ -46,8 +51,8 @@ class MDataManager(BaseDataManager):
             lng, lat = self._get_coordinates(store_id)
             dwell_time = self._get_dwell_time(store_id)
             sched_time = pd.to_datetime(row['表定時間']).isoformat()
-            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(minutes=1)).isoformat()
-            latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(hours=1)).isoformat()
+            earliest_time = (pd.to_datetime(row['表定時間']) - pd.Timedelta(hours=1)).isoformat()
+            latest_time = (pd.to_datetime(row['表定時間']) + pd.Timedelta(minutes=30)).isoformat()
             pred_time = pd.to_datetime(row['預定時間']).isoformat()
             volume = row['貨量']
             load_rate = row['裝載率']
@@ -98,6 +103,50 @@ class MDataManager(BaseDataManager):
         return routes_info
 
 
+    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
+        """
+        Notes:
+            Check if a given arrival time within store time window.
+
+        Args:
+            arrival_time (datetime): Arrival time.
+            earliest_time (datetime): Earliest time (start of time window).
+            latest_time (datetime): Latest time (end of time window).
+
+        Returns:
+            bool: True if within time window, False otherwise.
+        """
+        return earliest_time <= arrival_time <= latest_time
+
+
+    def get_invalid_routes(self):
+        """
+        Notes:
+            Get invalid routes.
+
+        Args:
+            None.
+
+        Returns:
+            data (list): data row with routes info.
+        """
+        data = []
+        for route_id in self.routes_info:
+            dc = self.routes_info[route_id]['dc']
+            stores = self.routes_info[route_id]['stores']
+            for s in stores:
+                if s['route_code'][:2] == dc['route_code']:
+                    continue
+                earliest_time = pd.to_datetime(s['earliest_time'])
+                latest_time = pd.to_datetime(s['latest_time'])
+                pred_time = pd.to_datetime(s['pred_time'])
+                if not self._is_within_time_window(pred_time, earliest_time, latest_time):
+                    data.append(self.routes_info[route_id])
+                    break
+
+        return data
+
+
     def create_data_folder(self, dst_dir, source_manual_file, dest_manual_file):
         """
         Notes:
@@ -113,6 +162,123 @@ class MDataManager(BaseDataManager):
         """
         os.makedirs(dst_dir, exist_ok=True)
         shutil.copy(source_manual_file, dest_manual_file)
+
+
+    def export_invalid_routes(self, dest_file, sheet_name):
+        """
+        Notes:
+            Export invalid routes to Excel.
+            - 標出不在時窗的行 (黃色)
+            - 計算最早、最晚抵達時間
+            - 計算時間差，顯示提前/延遲分鐘
+        """
+        data = []
+
+        for route in self.get_invalid_routes():
+            dc = route['dc']
+            stores = route['stores']
+
+            data.append({
+                "不可大車": "",
+                "車次": dc["route_code"],
+                "ID": "",
+                "店名": "林口DC",
+                "表定時間": "",
+                "預定時間": "",
+                "貨量": dc["total_volume"],
+                "裝載率": dc["load_rate"],
+                "最早抵達時間": "",
+                "最晚抵達時間": "",
+                "時間差": ""
+            })
+
+            for s in stores:
+                data.append({
+                    "不可大車": False,
+                    "車次": s["route_code"],
+                    "ID": s["store_id"],
+                    "店名": s["store_name"],
+                    "表定時間": s["sched_time"],
+                    "預定時間": s["pred_time"],
+                    "貨量": s["volume"],
+                    "裝載率": "",
+                    "最早抵達時間": s["earliest_time"],
+                    "最晚抵達時間": s["latest_time"],
+                    "時間差": ""
+                })
+
+            data.append({
+                "不可大車": False,
+                "車次": f'{dc["route_code"]}DC',
+                "ID": "",
+                "店名": "林口DC",
+                "表定時間": "",
+                "預定時間": "",
+                "貨量": 0,
+                "裝載率": "",
+                "最早抵達時間": "",
+                "最晚抵達時間": "",
+                "時間差": ""
+            })
+
+        columns = [
+            "不可大車",
+            "車次",
+            "ID",
+            "店名",
+            "表定時間",
+            "預定時間",
+            "貨量",
+            "裝載率",
+            "最早抵達時間",
+            "最晚抵達時間",
+            "時間差"
+        ]
+
+        col_widths = [10, 8, 12, 15, 20, 20, 10, 10, 20, 20, 12]
+        df = pd.DataFrame(data, columns=columns)
+
+        mode = "a" if os.path.exists(dest_file) else "w"
+
+        with pd.ExcelWriter(dest_file, engine="openpyxl", mode=mode) as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        wb = load_workbook(dest_file)
+        ws = wb[sheet_name]
+        for i, width in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        yellow_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            sched_val = row[4].value
+            pred_val = row[5].value
+
+            if not sched_val or not pred_val:
+                continue
+
+            sched_time = datetime.fromisoformat(sched_val) if isinstance(sched_val, str) else sched_val
+            pred_time = datetime.fromisoformat(pred_val) if isinstance(pred_val, str) else pred_val
+            earliest_window = sched_time - timedelta(hours=1)
+            latest_window = sched_time + timedelta(minutes=30)
+            if not self._is_within_time_window(pred_time, earliest_window, latest_window):
+                for cell in row:
+                    cell.fill = yellow_fill
+
+                time_diff = pred_time - sched_time
+                minutes_diff = int(time_diff.total_seconds() / 60)
+
+                if minutes_diff > 30:
+                    minutes_diff -= 30
+                elif minutes_diff < -60:
+                    minutes_diff += 60
+
+                if minutes_diff < 0:
+                    row[10].value = f'早{abs(minutes_diff)}分鐘'
+                else:
+                    row[10].value = f'晚{minutes_diff}分鐘'
+
+        wb.save(dest_file)
 
 
     def _get_origin_routes(self):
@@ -192,6 +358,15 @@ class MDataManager(BaseDataManager):
             "貨量",
             "裝載率"
         ]
+        col_widths = [10, 8, 12, 15, 20, 20, 10, 10, 20, 20, 12]
+
         df = pd.DataFrame(data, columns=columns)
         with pd.ExcelWriter(dest_file, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="Sheet1", index=False, startrow=3)
+
+        wb = load_workbook(dest_file)
+        ws = wb['Sheet1']
+        for i, width in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        wb.save(dest_file)
