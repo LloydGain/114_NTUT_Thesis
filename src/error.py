@@ -28,7 +28,8 @@ def main():
         Export Invalid Routes.
     """
     base_dir = '../data'
-    error_file = f'{base_dir}/error_routes.xlsx'
+    output_dir = '../output'
+    error_file = f'{output_dir}/error_routes.xlsx'
     route_network_file = f'{base_dir}/route_network_and_dwell_times.xlsx'
     store_info_file = f'{base_dir}/store_info.xlsx'
     file_dates = get_file_dates(base_dir)

@@ -75,8 +75,10 @@ class Log:
         route3_same_code_total = 0
         route2_support_line_total = 0
         route3_support_line_total = 0
+        same_store_count_total = 0
 
         for route_id in routes1:
+            same_store_count = 0
             route1_data = routes1.get(route_id)
             route2_data = routes2.get(route_id)
             route3_data = routes3.get(route_id)
@@ -87,12 +89,17 @@ class Log:
             maunal_same_code_count = sum(1 for store in stores2 if store['route_code'].startswith(store['route_id']))
             optimized_same_code_count = sum(1 for store in stores3 if store['route_code'].startswith(store['route_id']))
 
+            for store in stores2:
+                if store in stores3:
+                    same_store_count += 1
+
             rows.append({
                 "route_id": route_id,
                 "original_store_count": f'{len(stores1)}',
                 "original_load_rate": f'{original_load_rate}',
                 "manual_store_count": f'{len(stores2)}({maunal_same_code_count})',
                 "optimized_store_count": f'{len(stores3)}({optimized_same_code_count})',
+                "same_store_count": f'{same_store_count}',
             })
 
             route1_total += len(stores1)
@@ -100,6 +107,7 @@ class Log:
             route3_total += len(stores3)
             route2_same_code_total += maunal_same_code_count
             route3_same_code_total += optimized_same_code_count
+            same_store_count_total += same_store_count
 
         for route_id in routes2:
             if route_id.isdigit():
@@ -121,6 +129,7 @@ class Log:
             "original_load_rate": 'X',
             "manual_store_count": f'{route2_support_line_total}',
             "optimized_store_count": f'{route3_support_line_total}',
+            "same_store_count": 'X',
         })
 
         rows.append({
@@ -129,6 +138,7 @@ class Log:
             "original_load_rate": 'X',
             "manual_store_count": f'{route2_total}({route2_same_code_total})',
             "optimized_store_count": f'{route3_total}({route3_same_code_total})',
+            "same_store_count": f'{same_store_count_total}',
         })
 
         df = pd.DataFrame(rows)

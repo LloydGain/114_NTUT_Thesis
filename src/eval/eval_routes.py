@@ -38,6 +38,22 @@ class EvalRoutes:
         return routes_info
 
 
+    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
+        """
+        Notes:
+            Check if a given arrival time within store time window.
+
+        Args:
+            arrival_time (datetime): Arrival time.
+            earliest_time (datetime): Earliest time (start of time window).
+            latest_time (datetime): Latest time (end of time window).
+
+        Returns:
+            bool: True if within time window, False otherwise.
+        """
+        return earliest_time <= arrival_time <= latest_time
+
+
     def _summarize_routes(self, routes):
         """
         Notes:
@@ -75,28 +91,23 @@ class EvalRoutes:
         average_main_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if not route['dc']['route_id'].isdigit()) / main_vehicles
         average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'].isdigit()) / support_vehicles if not support_vehicles == 0 else 0
 
+        on_time = 0
+        for route in routes.values():
+            stores = route['stores']
+            for store in stores:
+                if self._is_within_time_window(store['pred_time'], store['earliest_time'], store['latest_time']):
+                    on_time += 1
+        on_time_rate = on_time / total_stores
+
         summary = {
-            'total_vehicles': total_vehicles,
-            'main_vehicles': main_vehicles,
-            'support_vehicles': support_vehicles,
-            'total_stores': total_stores,
-            'main_stores': main_stores,
-            'support_stores': support_stores,
-            'total_distance': total_distance,
-            'total_duration': total_duration,
-            'total_main_distance': total_main_distance,
-            'total_main_duration': total_main_duration,
-            'total_support_distance': total_support_distance,
-            'total_support_duration': total_support_duration,
-            'average_distance': average_distance,
-            'average_duration': average_duration,
-            'average_main_distance': average_main_distance,
-            'average_main_duration': average_main_duration,
-            'average_support_distance': average_support_distance,
-            'average_support_duration': average_support_duration,
-            'average_load_rate': average_load_rate,
-            'average_main_load_rate': average_main_load_rate,
-            'average_support_load_rate': average_support_load_rate
+            'total_vehicles': f'{total_vehicles} ({main_vehicles} / {support_vehicles})',
+            'total_stores': f'{total_stores} ({main_stores} / {support_stores})',
+            'total_distance': f'{total_distance:.2f} ({total_main_distance:.2f} / {total_support_distance:.2f})',
+            'total_duration': f'{total_duration:.2f} ({total_main_duration:.2f} / {total_support_duration:.2f})',
+            'average_distance': f'{average_distance:.2f} ({average_main_distance:.2f} / {average_support_distance:.2f})',
+            'average_duration': f'{average_duration:.2f} ({average_main_duration:.2f} / {average_support_duration:.2f})',
+            'average_load_rate': f'{average_load_rate:.2%} ({average_main_load_rate:.2%} / {average_support_load_rate:.2%})',
+            'on_time_rate': f'{on_time_rate:.2%} ({on_time} / {total_stores})'
         }
 
         return summary
@@ -119,30 +130,10 @@ class EvalRoutes:
                 self.program_summary['total_vehicles'],
                 self.optimized_summary['total_vehicles']
             ],
-            'vehicle_num(main)' : [
-                self.manual_summary['main_vehicles'],
-                self.program_summary['main_vehicles'],
-                self.optimized_summary['main_vehicles']
-            ],
-            'vehicle_num(sup)' : [
-                self.manual_summary['support_vehicles'],
-                self.program_summary['support_vehicles'],
-                self.optimized_summary['support_vehicles']
-            ],
             'total_store_num' : [
                 self.manual_summary['total_stores'],
                 self.program_summary['total_stores'],
                 self.optimized_summary['total_stores']
-            ],
-            'store_num(main)' : [
-                self.manual_summary['main_stores'],
-                self.program_summary['main_stores'],
-                self.optimized_summary['main_stores']
-            ],
-            'store_num(sup)' : [
-                self.manual_summary['support_stores'],
-                self.program_summary['support_stores'],
-                self.optimized_summary['support_stores']
             ],
             'total_dist(km)' : [
                 self.manual_summary['total_distance'],
@@ -154,26 +145,6 @@ class EvalRoutes:
                 self.program_summary['total_duration'],
                 self.optimized_summary['total_duration']
             ],
-            'total_main_dist(km)' : [
-                self.manual_summary['total_main_distance'],
-                self.program_summary['total_main_distance'],
-                self.optimized_summary['total_main_distance']
-            ],
-            'total_main_time(hr)' : [
-                self.manual_summary['total_main_duration'],
-                self.program_summary['total_main_duration'],
-                self.optimized_summary['total_main_duration']
-            ],
-            'total_sup_dist(km)' : [
-                self.manual_summary['total_support_distance'],
-                self.program_summary['total_support_distance'],
-                self.optimized_summary['total_support_distance']
-            ],
-            'total_sup_time(hr)' : [
-                self.manual_summary['total_support_duration'],
-                self.program_summary['total_support_duration'],
-                self.optimized_summary['total_support_duration']
-            ],
             'avg_dist(km)' : [
                 self.manual_summary['average_distance'],
                 self.program_summary['average_distance'],
@@ -184,40 +155,15 @@ class EvalRoutes:
                 self.program_summary['average_duration'],
                 self.optimized_summary['average_duration']
             ],
-            'avg_main_dist(km)' : [
-                self.manual_summary['average_main_distance'],
-                self.program_summary['average_main_distance'],
-                self.optimized_summary['average_main_distance']
-            ],
-            'avg_main_time(hr)' : [
-                self.manual_summary['average_main_duration'],
-                self.program_summary['average_main_duration'],
-                self.optimized_summary['average_main_duration']
-            ],
-            'avg_sup_dist(km)' : [
-                self.manual_summary['average_support_distance'],
-                self.program_summary['average_support_distance'],
-                self.optimized_summary['average_support_distance']
-            ],
-            'avg_sup_time(hr)' : [
-                self.manual_summary['average_support_duration'],
-                self.program_summary['average_support_duration'],
-                self.optimized_summary['average_support_duration']
-            ],
             'avg_load_rate' : [
                 self.manual_summary['average_load_rate'],
                 self.program_summary['average_load_rate'],
                 self.optimized_summary['average_load_rate']
             ],
-            'avg_main_load_rate' : [
-                self.manual_summary['average_main_load_rate'],
-                self.program_summary['average_main_load_rate'],
-                self.optimized_summary['average_main_load_rate']
-            ],
-            'avg_sup_load_rate' : [
-                self.manual_summary['average_support_load_rate'],
-                self.program_summary['average_support_load_rate'],
-                self.optimized_summary['average_support_load_rate']
+            'on_time_rate' : [
+                self.manual_summary['on_time_rate'],
+                self.program_summary['on_time_rate'],
+                self.optimized_summary['on_time_rate']
             ]
         }
 
@@ -241,25 +187,9 @@ class EvalRoutes:
                 self.manual_summary['total_vehicles'],
                 self.optimized_summary['total_vehicles']
             ],
-            'vehicle_num(main)' : [
-                self.manual_summary['main_vehicles'],
-                self.optimized_summary['main_vehicles']
-            ],
-            'vehicle_num(sup)' : [
-                self.manual_summary['support_vehicles'],
-                self.optimized_summary['support_vehicles']
-            ],
             'total_store_num' : [
                 self.manual_summary['total_stores'],
                 self.optimized_summary['total_stores']
-            ],
-            'store_num(main)' : [
-                self.manual_summary['main_stores'],
-                self.optimized_summary['main_stores']
-            ],
-            'store_num(sup)' : [
-                self.manual_summary['support_stores'],
-                self.optimized_summary['support_stores']
             ],
             'total_dist(km)' : [
                 self.manual_summary['total_distance'],
@@ -269,22 +199,6 @@ class EvalRoutes:
                 self.manual_summary['total_duration'],
                 self.optimized_summary['total_duration']
             ],
-            'total_main_dist(km)' : [
-                self.manual_summary['total_main_distance'],
-                self.optimized_summary['total_main_distance']
-            ],
-            'total_main_time(hr)' : [
-                self.manual_summary['total_main_duration'],
-                self.optimized_summary['total_main_duration']
-            ],
-            'total_sup_dist(km)' : [
-                self.manual_summary['total_support_distance'],
-                self.optimized_summary['total_support_distance']
-            ],
-            'total_sup_time(hr)' : [
-                self.manual_summary['total_support_duration'],
-                self.optimized_summary['total_support_duration']
-            ],
             'avg_dist(km)' : [
                 self.manual_summary['average_distance'],
                 self.optimized_summary['average_distance']
@@ -293,38 +207,17 @@ class EvalRoutes:
                 self.manual_summary['average_duration'],
                 self.optimized_summary['average_duration']
             ],
-            'avg_main_dist(km)' : [
-                self.manual_summary['average_main_distance'],
-                self.optimized_summary['average_main_distance']
-            ],
-            'avg_main_time(hr)' : [
-                self.manual_summary['average_main_duration'],
-                self.optimized_summary['average_main_duration']
-            ],
-            'avg_sup_dist(km)' : [
-                self.manual_summary['average_support_distance'],
-                self.optimized_summary['average_support_distance']
-            ],
-            'avg_sup_time(hr)' : [
-                self.manual_summary['average_support_duration'],
-                self.optimized_summary['average_support_duration']
-            ],
             'avg_load_rate' : [
                 self.manual_summary['average_load_rate'],
                 self.optimized_summary['average_load_rate']
             ],
-            'avg_main_load_rate' : [
-                self.manual_summary['average_main_load_rate'],
-                self.optimized_summary['average_main_load_rate']
-            ],
-            'avg_sup_load_rate' : [
-                self.manual_summary['average_support_load_rate'],
-                self.optimized_summary['average_support_load_rate']
+            'on_time_rate' : [
+                self.manual_summary['on_time_rate'],
+                self.optimized_summary['on_time_rate']
             ]
         }
 
         df = pd.DataFrame(comparison, index=['manual', 'optimized']).T
-
         return df
 
 

@@ -29,10 +29,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=None, help="Random seed (optional). If not set, use env or random behavior.")
     parser.add_argument("--test", action="store_true", help="Run in test mode with reduced parameters")
     parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
+    parser.add_argument("--comment", type=str, default=None, help="Comment for the run (optional)")
     return parser.parse_args()
 
 
-def main(file_date, random_seed=None, test_mode=False, google=False):
+def main(file_date, random_seed=None, test_mode=False, google=False, comment=None):
     """
     Notes:
         Main function for running the program.
@@ -82,7 +83,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 # -----------------------------------------------------------------------------------
 
     times = {}
-    comment = "With local search. after optimization (OSRM Time * 1.75)."
 
     production_params = {
         'store_extraction_ga': {
@@ -91,7 +91,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
             'generations': 10000,
             'cross_rate': 0.9,
             'mutation_rate': 0.2,
-            'early_stop_patience': 1000
+            'early_stop_patience': 500
         },
         'store_allocation_aco': {
             'num_ants': 50,
@@ -113,7 +113,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
             'tau_ratio': 50,
             'q': 100,
             'early_stop_patience': 50,
-            'support_capacity': 7.2
+            'support_capacity': 7.2,
+            'vehicle_cost': 1000
         },
         'comment': comment,
         'date': file_date,
@@ -352,18 +353,21 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
         start_time = time.time()
 
         print("Displaying route visualizations...")
-        original_routes = DisplayRoutes(original_routes_file)
-        original_routes.plot_routes_png(original_routes_img)
-        original_routes.plot_routes_html(original_routes_html)
+        if not os.path.exists(original_routes_img) or not os.path.exists(original_routes_html):
+            original_routes = DisplayRoutes(original_routes_file)
+            original_routes.plot_routes_png(original_routes_img)
+            original_routes.plot_routes_html(original_routes_html)
 
-        manual_routes = DisplayRoutes(manual_routes_file)
-        manual_routes.plot_routes_png(manual_routes_img)
-        manual_routes.plot_routes_html(manual_routes_html)
+        if not os.path.exists(manual_routes_img) or not os.path.exists(manual_routes_html):
+            manual_routes = DisplayRoutes(manual_routes_file)
+            manual_routes.plot_routes_png(manual_routes_img)
+            manual_routes.plot_routes_html(manual_routes_html)
 
         if os.path.exists(program_routes_file):
-            prog_routes = DisplayRoutes(program_routes_file)
-            prog_routes.plot_routes_png(program_routes_img)
-            prog_routes.plot_routes_html(program_route_html)
+            if not os.path.exists(program_routes_img) or not os.path.exists(program_route_html):
+                prog_routes = DisplayRoutes(program_routes_file)
+                prog_routes.plot_routes_png(program_routes_img)
+                prog_routes.plot_routes_html(program_route_html)
 
         opt_routes = DisplayRoutes(optimized_routes_file)
         opt_routes.plot_routes_png(optimized_routes_img)
@@ -376,4 +380,4 @@ def main(file_date, random_seed=None, test_mode=False, google=False):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.file_date, args.seed, args.test, args.google)
+    main(args.file_date, args.seed, args.test, args.google, args.comment)

@@ -12,7 +12,7 @@ class SupportLinePlanningACO(BaseACO):
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, local_rho=0.1, global_rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, local_rho=0.1, global_rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2, vehicle_cost=0):
         super().__init__(num_ants, iterations, alpha, beta, global_rho, q, early_stop_patience)
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -28,7 +28,7 @@ class SupportLinePlanningACO(BaseACO):
 
         self.saving_matrix = self._saving_matrix()
         self.ls = LocalSearch(self.distance_matrix, self.time_matrix)
-        self.vehicle_cost = 0
+        self.vehicle_cost = vehicle_cost
 
 
     def _saving_matrix(self):

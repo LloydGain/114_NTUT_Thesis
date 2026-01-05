@@ -18,7 +18,7 @@ def main(file_date):
         Transfer manual data to origin data.
     """
     data_dir = f'../data/{file_date}'
-    source_manual_file = f'../data/{file_date}manual.xlsx'
+    source_manual_file = f'../data/manual_data/{file_date}manual.xlsx'
     origin_file = f'../data/{file_date}/{file_date}route.xlsx'
     dest_manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     dist_file = '../data/osrm/store_distance_matrix.json'
