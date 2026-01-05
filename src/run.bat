@@ -8,6 +8,7 @@ set SCRIPT=main.py
 
 set SEED=0
 set DATA_DIR=..\data
+set "COMMENT=With Local Search (OSRM * 1.75)"
 
 echo Scanning directories in %DATA_DIR%...
 
@@ -30,5 +31,5 @@ if errorlevel 1 (
 )
 
 echo Starting file_date=%FOLDER%
-start "run_%FOLDER%" %PYTHON% %SCRIPT% --file_date %FOLDER% --seed %SEED%
+start "run_%FOLDER%" %PYTHON% %SCRIPT% --file_date %FOLDER% --seed %SEED% --comment "%COMMENT%"
 goto :EOF

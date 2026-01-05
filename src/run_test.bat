@@ -8,6 +8,7 @@ set SCRIPT=main.py
 
 set SEED=0
 set DATA_DIR=..\data
+set "COMMENT=With Local Search (OSRM * 1.75) - Test"
 
 echo Scanning directories in %DATA_DIR%...
 
