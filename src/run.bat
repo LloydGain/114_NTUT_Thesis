@@ -7,12 +7,28 @@ set PYTHON=python
 set SCRIPT=main.py
 
 set SEED=0
-set DATES=1203 1205 1207 1208 1209 1210 1212 1213 1214 1215 1216 1217 1219 1220 1221 1222 1223
+set DATA_DIR=..\data
 
-for %%D in (%DATES%) do (
-    echo Starting file_date=%%D
-    start "run_%%D" %PYTHON% %SCRIPT% --file_date %%D --seed %SEED%
+echo Scanning directories in %DATA_DIR%...
+
+for /d %%D in ("%DATA_DIR%\*") do (
+    call :process_folder "%%~nxD"
 )
 
 echo All jobs started.
 pause
+goto :EOF
+
+:process_folder
+set "FOLDER=%~1"
+
+REM Check if the folder name is numeric (dates like 1203, 0102)
+echo %FOLDER%| findstr "^[0-9][0-9]*$" >nul
+if errorlevel 1 (
+    echo Skipping non-numeric folder: %FOLDER%
+    goto :EOF
+)
+
+echo Starting file_date=%FOLDER%
+start "run_%FOLDER%" %PYTHON% %SCRIPT% --file_date %FOLDER% --seed %SEED%
+goto :EOF
