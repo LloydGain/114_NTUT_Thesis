@@ -117,7 +117,7 @@ class EvalRoutes:
                         on_time += 1
         on_time_rate = on_time / total_stores
         main_on_time_rate = main_on_time / main_stores
-        support_on_time_rate = support_on_time / support_stores
+        support_on_time_rate = support_on_time / support_stores if not support_stores == 0 else 0
         on_time_rate /= 100
         main_on_time_rate /= 100
         support_on_time_rate /= 100
