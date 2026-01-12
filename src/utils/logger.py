@@ -89,9 +89,9 @@ class Log:
             maunal_same_code_count = sum(1 for store in stores2 if store['route_code'].startswith(store['route_id']))
             optimized_same_code_count = sum(1 for store in stores3 if store['route_code'].startswith(store['route_id']))
 
-            for store in stores2:
-                if store in stores3:
-                    same_store_count += 1
+            store2_ids = [store['store_id'] for store in stores2]
+            store3_ids = [store['store_id'] for store in stores3]
+            same_store_count = len(set(store2_ids) & set(store3_ids))
 
             rows.append({
                 "route_id": route_id,

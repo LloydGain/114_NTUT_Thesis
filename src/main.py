@@ -52,6 +52,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     program_routes_file = f'../output/{file_date}/program_routes_info.json'
     optimized_routes_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.json'
     route_comparison_file = f'../output/{file_date}/{dt_folder}/routes_comparison.xlsx'
+    route_comparison_simple_file = f'../output/{file_date}/{dt_folder}/routes_comparison_simple.xlsx'
 
     original_routes_dir = f'../output/{file_date}/original_routes'
     manual_routes_dir = f'../output/{file_date}/manual_routes'
@@ -324,6 +325,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     # eval = EvalRoutes(manual_routes_file, optimized_routes_file, program_routes_file) # 1203
     eval_routes = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
     eval_routes.export_to_excel(route_comparison_file)
+    eval_routes.export_to_excel(route_comparison_simple_file, simple=True)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
