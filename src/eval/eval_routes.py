@@ -96,9 +96,6 @@ class EvalRoutes:
         average_load_rate = sum(route['dc']['load_rate'] for route in routes.values()) / total_vehicles
         average_main_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if not route['dc']['route_id'].isdigit()) / main_vehicles
         average_support_load_rate = sum(route['dc']['load_rate'] for route in routes.values() if route['dc']['route_id'].isdigit()) / support_vehicles if not support_vehicles == 0 else 0
-        average_load_rate /= 100
-        average_main_load_rate /= 100
-        average_support_load_rate /= 100
 
         on_time = 0
         main_on_time = 0
@@ -118,9 +115,6 @@ class EvalRoutes:
         on_time_rate = on_time / total_stores
         main_on_time_rate = main_on_time / main_stores
         support_on_time_rate = support_on_time / support_stores if not support_stores == 0 else 0
-        on_time_rate /= 100
-        main_on_time_rate /= 100
-        support_on_time_rate /= 100
 
         if not simple:
             summary = {
@@ -130,16 +124,16 @@ class EvalRoutes:
                 'total_duration': f'{total_duration:.2f} ({total_main_duration:.2f} / {total_support_duration:.2f})',
                 'average_distance': f'{average_distance:.2f} ({average_main_distance:.2f} / {average_support_distance:.2f})',
                 'average_duration': f'{average_duration:.2f} ({average_main_duration:.2f} / {average_support_duration:.2f})',
-                'average_load_rate': f'{average_load_rate:.2%} ({average_main_load_rate:.2%} / {average_support_load_rate:.2%})',
-                'on_time_rate': f'{on_time_rate:.2%} ({main_on_time_rate:.2%} / {support_on_time_rate:.2%})'
+                'average_load_rate': f'{average_load_rate:.2f} ({average_main_load_rate:.2f} / {average_support_load_rate:.2f})',
+                'on_time_rate': f'{on_time_rate:.2f} ({main_on_time_rate:.2f} / {support_on_time_rate:.2f})'
             }
         else:
             summary = {
                 'total_vehicles': f'{total_vehicles}',
                 'total_distance': f'{total_distance:.2f}',
                 'total_duration': f'{total_duration:.2f}',
-                'average_load_rate': f'{average_load_rate:.2%}',
-                'on_time_rate': f'{on_time_rate:.2%}'
+                'average_load_rate': f'{average_load_rate:.2f}',
+                'on_time_rate': f'{on_time_rate:.2f}'
             }
 
         return summary
