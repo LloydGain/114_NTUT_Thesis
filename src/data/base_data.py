@@ -1,8 +1,8 @@
 import os
 import json
 import pandas as pd
+from config import config
 from models.route_manager import RouteManager
-import config
 
 class BaseDataManager:
     """

@@ -2,11 +2,11 @@ from copy import deepcopy
 import random
 import numpy as np
 from datetime import datetime, timedelta
+from config import config
 from models.route_manager import RouteManager
 from solvers.local_search import LocalSearch
 from utils.early_stopper import EarlyStopper
 from solvers.base_aco import BaseACO
-import config
 
 class SupportLinePlanningACO(BaseACO):
     """
@@ -516,8 +516,8 @@ class SupportLinePlanningACO(BaseACO):
             tuple: (tau_max, tau_min).
         """
         tau_max = self.q / (self.rho * self.best_cost)
-        tau_min = (tau_max / self.tau_ratio)
-        tau_min = (tau_min + self.min_rho) / 2
+        tau_min = tau_max / self.tau_ratio
+        tau_min = (tau_min + tau_max) / 2
         return tau_max, tau_min
 
 
@@ -564,7 +564,7 @@ class SupportLinePlanningACO(BaseACO):
             tuple: (solution, cost).
         """
         temp_pheromone_matrix = deepcopy(self.pheromone_matrix)
-        tau_max, tau_min = self._calculate_tau_bounds()
+        _, tau_min = self._calculate_tau_bounds()
         for route in solution:
             stores = solution[route]['stores']
             for i in range(len(stores) - 1):
@@ -582,8 +582,8 @@ class SupportLinePlanningACO(BaseACO):
         if ant_cost >= cost:
             self.pheromone_matrix = temp_pheromone_matrix
             return solution, cost
-        
-        return ant_solution, ant_cost        
+
+        return ant_solution, ant_cost
 
 
     def run(self):
