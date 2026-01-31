@@ -1,5 +1,5 @@
 import numpy as np
-import config
+from config import config
 
 class BaseACO:
     """

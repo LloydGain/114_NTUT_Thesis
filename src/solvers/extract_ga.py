@@ -1,16 +1,15 @@
 import hashlib
 import numpy as np
+from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-# from solvers.allocate_aco import StoreAllocationACO
-import config
 
 class StoreExtractionGA:
     """
     Notes:
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size = 2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size=2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
@@ -106,8 +105,8 @@ class StoreExtractionGA:
         Return:
             probs (list): store's removing probability.
         """
-        depot_id = self.dc['store_id']
         weights = []
+        depot_id = self.dc['store_id']
         store_ids = [depot_id] + [store['store_id'] for store in stores] + [depot_id]
 
         for i in range(1, len(store_ids) - 1):
@@ -117,10 +116,14 @@ class StoreExtractionGA:
             d_pre_cur = self.distance_matrix[pre_id][cur_id]
             d_cur_next = self.distance_matrix[cur_id][next_id]
             d_pre_next = self.distance_matrix[pre_id][next_id]
-
             detour_cost = d_pre_cur + d_cur_next - d_pre_next
+            detour_cost = max(detour_cost, 1e-6)
 
-            weights.append(max(detour_cost, 1e-12))
+            store_volume = stores[i-1]['volume']
+
+            weight = detour_cost * store_volume
+
+            weights.append(weight)
 
         weights = np.array(weights)
         probs = weights / np.sum(weights)
@@ -241,12 +244,6 @@ class StoreExtractionGA:
             return self.fitness_cache[key]
 
         stores = self._individual_to_list(individual)
-        # routes, stores = self._get_individual_routes(individual), self._individual_to_list(individual)
-        # allocate_cost, _, remaining_stores = StoreAllocationACO(routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-        # support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-        # fitness = allocate_cost + support_cost
-        # fitness = allocate_cost
-
         fitness = len(stores)
 
         self.fitness_cache[key] = fitness

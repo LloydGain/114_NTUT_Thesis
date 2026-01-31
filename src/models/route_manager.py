@@ -1,6 +1,6 @@
 import os
 import json
-import config
+from config import config
 from datetime import datetime, timedelta
 from services.google_maps import GoogleRoutesAPI
 

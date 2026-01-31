@@ -1,5 +1,5 @@
 import requests
-import config
+from config import config
 
 class GoogleRoutesAPI:
     """

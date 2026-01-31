@@ -1,7 +1,7 @@
 import copy
+from config import config
 from datetime import datetime, timedelta
 from models.route_manager import RouteManager
-import config
 
 class LocalSearch:
     """

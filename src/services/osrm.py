@@ -1,5 +1,6 @@
+import sys
 import requests
-import config
+from config import config
 
 class OSRM:
     """
@@ -10,6 +11,25 @@ class OSRM:
         self.url = config.OSRM_HOST
         self.dc = config.DC_CONFIG
         self.timeout = 60
+        self.check_osrm()
+
+
+    def check_osrm(self):
+        """
+        Notes:
+            Check if OSRM is running.
+        
+        Args:
+            None
+        
+        Returns:
+            None
+        """
+        try:
+            requests.get(self.url + "/health", timeout=2)
+        except requests.exceptions.RequestException:
+            print("[ERROR] OSRM not running. Please start it first.")
+            sys.exit(1)
 
 
     def get_distance_and_time_matrix(self, stores):
