@@ -1,4 +1,5 @@
 import os
+from setup import *
 from datetime import datetime
 from data.optimized_data import OPDataManager
 

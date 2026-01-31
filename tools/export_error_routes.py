@@ -1,4 +1,5 @@
 import os
+from setup import *
 from data.manual_data import MDataManager
 
 def get_file_dates(base_dir):
@@ -42,6 +43,8 @@ def main():
         manual_data_file = f'{base_dir}/{file_date}/{file_date}manual.xlsx'
         m_data = MDataManager([manual_data_file, route_network_file, store_info_file])
         m_data.export_invalid_routes(error_file, file_date)
+
+    print('Done!')
 
 
 if __name__ == "__main__":

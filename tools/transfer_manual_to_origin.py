@@ -1,4 +1,5 @@
 import argparse
+from setup import *
 from data.store_data import StoreData
 from data.manual_data import MDataManager
 
