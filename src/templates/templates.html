@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>路線視覺化</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0f16;
+            --panel: rgba(14, 20, 32, 0.9);
+            --panel-border: rgba(76, 122, 199, 0.35);
+            --text: #e6edf6;
+            --muted: #9aa7bd;
+            --accent: #38f2d6;
+            --accent-strong: #18cbb0;
+            --row: rgba(20, 28, 44, 0.9);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Rajdhani", "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 20% 20%, rgba(56, 242, 214, 0.18), transparent 40%),
+                radial-gradient(circle at 80% 10%, rgba(76, 122, 199, 0.2), transparent 45%),
+                linear-gradient(120deg, #05070c 0%, #0c1426 55%, #0a0f1a 100%);
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+            backdrop-filter: blur(8px);
+        }
+
+        .panel {
+            padding: 16px;
+            overflow-y: auto;
+            background: var(--panel);
+            border-right: 1px solid var(--panel-border);
+            box-shadow: inset 0 0 0 1px rgba(12, 18, 30, 0.4);
+        }
+
+        .left {
+            width: 22%;
+            min-width: 180px;
+        }
+
+        .middle {
+            width: 28%;
+            min-width: 220px;
+        }
+
+        .right {
+            flex: 1;
+        }
+
+        h2 {
+            margin: 0 0 12px;
+            font-size: 16px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        li {
+            padding: 8px 10px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            background: rgba(11, 16, 26, 0.6);
+            color: var(--text);
+            transition: border 0.2s ease, transform 0.2s ease;
+        }
+
+        #route-list {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        #route-list li {
+            margin-bottom: 0;
+        }
+
+        li.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 12px rgba(56, 242, 214, 0.35);
+            transform: translateX(4px);
+        }
+
+        li:hover {
+            border-color: rgba(56, 242, 214, 0.5);
+        }
+
+        .maps-link {
+            display: inline-block;
+            margin-bottom: 12px;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .maps-link:hover {
+            color: var(--accent-strong);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            background: var(--row);
+        }
+
+        th,
+        td {
+            border: 1px solid rgba(56, 242, 214, 0.12);
+            padding: 6px 8px;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(10, 18, 32, 0.95);
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        @media(max-width:960px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .panel {
+                width: 100%;
+                min-width: 0;
+                border-right: none;
+                border-bottom: 1px solid var(--panel-border);
+            }
+
+            #route-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="panel left">
+            <h2>日期清單</h2>
+            <ul id="sheet-list"></ul>
+        </div>
+        <div class="panel middle">
+            <h2 id="routes-title">路線清單</h2>
+            <a id="osrm-link" class="maps-link" target="_blank" rel="noopener">OSRM 連結</a>
+            <ul id="route-list"></ul>
+        </div>
+        <div class="panel right">
+            <h2 id="route-detail-title">車次明細</h2>
+            <a id="maps-link" class="maps-link" target="_blank" rel="noopener">Google Maps 連結</a>
+            <div id="route-empty" class="empty" style="display: none;">沒有可顯示的路線</div>
+            <table id="route-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>車次編號</th>
+                        <th>店鋪名稱</th>
+                        <th>經度</th>
+                        <th>緯度</th>
+                        <th>貨量</th>
+                    </tr>
+                </thead>
+                <tbody id="route-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const DATA = {{ DATA_JSON }};
+        let activeSheetIndex = 0;
+        let activeRouteIndex = 0;
+
+        const sheetList = document.getElementById("sheet-list");
+        const routeList = document.getElementById("route-list");
+        const routeTitle = document.getElementById("route-detail-title");
+        const routesTitle = document.getElementById("routes-title");
+        const osrmLink = document.getElementById("osrm-link");
+        const mapsLink = document.getElementById("maps-link");
+        const routeBody = document.getElementById("route-body");
+        const routeTable = document.getElementById("route-table");
+        const routeEmpty = document.getElementById("route-empty");
+
+        function renderSheets() {
+            sheetList.innerHTML = "";
+            DATA.forEach((sheet, index) => {
+                const item = document.createElement("li");
+                item.textContent = sheet.name;
+                item.className = index === activeSheetIndex ? "active" : "";
+                item.addEventListener("click", () => {
+                    activeSheetIndex = index;
+                    activeRouteIndex = 0;
+                    renderRoutes();
+                    renderDetails();
+                    renderSheets();
+                });
+                sheetList.appendChild(item);
+            });
+        }
+
+        function renderRoutes() {
+            routeList.innerHTML = "";
+            const sheet = DATA[activeSheetIndex];
+            routesTitle.textContent = sheet ? `路線清單 - ${sheet.name}` : "路線清單";
+
+            if (!sheet || sheet.routes.length === 0) return;
+
+            sheet.routes.forEach((route, index) => {
+                const item = document.createElement("li");
+                item.textContent = route.id;
+                item.className = index === activeRouteIndex ? "active" : "";
+                item.addEventListener("click", () => {
+                    activeRouteIndex = index;
+                    renderRoutes();
+                    renderDetails();
+                });
+                routeList.appendChild(item);
+            });
+        }
+
+        function renderDetails() {
+            routeBody.innerHTML = "";
+            const sheet = DATA[activeSheetIndex];
+            const route = sheet && sheet.routes[activeRouteIndex];
+            const osrm_html = sheet && sheet.osrm_html;
+
+            if (!route) {
+                routeTitle.textContent = "車次明細";
+                osrmLink.style.display = "none";
+                mapsLink.style.display = "none";
+                routeTable.style.display = "none";
+                routeEmpty.style.display = "block";
+                return;
+            }
+
+            routeTitle.textContent = `車次明細 - ${route.id}`;
+            osrmLink.href = osrm_html;
+            osrmLink.style.display = "inline-block";
+            mapsLink.href = route.maps_url;
+            mapsLink.style.display = "inline-block";
+            routeTable.style.display = "table";
+            routeEmpty.style.display = "none";
+
+            route.stops.forEach((stop) => {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                <td>${stop.seq}</td>
+                <td>${stop.trip_id}</td>
+                <td>${stop.store_name}</td>
+                <td>${Number(stop.lon).toFixed(6)}</td>
+                <td>${Number(stop.lat).toFixed(6)}</td>
+                <td>${stop.volume}</td>
+            `;
+                routeBody.appendChild(row);
+            });
+        }
+
+        function init() {
+            if (!DATA.length) {
+                routeTitle.textContent = "車次明細";
+                mapsLink.style.display = "none";
+                routeTable.style.display = "none";
+                routeEmpty.style.display = "block";
+                return;
+            }
+            renderSheets();
+            renderRoutes();
+            renderDetails();
+        }
+
+        document.addEventListener("DOMContentLoaded", init);
+    </script>
+</body>
+
+</html>

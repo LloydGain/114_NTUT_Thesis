@@ -4,7 +4,7 @@ import time
 import random
 import numpy as np
 import argparse
-import config
+from config import config
 from datetime import datetime
 from data.store_data import StoreData
 from data.origin_data import ODataManager
@@ -62,6 +62,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     manual_routes_img = f'{manual_routes_dir}/img'
     program_routes_img = f'{program_routes_dir}/img'
     optimized_routes_img = f'{optimized_routes_dir}/img'
+    original_routes_osrm_html = f'{original_routes_dir}/osrm_routes.html'
+    manual_routes_osrm_html = f'{manual_routes_dir}/osrm_routes.html'
+    program_route_osrm_html = f'{program_routes_dir}/osrm_routes.html'
+    optimized_routes_osrm_html = f'{optimized_routes_dir}/osrm_routes.html'
     original_routes_html = f'{original_routes_dir}/routes.html'
     manual_routes_html = f'{manual_routes_dir}/routes.html'
     program_route_html = f'{program_routes_dir}/routes.html'
@@ -113,8 +117,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'tau_ratio': 50,
             'q': 100,
             'q0': 0.9,
-            'q0_min': 0.1,
-            'min_rho': 0.1,
+            'q0_max': 0.9,
+            'max_rho': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2,
             'vehicle_cost': 1000
@@ -154,8 +158,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'tau_ratio': 50,
             'q': 1,
             'q0': 0.9,
+            'q0_max': 0.9,
+            'max_rho': 0.9,
             'early_stop_patience': 1,
-            'support_capacity': 7.2
+            'support_capacity': 7.2,
+            'vehicle_cost': 1000
         },
         'Test': True,
         'comment': comment
@@ -359,22 +366,30 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         print("Displaying route visualizations...")
         if not os.path.exists(original_routes_img) or not os.path.exists(original_routes_html):
             original_routes = DisplayRoutes(original_routes_file)
-            original_routes.plot_routes_png(original_routes_img)
+            original_routes.make_dir(original_routes_dir)
+            # original_routes.plot_routes_png(original_routes_img)
+            original_routes.plot_routes_html_in_osrm(original_routes_osrm_html)
             original_routes.plot_routes_html(original_routes_html)
 
         if not os.path.exists(manual_routes_img) or not os.path.exists(manual_routes_html):
             manual_routes = DisplayRoutes(manual_routes_file)
-            manual_routes.plot_routes_png(manual_routes_img)
+            manual_routes.make_dir(manual_routes_dir)
+            # manual_routes.plot_routes_png(manual_routes_img)
+            manual_routes.plot_routes_html_in_osrm(manual_routes_osrm_html)
             manual_routes.plot_routes_html(manual_routes_html)
 
         if os.path.exists(program_routes_file):
             if not os.path.exists(program_routes_img) or not os.path.exists(program_route_html):
                 prog_routes = DisplayRoutes(program_routes_file)
-                prog_routes.plot_routes_png(program_routes_img)
+                prog_routes.make_dir(program_routes_dir)
+                # prog_routes.plot_routes_png(program_routes_img)
+                prog_routes.plot_routes_html_in_osrm(program_route_osrm_html)
                 prog_routes.plot_routes_html(program_route_html)
 
         opt_routes = DisplayRoutes(optimized_routes_file)
-        opt_routes.plot_routes_png(optimized_routes_img)
+        opt_routes.make_dir(optimized_routes_dir)
+        # opt_routes.plot_routes_png(optimized_routes_img)
+        opt_routes.plot_routes_html_in_osrm(optimized_routes_osrm_html)
         opt_routes.plot_routes_html(optimized_routes_html)
 
         end_time = time.time()

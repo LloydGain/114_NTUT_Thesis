@@ -3,10 +3,11 @@ import json
 import requests
 import polyline
 import folium
+from pathlib import Path
 from folium.features import DivIcon
 from folium.plugins import AntPath
 import matplotlib.pyplot as plt
-import config
+from config import config
 
 class DisplayRoutes:
     """
@@ -37,6 +38,20 @@ class DisplayRoutes:
             data = json.load(f)
 
         return data
+
+
+    def make_dir(self, dest_dir):
+        """
+        Notes:
+            Make directory if it does not exist.
+
+        Args:
+            dest_dir (str): Directory to make.
+
+        Returns:
+            None.
+        """
+        os.makedirs(dest_dir, exist_ok=True)
 
 
     def plot_routes_png(self, dest_dir):
@@ -94,10 +109,10 @@ class DisplayRoutes:
             plt.close()
 
 
-    def plot_routes_html(self, dest_html):
+    def plot_routes_html_in_osrm(self, dest_html):
         """
         Notes:
-            Plot routes and save as an interactive HTML file.
+            Plot routes and save as an interactive HTML file (OSRM).
 
         Args:
             dest_html (str): Path to save the HTML file.
@@ -172,3 +187,80 @@ class DisplayRoutes:
 
         folium.LayerControl(collapsed=False).add_to(m)
         m.save(dest_html)
+
+
+    def _convert_routes_to_js(self):
+        """
+        Notes:
+            Convert routes to JSON format for JavaScript.
+
+        Args:
+            None.
+
+        Returns:
+            dict: JSON data containing route information.
+        """
+        data = [{"name": "Optimized Routes", "osrm_html": "osrm_routes.html", "routes": []}]
+        for route_id, route_info in self.routes.items():
+            total_volume = route_info['dc']['total_volume']
+            stores = route_info['stores']
+            waypoints = "/".join(f"{store['latitude']},{store['longitude']}" for store in stores)
+            maps_url = f"https://www.google.com/maps/dir/{self.dc['latitude']},{self.dc['longitude']}/{waypoints}/{self.dc['latitude']},{self.dc['longitude']}"
+            route_data = {
+                "id": route_id,
+                "maps_url": maps_url,
+                "stops": []
+            }
+            route_data["stops"].append({
+                "seq": 1,
+                "trip_id": route_id,
+                "store_name": self.dc["store_name"],
+                "lon": self.dc["longitude"],
+                "lat": self.dc["latitude"],
+                "volume": f"{total_volume:.2f}",
+                "route_code": ""
+            })
+            for idx, store in enumerate(route_info['stores'], start=2):
+                route_data["stops"].append({
+                    "seq": idx,
+                    "trip_id": store.get("route_code",""),
+                    "store_name": store.get("store_name",""),
+                    "lon": store["longitude"],
+                    "lat": store["latitude"],
+                    "volume": store.get("volume",0),
+                    "route_code": store.get("route_code","")
+                })
+            route_data["stops"].append({
+                "seq": len(route_info['stores']) + 2,
+                "trip_id": route_id,
+                "store_name": self.dc["store_name"],
+                "lon": self.dc["longitude"],
+                "lat": self.dc["latitude"],
+                "volume": 0,
+                "route_code": ""
+            })
+            data[0]["routes"].append(route_data)
+
+        return data
+
+
+    def plot_routes_html(self, dest_html):
+        """
+        Notes:
+            Plot routes and save as an interactive HTML file (OSRM).
+
+        Args:
+            dest_html (str): Path to save the HTML file.
+
+        Returns:
+            None.
+        """
+        template = Path('templates/templates.html')
+        if not template.exists():
+            raise FileNotFoundError(f"{template} not found!")
+
+        template = template.read_text(encoding="utf-8")
+        data_for_js = self._convert_routes_to_js()
+        html_content = template.replace("{{ DATA_JSON }}", json.dumps(data_for_js, ensure_ascii=False))
+
+        Path(dest_html).write_text(html_content, encoding="utf-8")
