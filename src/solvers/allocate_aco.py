@@ -239,8 +239,8 @@ class StoreAllocationACO(BaseACO):
             prev_id, next_id, store_id = prev_store['store_id'], next_store['store_id'], store['store_id']
             insert_cost = self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id]
 
-            if not self._is_angle_valid(prev_store, next_store, store):
-                continue
+            # if not self._is_angle_valid(prev_store, next_store, store):
+            #     continue
 
             if 0 < insert_cost < min_cost and self._check_time_constraint(route, pos, store):
                 best_pos = pos - 1
@@ -348,6 +348,21 @@ class StoreAllocationACO(BaseACO):
         key = self._encode_stores(remaining_stores)
 
         if key not in self.cost_cache:
+            # support_line_aco = {
+            #     'num_ants': 1,
+            #     'iterations': 1,
+            #     'alpha': 1,
+            #     'beta': 1,
+            #     'gamma': 1,
+            #     'local_rho': 0.1,
+            #     'global_rho': 0.1,
+            #     'tau_ratio': 50,
+            #     'q': 100,
+            #     'early_stop_patience': 1,
+            #     'support_capacity': 7.2,
+            #     'vehicle_cost': 1000
+            # }
+            # support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, **support_line_aco).run()
             support_cost, _ = SupportLinePlanningACO(remaining_stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
             self.cost_cache[key] = support_cost
         else:

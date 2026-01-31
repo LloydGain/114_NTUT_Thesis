@@ -1,3 +1,4 @@
+from copy import deepcopy
 import random
 import numpy as np
 from datetime import datetime, timedelta
@@ -12,23 +13,25 @@ class SupportLinePlanningACO(BaseACO):
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, local_rho=0.1, global_rho=0.1, tau_ratio=50, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2, vehicle_cost=0):
-        super().__init__(num_ants, iterations, alpha, beta, global_rho, q, early_stop_patience)
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, rho=0.5, tau_ratio=50, q=1, q0=0.9, q0_max=0.9, max_rho=0.9, disaster_rate=0.05, early_stop_patience=10, support_capacity=7.2, vehicle_cost=0):
+        super().__init__(num_ants, iterations, alpha, beta, rho, q, early_stop_patience)
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.dc = config.DC_CONFIG
-        self.local_rho = local_rho
-        self.global_rho = global_rho
         self.gamma = gamma
         self.tau0 = 0
+        self.q = q
         self.q0 = q0
+        self.q0_max = q0_max
+        self.max_rho = max_rho
+        self.disaster_rate = disaster_rate
         self.support_capacity = support_capacity
         self.tau_ratio = tau_ratio
+        self.vehicle_cost = vehicle_cost
 
         self.saving_matrix = self._saving_matrix()
         self.ls = LocalSearch(self.distance_matrix, self.time_matrix)
-        self.vehicle_cost = vehicle_cost
 
 
     def _saving_matrix(self):
@@ -465,7 +468,6 @@ class SupportLinePlanningACO(BaseACO):
 
                 next_store = self._roulette_wheel_selection(current_store, feasible_stores)
                 route_manager.add_store(vehicle_id, next_store)
-                self._deposit_local_pheromone(current_store, next_store)
                 current_store = next_store
                 unvisited_stores.remove(next_store)
 
@@ -485,21 +487,21 @@ class SupportLinePlanningACO(BaseACO):
         """
         for s in self.pheromone_matrix:
             for t in self.pheromone_matrix[s]:
-                self.pheromone_matrix[s][t] *= (1 - self.global_rho)
+                self.pheromone_matrix[s][t] *= (1 - self.rho)
 
 
-    def _deposit_local_pheromone(self, current_store, next_store):
-        """
-        Docstring for _deposit_local_pheromone
+    # def _deposit_local_pheromone(self, current_store, next_store):
+    #     """
+    #     Docstring for _deposit_local_pheromone
 
-        :param self: Description
-        :param current_store: Description
-        :param next_store: Description
-        """
-        s1_d = current_store['store_id']
-        s2_d = next_store['store_id']
-        self.pheromone_matrix[s1_d][s2_d] = (1 - self.local_rho) * self.pheromone_matrix[s1_d][s2_d] + self.local_rho * self.tau0
-        self.pheromone_matrix[s2_d][s1_d] = (1 - self.local_rho) * self.pheromone_matrix[s2_d][s1_d] + self.local_rho * self.tau0
+    #     :param self: Description
+    #     :param current_store: Description
+    #     :param next_store: Description
+    #     """
+    #     s1_d = current_store['store_id']
+    #     s2_d = next_store['store_id']
+    #     self.pheromone_matrix[s1_d][s2_d] = (1 - self.local_rho) * self.pheromone_matrix[s1_d][s2_d] + self.local_rho * self.tau0
+    #     self.pheromone_matrix[s2_d][s1_d] = (1 - self.local_rho) * self.pheromone_matrix[s2_d][s1_d] + self.local_rho * self.tau0
 
 
     def _calculate_tau_bounds(self):
@@ -513,8 +515,9 @@ class SupportLinePlanningACO(BaseACO):
         Returns:
             tuple: (tau_max, tau_min).
         """
-        tau_max = self.q / (self.global_rho * self.best_cost)
-        tau_min = tau_max / self.tau_ratio
+        tau_max = self.q / (self.rho * self.best_cost)
+        tau_min = (tau_max / self.tau_ratio)
+        tau_min = (tau_min + self.min_rho) / 2
         return tau_max, tau_min
 
 
@@ -548,11 +551,49 @@ class SupportLinePlanningACO(BaseACO):
                     self.pheromone_matrix[store_2][store_1] = tau_min
 
 
+    def _disaster_operator(self, solution, cost):
+        """
+        Notes:
+            Disaster operator to improve the solution.
+
+        Args:
+            solution (dict): The solution found by an ant.
+            cost (float): The cost of the solution.
+
+        Returns:
+            tuple: (solution, cost).
+        """
+        temp_pheromone_matrix = deepcopy(self.pheromone_matrix)
+        tau_max, tau_min = self._calculate_tau_bounds()
+        for route in solution:
+            stores = solution[route]['stores']
+            for i in range(len(stores) - 1):
+                store_1 = stores[i]['store_id']
+                store_2 = stores[i+1]['store_id']
+                if random.random() < self.disaster_rate:
+                    self.pheromone_matrix[store_1][store_2] = tau_min
+                    self.pheromone_matrix[store_2][store_1] = tau_min
+
+        ant_solution = self._solution_construction()
+        ant_cost = self._cost_function(ant_solution)
+        ant_cost = ant_cost + len(ant_solution) * self.vehicle_cost
+        ant_solution, ant_cost = self.ls.optimize(ant_solution, ant_cost)
+
+        if ant_cost >= cost:
+            self.pheromone_matrix = temp_pheromone_matrix
+            return solution, cost
+        
+        return ant_solution, ant_cost        
+
+
     def run(self):
         """
         Notes:
             Runs the ACO algorithm for support line planning.
         """
+        if not self.remaining_stores:
+            return 0, {}
+
         # print(f'Support Line stores: {len(self.remaining_stores)}')
         self._initial_pheromone(1)
         greedy_solution = self._greedy_solution()
@@ -580,14 +621,19 @@ class SupportLinePlanningACO(BaseACO):
                     iter_best_solution = ant_solution
 
             optimized_routes, optimized_cost = self.ls.optimize(iter_best_solution, iter_best_cost)
+            optimized_routes, optimized_cost = self._disaster_operator(optimized_routes, optimized_cost)
 
             if optimized_cost < self.best_cost:
                 self.best_cost = optimized_cost
                 self.best_solution = optimized_routes
 
             self._evaporate_pheromone()
-            # self._deposit_global_pheromone(optimized_routes, optimized_cost)
-            self._deposit_global_pheromone(iter_best_solution, iter_best_cost)
+            self._deposit_global_pheromone(optimized_routes, optimized_cost)
+
+            if self.q0 / 0.95 >= self.q0_max:
+                self.q0 = self.q0_max
+            if self.rho / 0.95 >= self.max_rho:
+                self.rho = self.max_rho
 
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
