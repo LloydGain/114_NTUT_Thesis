@@ -10,10 +10,11 @@ def parse_args():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_date", type=str, required=True)
+    parser.add_argument("--update", action="store_true", help="Update distance and time matrices")
     return parser.parse_args()
 
 
-def main(file_date):
+def main(file_date, update):
     """
     Notes:
         Transfer manual data to origin data.
@@ -28,7 +29,10 @@ def main(file_date):
     store_info_file = '../data/store_info.xlsx'
 
     s_data = StoreData(store_info_file)
-    distance_matrix, time_matrix = s_data.get_cost_matrices(dist_file, time_file)
+    if update:
+        distance_matrix, time_matrix = s_data.get_cost_matrices(dist_file, time_file)
+    else:
+        distance_matrix, time_matrix = s_data.load_matrices_from_file(dist_file, time_file)
 
     m_data = MDataManager([source_manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
     m_data.create_data_folder(data_dir, source_manual_file, dest_manual_file)
@@ -37,4 +41,4 @@ def main(file_date):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.file_date)
+    main(args.file_date, args.update)

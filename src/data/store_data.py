@@ -27,9 +27,15 @@ class StoreData:
 
         stores = []
         for _, row in stores_df.iterrows():
-            store_id = str(int(row['店鋪編號']))
+            value = row['店鋪編號']
+            store_id = value.strip() if isinstance(value, str) else str(int(value))
             long = row['經度']
             lat = row['緯度']
+            dc = row['DC別']
+            if dc != '林口DC':
+                continue
+            if long > 125 or long < 115 or lat < 20 or lat > 30:
+                continue
             store = {'store_id': store_id, "longitude": long, "latitude": lat}
             stores.append(store)
 
@@ -48,7 +54,7 @@ class StoreData:
             distance_matrix, time_matrix (tuple): Store distance matrix and time matrix.
         """
         osrm = OSRM()
-        dist_matrix, time_matrix = osrm.compute_cost_matrices(self.stores)
+        dist_matrix, time_matrix = osrm.compute_cost_matrices_batched(self.stores)
 
         if dist_file and time_file:
             self.save_matrices_to_file(dist_matrix, time_matrix, dist_file, time_file)

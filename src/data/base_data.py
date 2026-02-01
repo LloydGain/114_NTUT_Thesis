@@ -170,7 +170,7 @@ class BaseDataManager:
             store_id = row['店鋪編號']
             store_name = row['店鋪名稱']
             if not pd.isna(store_id):
-                store_id = str(int(store_id))
+                store_id = store_id.strip() if isinstance(store_id, str) else str(int(store_id))
                 store_ids[store_name] = store_id
 
         return store_ids
