@@ -61,7 +61,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     original_routes_img = f'{original_routes_dir}/img'
     manual_routes_img = f'{manual_routes_dir}/img'
     program_routes_img = f'{program_routes_dir}/img'
-    optimized_routes_img = f'{optimized_routes_dir}/img'
+    # optimized_routes_img = f'{optimized_routes_dir}/img'
     original_routes_osrm_html = f'{original_routes_dir}/osrm_routes.html'
     manual_routes_osrm_html = f'{manual_routes_dir}/osrm_routes.html'
     program_route_osrm_html = f'{program_routes_dir}/osrm_routes.html'

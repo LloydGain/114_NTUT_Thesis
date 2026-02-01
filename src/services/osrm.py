@@ -140,12 +140,12 @@ class OSRM:
         dist_matrix = {sid: {} for sid in ids}
         time_matrix = {sid: {} for sid in ids}
 
-        N = len(all_stores)
+        n = len(all_stores)
 
-        for i in range(0, N, self.batch_size):
+        for i in range(0, n, self.batch_size):
             src_batch = all_stores[i:i+self.batch_size]
 
-            for j in range(0, N, self.batch_size):
+            for j in range(0, n, self.batch_size):
                 dst_batch = all_stores[j:j+self.batch_size]
 
                 distances, durations = self.get_block_matrix(src_batch, dst_batch)
