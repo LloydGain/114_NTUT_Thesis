@@ -294,7 +294,7 @@ class SupportLinePlanningACO(BaseACO):
                 total_cost += self.distance_matrix[stores[i]['store_id']][stores[i+1]['store_id']]
 
             total_cost += self.distance_matrix[stores[-1]['store_id']]['dc']
-        
+
         total_cost += len(solution) * self.vehicle_cost
 
         return total_cost
