@@ -4,7 +4,7 @@ REM Parallel run for multiple file_date
 REM ================================
 
 set PYTHON=python
-set SCRIPT=main.py
+set SCRIPT=..\src\main.py
 
 set SEED=0
 set DATA_DIR=..\data

@@ -1,6 +1,6 @@
 @echo off
 REM ================================
-REM Parallel run for multiple file_date
+REM Sequential run for multiple file_date
 REM ================================
 
 set PYTHON=python
@@ -16,20 +16,26 @@ for /d %%D in ("%DATA_DIR%\*") do (
     call :process_folder "%%~nxD"
 )
 
-echo All jobs started.
+echo All jobs finished.
 pause
 goto :EOF
+
 
 :process_folder
 set "FOLDER=%~1"
 
-REM Check if the folder name is numeric (dates like 1203, 0102)
+REM Check if the folder name is numeric
 echo %FOLDER%| findstr "^[0-9][0-9]*$" >nul
 if errorlevel 1 (
     echo Skipping non-numeric folder: %FOLDER%
     goto :EOF
 )
 
-echo Starting file_date=%FOLDER%
-start "run_%FOLDER%" %PYTHON% %SCRIPT% --file_date %FOLDER% --seed %SEED% --comment "%COMMENT%"
+echo Running file_date=%FOLDER%
+
+%PYTHON% %SCRIPT% --file_date %FOLDER% --seed %SEED% --comment "%COMMENT%"
+
+echo Finished file_date=%FOLDER%
+echo --------------------------------
+
 goto :EOF
