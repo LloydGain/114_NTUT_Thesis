@@ -1,21 +1,75 @@
 import hashlib
 import numpy as np
+from multiprocessing import Pool, cpu_count
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
+from solvers.allocate_ga import StoreAllocationGA
+
+ROUTES = None
+DIST = None
+TIME = None
+
+def init_worker(main_routes, distance_matrix, time_matrix):
+    """
+    Notes:
+        Initializes global variables for a worker process in parallel fitness evaluation.
+
+    Args:
+        main_routes (dict): Main routes information, e.g., {route_id: route_info}.
+        distance_matrix (json): 2D matrix of distances between stores.
+        time_matrix (json): 2D matrix of travel times between stores.
+
+    Returns:
+        None
+    """
+    global ROUTES, DIST, TIME
+    ROUTES = main_routes
+    DIST = distance_matrix
+    TIME = time_matrix
+
+def fitness_worker(store_list):
+    """
+    Notes:
+        Computes the fitness of a given set of extracted stores using ACO.
+
+    Args:
+        store_list (list): A list of store (extracted from the main routes).
+
+    Returns:
+        float: The total cost of the allocation, as returned by StoreAllocationACO.
+    """
+    # ac_cost, _, _ = StoreAllocationACO(
+    #     ROUTES,
+    #     store_list,
+    #     DIST,
+    #     TIME,
+    #     num_ants=0,
+    #     iterations=0
+    # ).run()
+    ac_cost, _, _ = StoreAllocationGA(
+        ROUTES,
+        store_list,
+        DIST,
+        TIME,
+        pop_size=0,
+        generations=0
+    ).run()
+    return ac_cost
+
 
 class StoreExtractionGA:
     """
     Notes:
         Genetic Algorithm for Store Extraction.
     """
-    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_size=2, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+    def __init__(self, main_routes, distance_matrix, time_matrix, population_size=10, elite_rate=0.1, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.main_routes = self._routes(main_routes)
         self.population_size = population_size
-        self.elite_size = elite_size
+        self.elite_size = int(elite_rate * population_size)
         self.generations = generations
         self.cross_rate = cross_rate
         self.mutation_rate = mutation_rate
@@ -158,6 +212,55 @@ class StoreExtractionGA:
         return selected_stores
 
 
+    def _mutate_gene(self, route_id, extracted_stores):
+        """
+        Notes:
+            Mutates a specific gene
+
+        Args:
+            route_id (str): Route ID.
+            extracted_stores (list): The current list of extracted stores.
+
+        Returns:
+            list: The newly mutated list of extracted stores.
+        """
+        if not extracted_stores:
+            return extracted_stores
+
+        idx_to_put_back = np.random.choice(len(extracted_stores))
+        store_to_put_back = extracted_stores[idx_to_put_back]
+
+        new_extracted_stores = [s for i, s in enumerate(extracted_stores) if i != idx_to_put_back]
+
+        copy_routes = self._copy_routes_info({route_id: self.main_routes[route_id]})
+        route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
+
+        for store in new_extracted_stores:
+            route_manager.remove_store(route_id, store)
+
+        put_back_id = store_to_put_back['store_id']
+
+        while route_manager.get_route_info(route_id, field='load_rate') > 1.0:
+            current_stores = route_manager.routes_info[route_id]['stores']
+            probabilities = self._calculate_removal_weights(current_stores)
+
+            put_back_idx = next(i for i, s in enumerate(current_stores) if s['store_id'] == put_back_id)
+            probabilities[put_back_idx] = 0.0
+
+            if np.sum(probabilities) > 0:
+                probabilities = probabilities / np.sum(probabilities)
+            else:
+                probabilities = self._calculate_removal_weights(current_stores)
+
+            idx_to_remove = np.random.choice(len(current_stores), p=probabilities)
+            selected_store = current_stores[idx_to_remove]
+
+            new_extracted_stores.append(selected_store)
+            route_manager.remove_store(route_id, selected_store)
+
+        return new_extracted_stores
+
+
     def _generate_individual(self):
         """
         Notes:
@@ -228,26 +331,28 @@ class StoreExtractionGA:
         return hashlib.md5(s.encode()).hexdigest()
 
 
-    def _fitness(self, individual):
-        """
-        Notes:
-            Calculates the fitness value for an individual solution
+    # def _fitness(self, individual):
+    #     """
+    #     Notes:
+    #         Calculates the fitness value for an individual solution
 
-        Args:
-            individual (dict): { route_id: [store1, store2, ...] }
+    #     Args:
+    #         individual (dict): { route_id: [store1, store2, ...] }
 
-        Returns:
-            float: The fitness value
-        """
-        key = self._encode_individual(individual)
-        if key in self.fitness_cache:
-            return self.fitness_cache[key]
+    #     Returns:
+    #         float: The fitness value
+    #     """
+    #     key = self._encode_individual(individual)
+    #     if key in self.fitness_cache:
+    #         return self.fitness_cache[key]
 
-        stores = self._individual_to_list(individual)
-        fitness = len(stores)
+    #     stores = self._individual_to_list(individual)
+    #     # fitness = len(stores)
+    #     ac_cost, _, _ = StoreAllocationACO(self.main_routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+    #     fitness = ac_cost
 
-        self.fitness_cache[key] = fitness
-        return fitness
+    #     self.fitness_cache[key] = fitness
+    #     return fitness
 
 
     def _roulette_wheel_selection(self, population, fitnesses):
@@ -323,11 +428,12 @@ class StoreExtractionGA:
         Returns:
             None.
         """
-        mutate = np.random.rand()
-        if mutate < self.mutation_rate:
-            route_id = np.random.choice(list(self.overloaded_routes.keys()))
-            selected_stores = self._extract_stores(route_id)
-            individual[route_id] = selected_stores
+        for route_id in self.overloaded_routes.keys():
+            mutate = np.random.rand()
+            if mutate < self.mutation_rate:
+                current_extracted_stores = individual[route_id]
+                mutated_stores = self._mutate_gene(route_id, current_extracted_stores)
+                individual[route_id] = mutated_stores
 
 
     def _best_main_routes(self, individual):
@@ -374,44 +480,46 @@ class StoreExtractionGA:
         """
         population = self._init_population()
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
-        for i in range(self.generations):
-            fitnesses = [self._fitness(individual) for individual in population]
-            # print(len(self.fitness_cache))
-            # for idx, fitness in enumerate(fitnesses):
-            #     print(f'individual{idx+1} -> cost = {fitness}')
+        with Pool(processes=cpu_count(), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+            for i in range(self.generations):
+                tasks = [self._individual_to_list(ind) for ind in population]
+                fitnesses = pool.map(fitness_worker, tasks, chunksize=4)
+                # print(len(self.fitness_cache))
+                # for idx, fitness in enumerate(fitnesses):
+                #     print(f'individual{idx+1} -> cost = {fitness}')
 
-            current_best_index = np.argmin(fitnesses)
-            current_best_cost = fitnesses[current_best_index]
-            current_best_individual = population[current_best_index]
+                current_best_index = np.argmin(fitnesses)
+                current_best_cost = fitnesses[current_best_index]
+                current_best_individual = population[current_best_index]
 
-            if current_best_cost < self.best_cost:
-                self.best_cost = current_best_cost
-                self.best_individual = current_best_individual
+                if current_best_cost < self.best_cost:
+                    self.best_cost = current_best_cost
+                    self.best_individual = current_best_individual
 
-            print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
+                print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
 
-            sorted_indices = np.argsort(fitnesses)
-            elites_indices = sorted_indices[:self.elite_size]
-            new_population = [self._copy_individual(population[idx]) for idx in elites_indices]
-            remaining_slots = self.population_size - self.elite_size
-            for _ in range(remaining_slots // 2):
-                parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
-                child1, child2 = self._crossover(parent1, parent2)
-                self._mutate(child1)
-                self._mutate(child2)
-                new_population.extend([child1, child2])
-            population = new_population
+                sorted_indices = np.argsort(fitnesses)
+                elites_indices = sorted_indices[:self.elite_size]
+                new_population = [self._copy_individual(population[idx]) for idx in elites_indices]
+                remaining_slots = self.population_size - self.elite_size
+                for _ in range(remaining_slots // 2):
+                    parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
+                    child1, child2 = self._crossover(parent1, parent2)
+                    self._mutate(child1)
+                    self._mutate(child2)
+                    new_population.extend([child1, child2])
+                population = new_population
 
-            self.log.append({
-                'generation': i + 1,
-                'iter_worst_cost': float(np.max(fitnesses)),
-                'iter_best_cost': current_best_cost,
-                'iter_avg_cost': float(np.mean(fitnesses)),
-                'std_cost': float(np.std(fitnesses)),
-                'best_cost': self.best_cost,
-            })
+                self.log.append({
+                    'generation': i + 1,
+                    'iter_worst_cost': float(np.max(fitnesses)),
+                    'iter_best_cost': current_best_cost,
+                    'iter_avg_cost': float(np.mean(fitnesses)),
+                    'std_cost': float(np.std(fitnesses)),
+                    'best_cost': self.best_cost,
+                })
 
-            if early_stopper.check(self.best_cost):
-                break
+                if early_stopper.check(self.best_cost):
+                    break
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)

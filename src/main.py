@@ -13,7 +13,7 @@ from data.program_data import PDataManager
 from utils.logger import Log
 from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
-from solvers.allocate_aco import StoreAllocationACO
+from solvers.allocate_ga import StoreAllocationGA
 from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.local_search import LocalSearch
 from eval.eval_routes import EvalRoutes
@@ -91,21 +91,20 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 50,
-            'elite_size': 2,
-            'generations': 10000,
+            'population_size': 100,
+            'elite_rate': 0.1,
+            'generations': 1000,
             'cross_rate': 0.9,
-            'mutation_rate': 0.2,
-            'early_stop_patience': 500
+            'mutation_rate': 0.01,
+            'early_stop_patience': 50
         },
-        'store_allocation_aco': {
-            'num_ants': 50,
-            'iterations': 500,
-            'alpha': 1,
-            'beta': 1,
-            'rho': 0.1,
-            'q': 100,
-            'early_stop_patience': 10
+        'store_allocation_ga': {
+            'pop_size': 100,
+            'elite_rate': 0.1,
+            'generations': 1000,
+            'cross_rate': 0.9,
+            'mutation_rate': 0.01,
+            'early_stop_patience': 50
         },
         'support_line_aco': {
             'num_ants': 50,
@@ -121,7 +120,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'max_rho': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2,
-            'vehicle_cost': 1000
+            'vehicle_cost': 2000
         },
         'comment': comment,
         'date': file_date,
@@ -132,19 +131,18 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     test_params = {
         'store_extraction_ga': {
             'population_size': 2,
-            'elite_size': 2,
+            'elite_rate': 0.1,
             'generations': 2,
             'cross_rate': 0.8,
             'mutation_rate': 0.2,
             'early_stop_patience': 1
         },
-        'store_allocation_aco': {
-            'num_ants': 1,
-            'iterations': 1,
-            'alpha': 1,
-            'beta': 1,
-            'rho': 0.1,
-            'q': 1,
+        'store_allocation_ga': {
+            'pop_size': 0,
+            'elite_rate': 0.1,
+            'generations': 0,
+            'cross_rate': 0.9,
+            'mutation_rate': 0.01,
             'early_stop_patience': 1
         },
         'support_line_aco': {
@@ -222,9 +220,9 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    print("Starting Store Allocation using ACO...")
-    allocate_params = params['store_allocation_aco']
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, **allocate_params)
+    print("Starting Store Allocation using GA...")
+    allocate_params = params['store_allocation_ga']
+    store_allocate = StoreAllocationGA(main_routes, extracted_stores, distance_matrix, time_matrix, **allocate_params)
     _, main_routes, remaining_stores = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 
@@ -232,7 +230,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     time_consume = round(end_time - start_time, 2)
     print(f"店鋪再分配執行時間: {time_consume} 秒")
 
-    times['Starting Store Allocation using ACO...'] = time_consume
+    times['Starting Store Allocation using GA...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 

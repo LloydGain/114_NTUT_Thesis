@@ -13,7 +13,7 @@ class SupportLinePlanningACO(BaseACO):
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, rho=0.1, tau_ratio=50, q=1, q0=0.1, q0_min=0.1, max_rho=0.9, disaster_rate=0.05, early_stop_patience=10, support_capacity=7.2, vehicle_cost=0):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=1, iterations=1, alpha=1, beta=1, gamma=1, rho=0.1, tau_ratio=50, q=1, q0=0.1, q0_min=0.1, max_rho=0.9, disaster_rate=0.05, early_stop_patience=10, support_capacity=7.2, vehicle_cost=2000):
         super().__init__(num_ants, iterations, alpha, beta, rho, q, early_stop_patience)
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -50,12 +50,13 @@ class SupportLinePlanningACO(BaseACO):
         saving_matrix = {
             store_idx: {
                 store_idy: (
-                    abs(self.distance_matrix[self.dc['store_id']][store_idx] +
+                    max(1e-6, self.distance_matrix[self.dc['store_id']][store_idx] +
                     self.distance_matrix[self.dc['store_id']][store_idy] -
                     self.distance_matrix[store_idx][store_idy])
                 ) for store_idy in store_ids
             } for store_idx in store_ids
         }
+        saving_matrix['dc'] = {store['store_id']: 1 for store in self.remaining_stores}
 
         return saving_matrix
 
@@ -167,6 +168,9 @@ class SupportLinePlanningACO(BaseACO):
         Returns:
             feasible (list): List of feasible next stores.
         """
+        if len(route['stores']) == 0:
+            return unvisited_stores
+
         last_store = route['stores'][-1]
         last_region = last_store['region']
         last_group = last_store['dist_group']
@@ -294,8 +298,7 @@ class SupportLinePlanningACO(BaseACO):
                 total_cost += self.distance_matrix[stores[i]['store_id']][stores[i+1]['store_id']]
 
             total_cost += self.distance_matrix[stores[-1]['store_id']]['dc']
-
-        total_cost += len(solution) * self.vehicle_cost
+            total_cost += self.vehicle_cost
 
         return total_cost
 
@@ -314,9 +317,13 @@ class SupportLinePlanningACO(BaseACO):
         initial_pheromone = self.q / cost
         self.tau0 = initial_pheromone
         for s in self.remaining_stores:
+            self.pheromone_matrix[self.dc['store_id']] = {
+                store['store_id']: initial_pheromone for store in self.remaining_stores
+            }
             self.pheromone_matrix[s['store_id']] = {
                 store['store_id']: initial_pheromone for store in self.remaining_stores if store['store_id'] != s['store_id']
             }
+            self.pheromone_matrix[s['store_id']]['dc'] = initial_pheromone
 
 
     def _check_volume_constraint(self, route_volumn, store):
@@ -457,7 +464,8 @@ class SupportLinePlanningACO(BaseACO):
 
             # current_store = max(unvisited_stores, key=lambda store: store['volume'])
             # current_store = max(unvisited_stores, key=lambda store: self.distance_matrix['dc'][store['store_id']])
-            current_store = random.choice(unvisited_stores)
+            # current_store = random.choice(unvisited_stores)
+            current_store = self._roulette_wheel_selection(self.dc, unvisited_stores)
 
             route_manager.add_store(vehicle_id, current_store)
             unvisited_stores.remove(current_store)
@@ -578,7 +586,6 @@ class SupportLinePlanningACO(BaseACO):
 
         ant_solution = self._solution_construction()
         ant_cost = self._cost_function(ant_solution)
-        ant_cost = ant_cost + len(ant_solution) * self.vehicle_cost
         ant_solution, ant_cost = self.ls.optimize(ant_solution, ant_cost)
 
         if ant_cost >= cost:
@@ -600,6 +607,7 @@ class SupportLinePlanningACO(BaseACO):
         self._initial_pheromone(1)
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
+
         self._initial_pheromone(greedy_cost)
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
@@ -643,7 +651,7 @@ class SupportLinePlanningACO(BaseACO):
 
             print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
 
-            self._log_iteration(i, ant_costs, iter_best_cost)
+            self._log_iteration(i, ant_costs, optimized_cost)
 
             if early_stopper.check(self.best_cost):
                 break
