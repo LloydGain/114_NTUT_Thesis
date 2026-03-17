@@ -1,24 +1,77 @@
+import copy
 import random
 import hashlib
 import numpy as np
 from config import config
 from datetime import datetime, timedelta
+from multiprocessing import Pool, cpu_count, Manager
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
+
+ALLOC_ROUTES = None
+ALLOC_DIST = None
+ALLOC_TIME = None
+
+def init_alloc_worker(main_routes, distance_matrix, time_matrix):
+    """
+    Notes:
+        Initializes global variables for a worker process in parallel fitness evaluation.
+
+    Args:
+        main_routes (dict): Main routes information, e.g., {route_id: route_info}.
+        distance_matrix (json): 2D matrix of distances between stores.
+        time_matrix (json): 2D matrix of travel times between stores.
+
+    Returns:
+        None
+    """
+    global ALLOC_ROUTES, ALLOC_DIST, ALLOC_TIME
+    ALLOC_ROUTES = main_routes
+    ALLOC_DIST = distance_matrix
+    ALLOC_TIME = time_matrix
+
+
+def alloc_fitness_worker(args):
+    """
+    Notes:
+        Computes the fitness of a given set of extracted stores using GA.
+
+    Args:
+        args (list): individual.
+
+    Returns:
+        float: The total cost of the allocation, as returned by StoreAllocationACO.
+    """
+    chromo, key, shared_cache, ga_instance = args
+
+    if key in shared_cache:
+        return shared_cache[key]
+
+    cost, routes, support = ga_instance._evaluate_individual(chromo)
+
+    result = {
+        'cost': cost,
+        'routes': routes,
+        'support': support
+    }
+
+    shared_cache[key] = result
+    return result
+
 
 class StoreAllocationGA:
     """
     Store Allocation using Genetic Algorithm (GA) with Strict Time Window & Capacity Constraints.
     """
-    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, pop_size=50, elite_rate=0.1, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, population_size=50, elite_rate=0.1, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
         self.dc = config.DC_CONFIG
-        self.pop_size = pop_size
-        self.elite_size = int(pop_size * elite_rate)
+        self.population_size = population_size
+        self.elite_size = int(population_size * elite_rate)
         self.generations = generations
         self.cross_rate = cross_rate
         self.mutation_rate = mutation_rate
@@ -28,9 +81,7 @@ class StoreAllocationGA:
         self.best_cost = float('inf')
         self.best_solution = None
         self.best_remaining_solution = None
-        self.cost_cache = {}
         self.log = []
-
         self.remaining_stores = self._sort_stores_by_insertion_cost(remaining_stores)
 
 
@@ -259,19 +310,18 @@ class StoreAllocationGA:
         return min_cost, best_pos
 
 
-    def _encode_stores(self, stores):
+    def _encode_individual(self, individual):
         """
         Notes:
-            Encode a list of stores.
+            Encode a list of routes id for allocation.
 
         Args:
-            stores (list): List of stores.
+            individual (list): List of routes id.
 
         Returns:
-            str: Encoded stores.
+            str: Encoded individual.
         """
-        store_set = sorted([store['store_id'] for store in stores])
-        s = ','.join(map(str, store_set))
+        s = ','.join(map(str, individual))
         return hashlib.md5(s.encode()).hexdigest()
 
 
@@ -293,6 +343,7 @@ class StoreAllocationGA:
                 total_cost += self.distance_matrix[prev['store_id']][store['store_id']]
                 prev = store
             total_cost += self.distance_matrix[prev['store_id']][self.dc['store_id']]
+
         return total_cost
 
 
@@ -308,7 +359,6 @@ class StoreAllocationGA:
             costs (float): Main Routes & Support Line Cost
             routes (dict): Routes Information.
             support_pool (list): list of store
-            individual (list): 
         """
         temp_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
@@ -325,17 +375,12 @@ class StoreAllocationGA:
                 route_manager.insert_store(store, target, pos)
             else:
                 support_pool.append(store)
-                individual[i] = 'SUPPORT'
+                # individual[i] = 'SUPPORT'
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
-        cache_key = self._encode_stores(support_pool)
-        if cache_key not in self.cost_cache:
-            support_cost = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()[0] if support_pool else 0
-            self.cost_cache[cache_key] = support_cost
-        else:
-            support_cost = self.cost_cache[cache_key]
+        support_cost, _ = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
 
-        return main_cost + support_cost, route_manager.routes_info, support_pool, individual
+        return main_cost + support_cost, route_manager.routes_info, support_pool
 
 
     def _uniform_crossover(self, parent1, parent2):
@@ -350,8 +395,7 @@ class StoreAllocationGA:
         Returns:
             tuple: Two children individuals (child1, child2).
         """
-        child1 = parent1.copy()
-        child2 = parent2.copy()
+        child1, child2 = parent1, parent2
         for i, (g1, g2) in enumerate(zip(parent1, parent2)):
             if random.random() < 0.5:
                 child1[i], child2[i] = g2, g1
@@ -401,62 +445,81 @@ class StoreAllocationGA:
             Runs the genetic algorithm for store allocation.
         """
         greedy_chromo = self._generate_greedy_individual()
-        g_cost, g_routes, g_support, g_repaired = self._evaluate_individual(greedy_chromo)
+        g_cost, g_routes, g_support = self._evaluate_individual(greedy_chromo)
         self.best_cost = g_cost
         self.best_solution = g_routes
         self.best_remaining_solution = g_support
 
-        population = [g_repaired]
-        num_stores = len(self.remaining_stores)
-        early_stopper = EarlyStopper(patience=self.early_stop_patience)
+        if self.generations == 0:
+            return self.best_cost, self.best_solution, self.best_remaining_solution
 
-        while len(population) < self.pop_size:
+        population = [greedy_chromo]
+        num_stores = len(self.remaining_stores)
+        while len(population) < self.population_size:
             population.append([random.choice(self.route_choices) for _ in range(num_stores)])
 
-        for gen_idx in range(self.generations):
-            fitnesses = []
-            evaluated_pop = []
+        early_stopper = EarlyStopper(patience=self.early_stop_patience)
+        with Manager() as manager:
+            shared_cache = manager.dict()
+            with Pool(processes=cpu_count(), initializer=init_alloc_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+                for gen_idx in range(self.generations):
+                    unique_tasks = []
+                    individual_keys = []
 
-            for chromo in population:
-                cost, routes, support, repaired = self._evaluate_individual(chromo)
-                evaluated_pop.append({
-                    'individual': repaired, 
-                    'cost': cost, 
-                    'routes': routes, 
-                    'support': support
-                })
-                fitnesses.append(cost)
+                    for chromo in population:
+                        key = self._encode_individual(chromo)
+                        individual_keys.append(key)
+                        if key not in shared_cache:
+                            unique_tasks.append((chromo, key, shared_cache, self))
 
-            evaluated_pop.sort(key=lambda x: x['cost'])
-            current_best = evaluated_pop[0]
+                    if unique_tasks:
+                        pool.map(alloc_fitness_worker, unique_tasks, chunksize=4)
+                    
+                    fitnesses = []
+                    evaluated_pop = []
+                    for i, chromo in enumerate(population):
+                        key = individual_keys[i]
+                        res = shared_cache[key]
+                        evaluated_pop.append({
+                            'individual': chromo,
+                            'cost': res['cost'],
+                            'routes': res['routes'],
+                            'support': res['support']
+                        })
+                        fitnesses.append(res['cost'])
 
-            if current_best['cost'] < self.best_cost:
-                self.best_cost = current_best['cost']
-                self.best_solution = current_best['routes']
-                self.best_remaining_solution = current_best['support']
+                    evaluated_pop.sort(key=lambda x: x['cost'])
+                    current_best = evaluated_pop[0]
 
-            self.log.append({
-                'generation': gen_idx + 1,
-                'iter_worst_cost': float(np.max(fitnesses)),
-                'iter_best_cost': float(current_best['cost']),
-                'iter_avg_cost': float(np.mean(fitnesses)),
-                'std_cost': float(np.std(fitnesses)),
-                'best_cost': self.best_cost,
-            })
+                    if current_best['cost'] < self.best_cost:
+                        self.best_cost = current_best['cost']
+                        self.best_solution = current_best['routes']
+                        self.best_remaining_solution = current_best['support']
 
-            print(f'Store Allocation: iteration{gen_idx+1} -> best cost = {self.best_cost}')
+                    self.log.append({
+                        'generation': gen_idx + 1,
+                        'iter_worst_cost': float(np.max(fitnesses)),
+                        'iter_best_cost': float(current_best['cost']),
+                        'iter_avg_cost': float(np.mean(fitnesses)),
+                        'std_cost': float(np.std(fitnesses)),
+                        'best_cost': self.best_cost,
+                    })
 
-            if early_stopper.check(self.best_cost):
-                break
+                    print(f'Store Allocation: iteration{gen_idx+1} -> best cost = {self.best_cost}')
 
-            next_gen = [ind['individual'] for ind in evaluated_pop[:self.elite_size]]
-            weights = [1.0 / (ind['cost'] + 1e-6) for ind in evaluated_pop]
+                    if early_stopper.check(self.best_cost):
+                        break
 
-            while len(next_gen) < self.pop_size:
-                p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
-                c1, c2 = self._crossover(p1['individual'], p2['individual'])
-                next_gen.extend([self._mutate(c1), self._mutate(c2)])
+                    elites = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
+                    weights = [1.0 / (ind['cost'] + 1e-6) for ind in evaluated_pop]
 
-            population = next_gen[:self.pop_size]
+                    childrens = []
+                    while len(childrens) < (self.population_size - self.elite_size):
+                        p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
+                        c1, c2 = self._crossover(copy.deepcopy(p1['individual']), copy.deepcopy(p2['individual']))
+                        childrens.append(self._mutate(list(c1)))
+                        childrens.append(self._mutate(list(c2)))
+
+                    population = elites + childrens
 
         return self.best_cost, self.best_solution, self.best_remaining_solution

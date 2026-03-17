@@ -3,15 +3,16 @@ from config import config
 from datetime import datetime, timedelta
 from models.route_manager import RouteManager
 
-class LocalSearch:
+class VND:
     """
     Notes:
-        Local Search for route optimization.
+        VND for route optimization.
     """
-    def __init__(self, distance_matrix, time_matrix):
+    def __init__(self, distance_matrix, time_matrix, vehicle_cost=2000):
         self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
+        self.vehicle_cost = vehicle_cost
 
 
     def _calculate_route_distance(self, stores):
@@ -52,6 +53,9 @@ class LocalSearch:
             stores = routes[route_id]['stores']
             cost = self._calculate_route_distance(stores)
             total_cost += cost
+
+            if route_id.startswith('1'):
+                total_cost += self.vehicle_cost
 
         return total_cost
 
@@ -257,13 +261,13 @@ class LocalSearch:
             + self._calculate_route_distance(r2_stores)
         )
 
-        # -----------------------------------------------
-        if not route1_id.startswith('1') or not route2_id.startswith('1'):
-            return (None, None)
-        # -----------------------------------------------
-
         for i, s1 in enumerate(r1_stores):
             for j, s2 in enumerate(r2_stores):
+
+                # -----------------------------------------------
+                if s1['route_code'].startswith(s1['route_id']) or s2['route_code'].startswith(s2['route_id']):
+                    continue
+                # -----------------------------------------------
 
                 vol1 = sum(s['volume'] for s in r1_stores) - s1['volume'] + s2['volume']
                 vol2 = sum(s['volume'] for s in r2_stores) - s2['volume'] + s1['volume']
@@ -300,113 +304,103 @@ class LocalSearch:
         return best_pair
 
 
-    def optimize_intra_route(self, routes_info, routes_cost):
+    def _neighborhood_intra(self, routes, route_manager):
         """
         Notes:
             Intra-route optimization using 2-opt.
 
         Args:
             routes_info (dict): Routes information.
-            routes_cost (float): Current total cost of all routes.
+            route_manager (RouteManager): Route manager.
 
         Returns:
-            tuple: (optimized_routes (dict), optimized_cost (float))
+            bool: True if any optimization is made, False otherwise.
         """
-        routes = copy.deepcopy(routes_info)
-        route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
-        new_routes_cost = routes_cost
+        for route_id, route_data in routes.items():
+            if not route_id.startswith('1'):
+                continue
 
-        improved = True
-        while improved:
-            improved = False
-            for route_id, route_data in routes.items():
+            original_dist = route_data['dc']['distance']
+            new_stores, new_dist = self._two_opt(route_data['stores'], original_dist)
 
-                if not route_id.startswith('1'):
-                    continue
-
-                original_route = route_data['dc']
-                original_stores = route_data['stores']
-                original_cost = original_route['distance']
-
-                if len(original_stores) < 4:
-                    continue
-
-                new_stores, new_cost = self._two_opt(original_stores, original_cost)
-
-                if new_cost < original_cost:
-                    improved = True
-                    # print(f'LS improved: {original_cost - new_cost}.')
-                    # print([s['store_id'] for s in original_stores])
-                    # print([s['store_id'] for s in new_stores])
-                    route_manager.replace_stores(route_id, new_stores)
-                    new_routes_cost = new_routes_cost - (original_cost - new_cost)
-
-        return routes, new_routes_cost
+            if new_dist < original_dist:
+                route_manager.replace_stores(route_id, new_stores)
+                return True
+        return False
 
 
-    def optimize_inter_route(self, routes_info, routes_cost):
+    def _neighborhood_inter(self, routes, route_manager):
         """
         Notes:
             Inter-route optimization using relocate and swap.
 
         Args:
             routes_info (dict): Routes information.
-            routes_cost (float): Current total cost of all routes.
+            route_manager (RouteManager): Route manager.
+
+        Returns:
+            bool: True if any optimization is made, False otherwise.
+        """
+        route_ids = list(routes.keys())
+
+        for r1_id in route_ids:
+            for r2_id in route_ids:
+                if r1_id == r2_id:
+                    continue
+
+                moved_store, position = self._relocate(routes, r1_id, r2_id)
+                if moved_store is not None:
+                    route_manager.move_store_to_route(r1_id, moved_store, r2_id, position)
+                    return True
+
+        for r1_idx, r1_id in enumerate(route_ids):
+            for r2_idx, r2_id in enumerate(route_ids):
+                if r1_idx <= r2_idx:
+                    continue
+
+                s1, s2 = self._swap(routes, r1_id, r2_id)
+                if s1 is not None:
+                    route_manager.swap_stores(r1_id, s1, r2_id, s2)
+                    return True
+
+        return False
+
+
+    def optimize(self, routes_info):
+        """
+        Notes:
+            Perform VND (Variable Neighborhood Descent) optimization.
+
+            Neighborhoods:
+                1. Intra-route 2-opt
+                2. Inter-route relocate
+                3. Inter-route swap
+
+        Args:
+            routes_info (dict): Routes information.
 
         Returns:
             tuple: (optimized_routes (dict), optimized_cost (float))
         """
-        routes = copy.deepcopy(routes_info)
-        route_ids = list(routes.keys())
-        route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
-        new_routes_cost = routes_cost
+        current_routes = copy.deepcopy(routes_info)
+        route_manager = RouteManager(current_routes, self.distance_matrix, self.time_matrix)
 
         improved = True
         while improved:
             improved = False
-            for r1_id in route_ids:
-                for r2_id in route_ids:
-                    if r1_id == r2_id:
-                        continue
 
-                    store, position = self._relocate(routes, r1_id, r2_id)
-                    if store is not None:
-                        route_manager.move_store_to_route(r1_id, store, r2_id, position)
-                        # print(f'Relocate {store["store_id"]} from {r1_id} to {r2_id} at {position}')
-                        improved = True
-                        break
+            if self._neighborhood_intra(current_routes, route_manager):
+                improved = True
+                current_routes = route_manager.routes_info
+                continue
 
-                    s1, s2 = self._swap(routes, r1_id, r2_id)
-                    if s1 is not None:
-                        route_manager.swap_stores(r1_id, s1, r2_id, s2)
-                        # print(f'Swap {s1["store_id"]} ({r1_id}) with {s2["store_id"]} ({r2_id})')
-                        improved = True
-                        break
-
-                if improved:
-                    break
+            if self._neighborhood_inter(current_routes, route_manager):
+                improved = True
+                current_routes = route_manager.routes_info
+                continue
 
         route_manager.update_all_routes_info()
-        routes = route_manager.routes_info
-        new_routes_cost = self._calculate_routes_cost(routes)
+        final_routes = route_manager.routes_info
+        final_cost = self._calculate_routes_cost(final_routes)
 
-        return routes, new_routes_cost
-
-
-    def optimize(self, routes_info, routes_cost):
-        """
-        Notes:
-            Perform local search optimization (intra-route and inter-route).
-
-        Args:
-            routes_info (dict): Routes information.
-            routes_cost (float): Current total cost of all routes.
-
-        Returns:
-            tuple: (optimized_routes (dict), optimized_cost (float))
-        """
-        routes_info, routes_cost = self.optimize_intra_route(routes_info, routes_cost)
-        routes_info, routes_cost = self.optimize_inter_route(routes_info, routes_cost)
-        routes_info, routes_cost = self.optimize_intra_route(routes_info, routes_cost)
-
-        return routes_info, routes_cost
+        return final_routes, final_cost

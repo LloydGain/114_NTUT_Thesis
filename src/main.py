@@ -15,7 +15,7 @@ from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
 from solvers.allocate_ga import StoreAllocationGA
 from solvers.support_line_aco import SupportLinePlanningACO
-from solvers.local_search import LocalSearch
+from solvers.vnd import VND
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
 
@@ -33,7 +33,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main(file_date, random_seed=None, test_mode=False, google=False, comment=None):
+def main(file_date, random_seed=None, test_mode=False, google=False, comment=None, hyper_params=None):
     """
     Notes:
         Main function for running the program.
@@ -99,7 +99,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 50
         },
         'store_allocation_ga': {
-            'pop_size': 100,
+            'population_size': 100,
             'elite_rate': 0.1,
             'generations': 1000,
             'cross_rate': 0.9,
@@ -107,17 +107,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 50
         },
         'support_line_aco': {
-            'num_ants': 50,
-            'iterations': 500,
+            'iterations': 1000,
             'alpha': 1,
             'beta': 1,
             'gamma': 1,
-            'rho': 0.1,
-            'tau_ratio': 50,
-            'q': 100,
+            'rho': 0.5,
+            'q': 1,
             'q0': 0.9,
-            'q0_min': 0.1,
-            'max_rho': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2,
             'vehicle_cost': 2000
@@ -130,7 +126,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     test_params = {
         'store_extraction_ga': {
-            'population_size': 2,
+            'population_size': 10,
             'elite_rate': 0.1,
             'generations': 2,
             'cross_rate': 0.8,
@@ -138,11 +134,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 1
         },
         'store_allocation_ga': {
-            'pop_size': 0,
+            'population_size': 10,
             'elite_rate': 0.1,
-            'generations': 0,
-            'cross_rate': 0.9,
-            'mutation_rate': 0.01,
+            'generations': 2,
+            'cross_rate': 0.8,
+            'mutation_rate': 0.2,
             'early_stop_patience': 1
         },
         'support_line_aco': {
@@ -152,14 +148,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'beta': 1,
             'gamma': 1,
             'rho': 0.1,
-            'tau_ratio': 50,
             'q': 1,
             'q0': 0.9,
-            'q0_min': 0.1,
-            'max_rho': 0.9,
             'early_stop_patience': 1,
             'support_capacity': 7.2,
-            'vehicle_cost': 1000
+            'vehicle_cost': 2000
         },
         'Test': True,
         'comment': comment
@@ -169,6 +162,19 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         params = test_params
     else:
         params = production_params
+
+    if hyper_params:
+        for key in ['population_size', 'cross_rate', 'mutation_rate']:
+            if key in hyper_params:
+                params['store_extraction_ga'][key] = hyper_params[key]
+
+        for key in ['population_size', 'cross_rate', 'mutation_rate']:
+            if key in hyper_params:
+                params['store_allocation_ga'][key] = hyper_params[key]
+
+        for key in ['alpha', 'beta', 'gamma', 'rho']:
+            if key in hyper_params:
+                params['support_line_aco'][key] = hyper_params[key]
 
 # -----------------------------------------------------------------------------------
 
@@ -260,17 +266,15 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    print("Starting Local Search...")
-    optimized_cost = sum(route['dc']['distance'] for route in optimized_routes.values())
-    ls = LocalSearch(distance_matrix, time_matrix)
-    optimized_routes, optimized_cost = ls.optimize_inter_route(optimized_routes, optimized_cost)
-    optimized_routes, optimized_cost = ls.optimize_intra_route(optimized_routes, optimized_cost)
+    print("Starting VND...")
+    vnd = VND(distance_matrix, time_matrix)
+    optimized_routes, optimized_cost = vnd.optimize(optimized_routes)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
-    print(f"Local Search 執行時間: {time_consume} 秒")
+    print(f"VND 執行時間: {time_consume} 秒")
 
-    times['Starting Local Search...'] = time_consume
+    times['Starting VND...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -392,8 +396,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         end_time = time.time()
         print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
+    return optimized_cost
+
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.file_date, args.seed, args.test, args.google, args.comment)
+    optimized_cost = main(args.file_date, args.seed, args.test, args.google, args.comment)

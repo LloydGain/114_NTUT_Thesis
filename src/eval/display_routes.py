@@ -255,12 +255,15 @@ class DisplayRoutes:
         Returns:
             None.
         """
-        template = Path('templates/templates.html')
+        base_dir = Path(__file__).resolve().parent.parent
+        template = base_dir / "templates" / "templates.html"
+
         if not template.exists():
             raise FileNotFoundError(f"{template} not found!")
 
-        template = template.read_text(encoding="utf-8")
+        template_text = template.read_text(encoding="utf-8")
+
         data_for_js = self._convert_routes_to_js()
-        html_content = template.replace("{{ DATA_JSON }}", json.dumps(data_for_js, ensure_ascii=False))
+        html_content = template_text.replace("{{ DATA_JSON }}", json.dumps(data_for_js, ensure_ascii=False))
 
         Path(dest_html).write_text(html_content, encoding="utf-8")

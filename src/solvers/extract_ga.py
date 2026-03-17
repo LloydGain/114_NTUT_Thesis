@@ -1,6 +1,6 @@
 import hashlib
 import numpy as np
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, Manager
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
@@ -28,33 +28,32 @@ def init_worker(main_routes, distance_matrix, time_matrix):
     DIST = distance_matrix
     TIME = time_matrix
 
-def fitness_worker(store_list):
+def fitness_worker(args):
     """
     Notes:
-        Computes the fitness of a given set of extracted stores using ACO.
+        Computes the fitness of a given set of extracted stores using GA.
 
     Args:
         store_list (list): A list of store (extracted from the main routes).
 
     Returns:
-        float: The total cost of the allocation, as returned by StoreAllocationACO.
+        float: The total cost of the extraction, as returned by StoreAllocationGA.
     """
-    # ac_cost, _, _ = StoreAllocationACO(
-    #     ROUTES,
-    #     store_list,
-    #     DIST,
-    #     TIME,
-    #     num_ants=0,
-    #     iterations=0
-    # ).run()
+    store_list, shared_cache, cache_key = args
+
+    if cache_key in shared_cache:
+        return shared_cache[cache_key]
+
     ac_cost, _, _ = StoreAllocationGA(
         ROUTES,
         store_list,
         DIST,
         TIME,
-        pop_size=0,
+        population_size=0,
         generations=0
     ).run()
+
+    shared_cache[cache_key] = ac_cost
     return ac_cost
 
 
@@ -480,46 +479,68 @@ class StoreExtractionGA:
         """
         population = self._init_population()
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
-        with Pool(processes=cpu_count(), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
-            for i in range(self.generations):
-                tasks = [self._individual_to_list(ind) for ind in population]
-                fitnesses = pool.map(fitness_worker, tasks, chunksize=4)
-                # print(len(self.fitness_cache))
-                # for idx, fitness in enumerate(fitnesses):
-                #     print(f'individual{idx+1} -> cost = {fitness}')
+        with Manager() as manager:
+            shared_cache = manager.dict()
+            with Pool(processes=cpu_count(), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+                for i in range(self.generations):
+                    individual_keys = []
+                    unique_tasks_to_run = []
 
-                current_best_index = np.argmin(fitnesses)
-                current_best_cost = fitnesses[current_best_index]
-                current_best_individual = population[current_best_index]
+                    for ind in population:
+                        key = self._encode_individual(ind)
+                        individual_keys.append(key)
 
-                if current_best_cost < self.best_cost:
-                    self.best_cost = current_best_cost
-                    self.best_individual = current_best_individual
+                        if key not in shared_cache:
+                            store_list = self._individual_to_list(ind)
+                            unique_tasks_to_run.append((store_list, shared_cache, key))
 
-                print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
+                    if unique_tasks_to_run:
+                        pool.map(fitness_worker, unique_tasks_to_run, chunksize=4)
 
-                sorted_indices = np.argsort(fitnesses)
-                elites_indices = sorted_indices[:self.elite_size]
-                new_population = [self._copy_individual(population[idx]) for idx in elites_indices]
-                remaining_slots = self.population_size - self.elite_size
-                for _ in range(remaining_slots // 2):
-                    parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
-                    child1, child2 = self._crossover(parent1, parent2)
-                    self._mutate(child1)
-                    self._mutate(child2)
-                    new_population.extend([child1, child2])
-                population = new_population
+                    fitnesses = []
+                    for key in individual_keys:
+                        fitnesses.append(shared_cache[key])
 
-                self.log.append({
-                    'generation': i + 1,
-                    'iter_worst_cost': float(np.max(fitnesses)),
-                    'iter_best_cost': current_best_cost,
-                    'iter_avg_cost': float(np.mean(fitnesses)),
-                    'std_cost': float(np.std(fitnesses)),
-                    'best_cost': self.best_cost,
-                })
+                    fitnesses = np.array(fitnesses)
 
-                if early_stopper.check(self.best_cost):
-                    break
+                    # tasks = [self._individual_to_list(ind) for ind in population]
+                    # fitnesses = pool.map(fitness_worker, tasks, chunksize=4)
+                    # print(len(self.fitness_cache))
+                    # for idx, fitness in enumerate(fitnesses):
+                    #     print(f'individual{idx+1} -> cost = {fitness}')
+
+                    current_best_index = np.argmin(fitnesses)
+                    current_best_cost = fitnesses[current_best_index]
+                    current_best_individual = population[current_best_index]
+
+                    if current_best_cost < self.best_cost:
+                        self.best_cost = current_best_cost
+                        self.best_individual = current_best_individual
+
+                    print(f'Store Extraction: iteration{i+1} -> best cost = {self.best_cost}')
+
+                    sorted_indices = np.argsort(fitnesses)
+                    elites_indices = sorted_indices[:self.elite_size]
+                    new_population = [self._copy_individual(population[idx]) for idx in elites_indices]
+                    remaining_slots = self.population_size - self.elite_size
+                    for _ in range(remaining_slots // 2):
+                        parent1, parent2 = self._roulette_wheel_selection(population, fitnesses)
+                        child1, child2 = self._crossover(parent1, parent2)
+                        self._mutate(child1)
+                        self._mutate(child2)
+                        new_population.extend([child1, child2])
+                    population = new_population
+
+                    self.log.append({
+                        'generation': i + 1,
+                        'iter_worst_cost': float(np.max(fitnesses)),
+                        'iter_best_cost': current_best_cost,
+                        'iter_avg_cost': float(np.mean(fitnesses)),
+                        'std_cost': float(np.std(fitnesses)),
+                        'best_cost': self.best_cost,
+                    })
+
+                    if early_stopper.check(self.best_cost):
+                        break
 
         return self._best_main_routes(self.best_individual), self._individual_to_list(self.best_individual)
