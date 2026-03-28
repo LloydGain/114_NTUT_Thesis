@@ -5,27 +5,34 @@ from config import config
 from models.route_manager import RouteManager
 from solvers.vnd import VND
 from utils.early_stopper import EarlyStopper
-from solvers.base_aco import BaseACO
 
-class SupportLinePlanningACO(BaseACO):
+class SupportLinePlanningACO:
     """
     Notes:
         Ant Colony Optimization for Support Line Planning.
     """
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=None, iterations=1, alpha=1, beta=1, gamma=1, rho=0.5, q=1, q0=0.8, early_stop_patience=10, support_capacity=7.2, vehicle_cost=2000):
-        super().__init__(iterations, alpha, beta, rho, q, early_stop_patience)
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=None, iterations=1, alpha=1, beta=1, rho=0.5, q=1, q0=0.8, early_stop_patience=10, support_capacity=7.2, vehicle_cost=2000):
+        self.dc = config.DC_CONFIG
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
-        self.dc = config.DC_CONFIG
         self.num_ants = num_ants if num_ants is not None else len(remaining_stores)
         self.store_count = len(remaining_stores)
-        self.gamma = gamma
-        self.tau0 = 0
+        self.iterations = iterations
+        self.alpha = alpha
+        self.beta = beta
+        self.rho = rho
         self.q = q
+        self.tau0 = 0
         self.q0 = q0
+        self.early_stop_patience = early_stop_patience
+        self.pheromone_matrix = {}
         self.support_capacity = support_capacity
         self.vehicle_cost = vehicle_cost
+        self.time_limit_per_route = 5 * 60 * 60
+        self.log = []
+        self.best_cost = float('inf')
+        self.best_solution = None
 
         self.vnd = VND(self.distance_matrix, self.time_matrix)
 
@@ -243,10 +250,10 @@ class SupportLinePlanningACO(BaseACO):
             if not stores:
                 continue
 
-            total_cost += self.distance_matrix['dc'][stores[0]['store_id']]
+            total_cost += self.distance_matrix[self.dc['store_id']][stores[0]['store_id']]
             for i in range(len(stores) - 1):
                 total_cost += self.distance_matrix[stores[i]['store_id']][stores[i+1]['store_id']]
-            total_cost += self.distance_matrix[stores[-1]['store_id']]['dc']
+            total_cost += self.distance_matrix[stores[-1]['store_id']][self.dc['store_id']]
 
         total_cost += len(solution) * self.vehicle_cost
 
@@ -266,14 +273,71 @@ class SupportLinePlanningACO(BaseACO):
         """
         initial_pheromone = self.q / cost
         self.tau0 = initial_pheromone
+        self.pheromone_matrix[self.dc['store_id']] = {
+            store['store_id']: initial_pheromone for store in self.remaining_stores
+        }
         for s in self.remaining_stores:
-            self.pheromone_matrix[self.dc['store_id']] = {
-                store['store_id']: initial_pheromone for store in self.remaining_stores
-            }
             self.pheromone_matrix[s['store_id']] = {
                 store['store_id']: initial_pheromone for store in self.remaining_stores if store['store_id'] != s['store_id']
             }
-            self.pheromone_matrix[s['store_id']]['dc'] = initial_pheromone
+            self.pheromone_matrix[s['store_id']][self.dc['store_id']] = initial_pheromone
+
+
+    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
+        """
+        Notes:
+            Check if a given arrival time within store time window.
+
+        Args:
+            arrival_time (datetime): Arrival time.
+            earliest_time (datetime): Earliest time.
+            latest_time (datetime): Latest time.
+
+        Returns:
+            bool: True if arrival time within time window, False otherwise.
+        """
+        return earliest_time <= arrival_time <= latest_time
+
+
+    def _is_within_time_limit(self, duration):
+        """
+        Notes:
+            Check route duration is within time limit per route.
+
+        Args:
+            duration (int): Route duration.
+
+        Returns:
+            bool: True if route duration within time limit, False otherwise.
+        """
+        return duration <= self.time_limit_per_route
+
+
+    def _log_iteration(self, i, ant_costs, iter_best_cost, iter_worst_cost=None):
+        """
+        Notes:
+            Log iteration results.
+
+        Args:
+            i (int): Iteration number.
+            ant_costs (list): Ant costs.
+            iter_best_cost (float): Iteration best cost.
+            iter_worst_cost (float, optional): Iteration worst cost. Defaults to None.
+
+        Returns:
+            None.
+        """
+        if iter_worst_cost is None:
+            iter_worst_cost = float(np.max(ant_costs))
+
+        self.log.append({
+            'iteration': i + 1,
+            'iter_worst_cost': iter_worst_cost,
+            'iter_best_cost': iter_best_cost,
+            'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
+            'std_cost': float(np.std(ant_costs)),
+            'best_cost': self.best_cost,
+        })
 
 
     def _check_volume_constraint(self, route_volumn, store):
@@ -315,8 +379,8 @@ class SupportLinePlanningACO(BaseACO):
         earliest_time = datetime.fromisoformat(store['earliest_time'])
         latest_time = datetime.fromisoformat(store['latest_time'])
 
-        pre_to_dc_time = self.time_matrix[prev_id]['dc']
-        cur_to_dc_time = self.time_matrix[cur_id]['dc']
+        pre_to_dc_time = self.time_matrix[prev_id][self.dc['store_id']]
+        cur_to_dc_time = self.time_matrix[cur_id][self.dc['store_id']]
         cur_dwell_time = store['dwell_time']
         new_duration = duration + (pre_to_cur_time + cur_to_dc_time - pre_to_dc_time) + cur_dwell_time
 
@@ -512,14 +576,17 @@ class SupportLinePlanningACO(BaseACO):
         self._initial_pheromone(1)
         greedy_solution = self._greedy_solution()
         greedy_cost = self._cost_function(greedy_solution)
-
-        self._initial_pheromone(greedy_cost)
         self.best_cost = greedy_cost
         self.best_solution = greedy_solution
 
+        if self.iterations == 0:
+            return self.best_cost, self.best_solution
+
         self._log_iteration(0, [greedy_cost], greedy_cost, greedy_cost)
 
+        self._initial_pheromone(greedy_cost)
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
+        
         for i in range(self.iterations):
             ant_costs = []
             iter_best_cost = float('inf')
@@ -543,7 +610,6 @@ class SupportLinePlanningACO(BaseACO):
 
             self._evaporate_pheromone()
             self._deposit_global_pheromone(optimized_routes, optimized_cost)
-
             self._log_iteration(i, ant_costs, optimized_cost)
 
             if early_stopper.check(self.best_cost):

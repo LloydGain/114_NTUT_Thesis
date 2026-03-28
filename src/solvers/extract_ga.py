@@ -1,6 +1,7 @@
 import hashlib
 import numpy as np
 from multiprocessing import Pool, cpu_count, Manager
+from multiprocessing import TimeoutError as MPTimeoutError
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
@@ -206,7 +207,7 @@ class StoreExtractionGA:
 
             selected_store = stores[idx_to_remove]
             selected_stores.append(selected_store)
-            route_manager.remove_store(route_id, selected_store)
+            route_manager.remove_store(route_id, selected_store, fast_update=True)
 
         return selected_stores
 
@@ -235,7 +236,7 @@ class StoreExtractionGA:
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
 
         for store in new_extracted_stores:
-            route_manager.remove_store(route_id, store)
+            route_manager.remove_store(route_id, store, fast_update=True)
 
         put_back_id = store_to_put_back['store_id']
 
@@ -255,7 +256,7 @@ class StoreExtractionGA:
             selected_store = current_stores[idx_to_remove]
 
             new_extracted_stores.append(selected_store)
-            route_manager.remove_store(route_id, selected_store)
+            route_manager.remove_store(route_id, selected_store, fast_update=True)
 
         return new_extracted_stores
 
@@ -366,7 +367,7 @@ class StoreExtractionGA:
         Returns:
             tuple: Two selected parents (individuals).
         """
-        inverse_fitnesses = 1 / np.array(fitnesses)
+        inverse_fitnesses = 1 / np.array([min(f, 1e-12) for f in fitnesses])
         total_inverse_fitness = sum(inverse_fitnesses)
         probabilities = np.array(inverse_fitnesses) / total_inverse_fitness
         parent1_idx = np.random.choice(len(fitnesses), p=probabilities)
@@ -481,7 +482,7 @@ class StoreExtractionGA:
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
             shared_cache = manager.dict()
-            with Pool(processes=cpu_count(), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+            with Pool(processes=max(1, cpu_count() - 2), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
                 for i in range(self.generations):
                     individual_keys = []
                     unique_tasks_to_run = []
@@ -495,7 +496,14 @@ class StoreExtractionGA:
                             unique_tasks_to_run.append((store_list, shared_cache, key))
 
                     if unique_tasks_to_run:
-                        pool.map(fitness_worker, unique_tasks_to_run, chunksize=4)
+                        try:
+                            pool.map_async(fitness_worker, unique_tasks_to_run, chunksize=max(1, len(unique_tasks_to_run) // (cpu_count() - 2) * 2)).get(timeout=120)
+                        except MPTimeoutError:
+                            print('Timeout error')
+                            for _, _, key in unique_tasks_to_run:
+                                if key not in shared_cache:
+                                    print(f"Skipping individual {key}")
+                                    shared_cache[key] = float('inf')
 
                     fitnesses = []
                     for key in individual_keys:

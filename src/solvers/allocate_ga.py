@@ -5,6 +5,7 @@ import numpy as np
 from config import config
 from datetime import datetime, timedelta
 from multiprocessing import Pool, cpu_count, Manager
+from multiprocessing import TimeoutError as MPTimeoutError
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
@@ -12,8 +13,9 @@ from solvers.support_line_aco import SupportLinePlanningACO
 ALLOC_ROUTES = None
 ALLOC_DIST = None
 ALLOC_TIME = None
+ALLOC_GA_INSTANCE = None
 
-def init_alloc_worker(main_routes, distance_matrix, time_matrix):
+def init_alloc_worker(main_routes, distance_matrix, time_matrix, ga_instance):
     """
     Notes:
         Initializes global variables for a worker process in parallel fitness evaluation.
@@ -22,14 +24,16 @@ def init_alloc_worker(main_routes, distance_matrix, time_matrix):
         main_routes (dict): Main routes information, e.g., {route_id: route_info}.
         distance_matrix (json): 2D matrix of distances between stores.
         time_matrix (json): 2D matrix of travel times between stores.
+        ga_instance (StoreAllocationGA): GA instance.
 
     Returns:
         None
     """
-    global ALLOC_ROUTES, ALLOC_DIST, ALLOC_TIME
+    global ALLOC_ROUTES, ALLOC_DIST, ALLOC_TIME, ALLOC_GA_INSTANCE
     ALLOC_ROUTES = main_routes
     ALLOC_DIST = distance_matrix
     ALLOC_TIME = time_matrix
+    ALLOC_GA_INSTANCE = ga_instance
 
 
 def alloc_fitness_worker(args):
@@ -43,12 +47,13 @@ def alloc_fitness_worker(args):
     Returns:
         float: The total cost of the allocation, as returned by StoreAllocationACO.
     """
-    chromo, key, shared_cache, ga_instance = args
+    chromo, key, shared_cache = args
 
     if key in shared_cache:
         return shared_cache[key]
 
-    cost, routes, support = ga_instance._evaluate_individual(chromo)
+    ga = ALLOC_GA_INSTANCE
+    cost, routes, support = ga._evaluate_individual(chromo)
 
     result = {
         'cost': cost,
@@ -213,7 +218,7 @@ class StoreAllocationGA:
         Returns:
             bool: True if arrival time within time window, False otherwise.
         """
-        return earliest_time <= arrival_time <= latest_time
+        return earliest_time <= arrival_time and arrival_time <= latest_time
 
 
     def _is_within_time_limit(self, duration):
@@ -228,6 +233,52 @@ class StoreAllocationGA:
             bool: True if route duration within time limit, False otherwise.
         """
         return duration <= self.time_limit_per_route
+
+
+    def _check_time_constraint(self, route, pos, store):
+        """
+        Notes:
+            Check if adding a store violates the time window constraint.
+
+        Args:
+            route (list): Current route (list of stores).
+            pos (int): Position to insert the store.
+            store (dict): Store information.
+
+        Returns:
+            bool: True if time window constraint is satisfied, False otherwise.
+        """
+        prev_store = route[pos - 1]
+        travel_time = self.time_matrix[prev_store['store_id']][store['store_id']]
+        pre_dwell = prev_store['dwell_time']
+        pre_pred_time = datetime.fromisoformat(prev_store['pred_time'])
+        arrival_time = pre_pred_time + timedelta(seconds=travel_time + pre_dwell)
+        arrival_time = arrival_time.replace(microsecond=0)
+        earliest_time = datetime.fromisoformat(store['earliest_time'])
+        latest_time = datetime.fromisoformat(store['latest_time'])
+
+        if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
+            return False
+
+        current_time = arrival_time + timedelta(seconds=store['dwell_time'])
+    
+        for i in range(pos, len(route) - 1):
+            curr_store = route[i]
+            travel = self.time_matrix[route[i-1]['store_id']][curr_store['store_id']]
+            arrival = current_time + timedelta(seconds=travel)
+            earliest_curr = datetime.fromisoformat(curr_store['earliest_time'])
+            latest_curr = datetime.fromisoformat(curr_store['latest_time'])
+            if not self._is_within_time_window(arrival, earliest_curr, latest_curr):
+                return False
+            current_time = arrival + timedelta(seconds=curr_store['dwell_time'])
+    
+        last_store = route[-2]
+        travel_back = self.time_matrix[last_store['store_id']]['dc']
+        total_duration = current_time + timedelta(seconds=travel_back)
+        if not self._is_within_time_limit(total_duration.total_seconds()):
+            return False
+
+        return True
 
 
     def _check_time_constraint(self, route, pos, store):
@@ -375,7 +426,6 @@ class StoreAllocationGA:
                 route_manager.insert_store(store, target, pos)
             else:
                 support_pool.append(store)
-                # individual[i] = 'SUPPORT'
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
         support_cost, _ = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
@@ -461,7 +511,7 @@ class StoreAllocationGA:
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
             shared_cache = manager.dict()
-            with Pool(processes=cpu_count(), initializer=init_alloc_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+            with Pool(processes=max(1, cpu_count() - 2), initializer=init_alloc_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix, self)) as pool:
                 for gen_idx in range(self.generations):
                     unique_tasks = []
                     individual_keys = []
@@ -470,11 +520,18 @@ class StoreAllocationGA:
                         key = self._encode_individual(chromo)
                         individual_keys.append(key)
                         if key not in shared_cache:
-                            unique_tasks.append((chromo, key, shared_cache, self))
+                            unique_tasks.append((chromo, key, shared_cache))
 
-                    if unique_tasks:
-                        pool.map(alloc_fitness_worker, unique_tasks, chunksize=4)
-                    
+                    if len(unique_tasks) > 0:
+                        try:
+                            pool.map_async(alloc_fitness_worker, unique_tasks, chunksize=max(1, len(unique_tasks) // (cpu_count() - 2) * 2)).get(timeout=120)
+                        except MPTimeoutError:
+                            print('Timeout error')
+                            for _, _, key in unique_tasks:
+                                if key not in shared_cache:
+                                    print(f"Skipping individual {key}")
+                                    shared_cache[key] = float('inf')
+
                     fitnesses = []
                     evaluated_pop = []
                     for i, chromo in enumerate(population):
@@ -511,7 +568,7 @@ class StoreAllocationGA:
                         break
 
                     elites = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
-                    weights = [1.0 / (ind['cost'] + 1e-6) for ind in evaluated_pop]
+                    weights = [1.0 / min(ind['cost'], 1e-12) for ind in evaluated_pop]
 
                     childrens = []
                     while len(childrens) < (self.population_size - self.elite_size):

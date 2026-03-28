@@ -91,11 +91,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 100,
+            'population_size': 200,
             'elite_rate': 0.1,
             'generations': 1000,
-            'cross_rate': 0.9,
-            'mutation_rate': 0.01,
+            'cross_rate': 1.0,
+            'mutation_rate': 0.05,
             'early_stop_patience': 50
         },
         'store_allocation_ga': {
@@ -110,11 +110,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'iterations': 1000,
             'alpha': 1,
             'beta': 1,
-            'gamma': 1,
             'rho': 0.5,
             'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 50,
+            'early_stop_patience': 30,
             'support_capacity': 7.2,
             'vehicle_cost': 2000
         },
@@ -142,15 +141,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 1
         },
         'support_line_aco': {
-            'num_ants': 1,
-            'iterations': 1,
+            'num_ants': 2,
+            'iterations': 2,
             'alpha': 1,
             'beta': 1,
-            'gamma': 1,
             'rho': 0.1,
             'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 1,
+            'early_stop_patience': 2,
             'support_capacity': 7.2,
             'vehicle_cost': 2000
         },
@@ -401,5 +399,9 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    args = parse_args()
-    optimized_cost = main(args.file_date, args.seed, args.test, args.google, args.comment)
+    try:
+        args = parse_args()
+        optimized_cost = main(args.file_date, args.seed, args.test, args.google, args.comment)
+    except KeyboardInterrupt:
+        print("Execution interrupted by user.")
+        exit(1)

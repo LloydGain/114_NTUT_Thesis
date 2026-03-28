@@ -158,22 +158,20 @@ class VND:
         Returns:
             tuple: (best_stores (list), best_cost (float))
         """
-        best_stores = stores
-        best_cost = cost
         n = len(stores)
+
         for i in range(n-1):
             for j in range(i+1, n):
-                new_route_stores = best_stores[:]
-                new_route_stores[i:j+1] = new_route_stores[i:j+1][::-1]
+                new_route = stores[:]
+                new_route[i:j+1] = list(reversed(new_route[i:j+1]))
+                
+                new_dist = self._calculate_route_distance(new_route)
 
-                new_cost = self._calculate_route_distance(new_route_stores)
+                if new_dist < cost:
+                    if self._check_time_constraint(new_route):
+                        return new_route, new_dist
 
-                if new_cost < best_cost:
-                    if self._check_time_constraint(new_route_stores):
-                        best_cost = new_cost
-                        best_stores = new_route_stores
-
-        return best_stores, best_cost
+        return stores, cost
 
 
     def _relocate(self, routes, route1_id, route2_id):
@@ -192,14 +190,7 @@ class VND:
         r2 = routes[route2_id]
         r1_stores = routes[route1_id]['stores']
         r2_stores = routes[route2_id]['stores']
-
-        moved_store = None
-        moved_position = -1
-        best_reduction = 0
-
-        base_cost_r1 = self._calculate_route_distance(r1_stores)
-        base_cost_r2 = self._calculate_route_distance(r2_stores)
-        base_total_cost = base_cost_r1 + base_cost_r2
+        depot = self.dc['store_id']
 
         # -----------------------------------------------
         if not route2_id.startswith('1'):
@@ -211,26 +202,41 @@ class VND:
             if not self._check_capacity_constraint(r2, r1_store):
                 continue
 
-            for idy, _ in enumerate(r2_stores):
-                if len(r1_stores) == 1:
-                    new_r1 = []
+            s_id = r1_store['store_id']
+            prev_i = depot if idx == 0 else r1_stores[idx-1]['store_id']
+            next_i = depot if idx == len(r1_stores)-1 else r1_stores[idx+1]['store_id']
+
+            delta_remove = (
+                self.distance_matrix[prev_i][next_i]
+                - self.distance_matrix[prev_i][s_id]
+                - self.distance_matrix[s_id][next_i]
+            )
+
+            for idy in range(len(r2_stores) + 1):
+                prev_j = depot if idy == 0 else r2_stores[idy-1]['store_id']
+                next_j = depot if idy == len(r2_stores) else r2_stores[idy]['store_id']
+
+                delta_insert = (
+                    self.distance_matrix[prev_j][s_id]
+                    + self.distance_matrix[s_id][next_j]
+                    - self.distance_matrix[prev_j][next_j]
+                )
+
+                diff = delta_remove + delta_insert
+
+                if diff < -1e-6:
+                    if len(r1_stores) == 1:
+                        new_r1 = []
+                    else:
+                        new_r1 = r1_stores[:idx] + r1_stores[idx+1:]
+                    
                     new_r2 = r2_stores[:idy] + [r1_store] + r2_stores[idy:]
-                else:
-                    new_r1 = r1_stores[:idx] + r1_stores[idx+1:]
-                    new_r2 = r2_stores[:idy] + [r1_store] + r2_stores[idy:]
 
-                new_total_cost = self._calculate_route_distance(new_r1) + self._calculate_route_distance(new_r2)
-
-                diff = new_total_cost - base_total_cost
-
-                if diff < best_reduction:
                     if self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2):
                         if self._check_order_principle(route2_id, new_r2):
-                            best_reduction = diff
-                            moved_store = r1_store
-                            moved_position = idy
+                            return r1_store, idy
 
-        return moved_store, moved_position
+        return None, -1
 
 
     def _swap(self, routes, route1_id, route2_id):
@@ -252,14 +258,9 @@ class VND:
         r2_stores = r2['stores']
         cap1 = r1['dc']['max_capacity']
         cap2 = r2['dc']['max_capacity']
-
-        best_reduction = 0
-        best_pair = (None, None)
-
-        base_cost = (
-            self._calculate_route_distance(r1_stores)
-            + self._calculate_route_distance(r2_stores)
-        )
+        
+        current_vol1 = sum(s['volume'] for s in r1_stores)
+        current_vol2 = sum(s['volume'] for s in r2_stores)
 
         for i, s1 in enumerate(r1_stores):
             for j, s2 in enumerate(r2_stores):
@@ -269,39 +270,49 @@ class VND:
                     continue
                 # -----------------------------------------------
 
-                vol1 = sum(s['volume'] for s in r1_stores) - s1['volume'] + s2['volume']
-                vol2 = sum(s['volume'] for s in r2_stores) - s2['volume'] + s1['volume']
-
+                vol1 = current_vol1 - s1['volume'] + s2['volume']
+                vol2 = current_vol2 - s2['volume'] + s1['volume']
                 if vol1 > cap1 or vol2 > cap2:
                     continue
 
-                new_r1 = r1_stores[:]
-                new_r2 = r2_stores[:]
-                new_r1[i] = s2
-                new_r2[j] = s1
+                prev1 = self.dc['store_id'] if i == 0 else r1_stores[i-1]['store_id']
+                next1 = self.dc['store_id'] if i == len(r1_stores) - 1 else r1_stores[i+1]['store_id']
+                prev2 = self.dc['store_id'] if j == 0 else r2_stores[j-1]['store_id']
+                next2 = self.dc['store_id'] if j == len(r2_stores) - 1 else r2_stores[j+1]['store_id']
+                s1_id = s1['store_id']
+                s2_id = s2['store_id']
 
-                if not self._check_time_constraint(new_r1):
-                    continue
-                if not self._check_time_constraint(new_r2):
-                    continue
+                delta = (
+                    - self.distance_matrix[prev1][s1_id]
+                    - self.distance_matrix[s1_id][next1]
+                    - self.distance_matrix[prev2][s2_id]
+                    - self.distance_matrix[s2_id][next2]
 
-                if not self._check_order_principle(route1_id, new_r1):
-                    continue
-                if not self._check_order_principle(route2_id, new_r2):
-                    continue
+                    + self.distance_matrix[prev1][s2_id]
+                    + self.distance_matrix[s2_id][next1]
 
-                new_cost = (
-                    self._calculate_route_distance(new_r1)
-                    + self._calculate_route_distance(new_r2)
+                    + self.distance_matrix[prev2][s1_id]
+                    + self.distance_matrix[s1_id][next2]
                 )
 
-                diff = new_cost - base_cost
+                if delta < -1e-6:
+                    new_r1 = r1_stores[:]
+                    new_r2 = r2_stores[:]
+                    new_r1[i] = s2
+                    new_r2[j] = s1
+                    if not self._check_time_constraint(new_r1):
+                        continue
+                    if not self._check_time_constraint(new_r2):
+                        continue
 
-                if diff < best_reduction:
-                    best_reduction = diff
-                    best_pair = (s1, s2)
+                    if not self._check_order_principle(route1_id, new_r1):
+                        continue
+                    if not self._check_order_principle(route2_id, new_r2):
+                        continue
+                    
+                    return s1, s2
 
-        return best_pair
+        return None, None
 
 
     def _neighborhood_intra(self, routes, route_manager):
@@ -310,7 +321,7 @@ class VND:
             Intra-route optimization using 2-opt.
 
         Args:
-            routes_info (dict): Routes information.
+            routes (dict): Routes information.
             route_manager (RouteManager): Route manager.
 
         Returns:
@@ -320,7 +331,7 @@ class VND:
             if not route_id.startswith('1'):
                 continue
 
-            original_dist = route_data['dc']['distance']
+            original_dist = self._calculate_route_distance(route_data['stores'])
             new_stores, new_dist = self._two_opt(route_data['stores'], original_dist)
 
             if new_dist < original_dist:
@@ -335,7 +346,7 @@ class VND:
             Inter-route optimization using relocate and swap.
 
         Args:
-            routes_info (dict): Routes information.
+            routes (dict): Routes information.
             route_manager (RouteManager): Route manager.
 
         Returns:
@@ -353,10 +364,17 @@ class VND:
                     route_manager.move_store_to_route(r1_id, moved_store, r2_id, position)
                     return True
 
-        for r1_idx, r1_id in enumerate(route_ids):
-            for r2_idx, r2_id in enumerate(route_ids):
-                if r1_idx <= r2_idx:
+        visited_pairs = set()
+        for i in range(len(route_ids)):
+            for j in range(i + 1, len(route_ids)):
+                r1_id = route_ids[i]
+                r2_id = route_ids[j]
+                key = (r1_id, r2_id)
+
+                if key in visited_pairs:
                     continue
+
+                visited_pairs.add(key)
 
                 s1, s2 = self._swap(routes, r1_id, r2_id)
                 if s1 is not None:

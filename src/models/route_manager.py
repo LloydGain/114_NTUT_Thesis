@@ -37,7 +37,7 @@ class RouteManager:
         self._update_route_info(route)
 
 
-    def insert_store(self, store, route_id, position):
+    def insert_store(self, store, route_id, position, fast_update=False):
         """
         Notes:
             Insert a store at a specific position in the route and update route info.
@@ -46,6 +46,7 @@ class RouteManager:
             store (dict): Store information.
             route_id (str): Route ID.
             position (int): Position to insert the store.
+            fast_update (bool): Skip cascaded recalculations if True.
 
         Returns:
             None
@@ -56,10 +57,14 @@ class RouteManager:
             return
 
         route['stores'].insert(position, store)
-        self._update_route_info(route)
+        if fast_update:
+            self._update_route_volume(route)
+            self._update_route_load_rate(route)
+        else:
+            self._update_route_info(route)
 
 
-    def remove_store(self, route_id, removed_store):
+    def remove_store(self, route_id, removed_store, fast_update=False):
         """
         Notes:
             Remove the store from the route and update route info.
@@ -67,6 +72,7 @@ class RouteManager:
         Args:
             route_id (str): Route ID.
             removed_store (dict): Removed store information.
+            fast_update (bool): Skip cascaded recalculations if True.
 
         Returns:
             None
@@ -75,7 +81,11 @@ class RouteManager:
             route = self.routes_info[route_id]
             stores = self.routes_info[route_id]['stores']
             self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] != removed_store['route_code']]
-            self._update_route_info(route)
+            if fast_update:
+                self._update_route_volume(route)
+                self._update_route_load_rate(route)
+            else:
+                self._update_route_info(route)
 
 
     def _get_max_capacity_by_route_id(self, route_id):
@@ -212,7 +222,7 @@ class RouteManager:
         self._update_route_info(route)
 
 
-    def remove_stores(self, route_id, removed_stores):
+    def remove_stores(self, route_id, removed_stores, fast_update=False):
         """
         Notes:
             Remove multiple stores from the route and update route info.
@@ -220,6 +230,7 @@ class RouteManager:
         Args:
             route_id (str): Route ID.
             removed_stores (list): List of removed store information.
+            fast_update (bool): Skip cascaded recalculations if True.
 
         Returns:
             None
@@ -229,7 +240,11 @@ class RouteManager:
             stores = self.routes_info[route_id]['stores']
             removed_route_codes = {store['route_code'] for store in removed_stores}
             self.routes_info[route_id]['stores'] = [store for store in stores if store['route_code'] not in removed_route_codes]
-            self._update_route_info(route)
+            if fast_update:
+                self._update_route_volume(route)
+                self._update_route_load_rate(route)
+            else:
+                self._update_route_info(route)
 
 
     def _remove_unused_routes(self):
