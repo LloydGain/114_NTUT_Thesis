@@ -6,9 +6,103 @@ from config import config
 from datetime import datetime, timedelta
 from multiprocessing import Pool, cpu_count, Manager
 from multiprocessing import TimeoutError as MPTimeoutError
+from numba import njit
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.support_line_ga import SupportLinePlanningGA
+
+@njit(cache=True)
+def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix, 
+                                dwell_arr, earliest_arr, latest_arr, first_node_pred_time_epoch, time_limit):
+    # full_route: [dc_idx, store1, ..., storeN, dc_idx]
+    
+    # Check duration first:
+    duration_sec = time_matrix[dc_idx, full_route[1]] + time_matrix[full_route[-2], dc_idx]
+    
+    # For arrival times: starts from first actual store (index 1)
+    curr_pred_time = first_node_pred_time_epoch
+    
+    for i in range(2, len(full_route) - 1):
+        prev_idx = full_route[i - 1]
+        curr_idx = full_route[i]
+        
+        travel_time = time_matrix[prev_idx, curr_idx]
+        pre_dwell = dwell_arr[prev_idx]
+        
+        arrival_time = curr_pred_time + travel_time + pre_dwell
+        
+        if arrival_time < earliest_arr[curr_idx] or arrival_time > latest_arr[curr_idx]:
+            return False
+            
+        duration_sec += travel_time + pre_dwell
+        curr_pred_time = arrival_time
+        
+    if duration_sec > time_limit:
+        return False
+        
+    return True
+
+@njit(cache=True)
+def _njit_get_store_insertion_cost_pos(store_idx, route_stores, dc_idx, dc_region, route_vol, route_cap,
+                                       store_region, store_vol, dist_matrix, time_matrix,
+                                       dwell_arr, earliest_arr, latest_arr, first_pred_epoch, time_limit):
+                                       
+    # Region constraint
+    if dc_region == 0 and store_region == 1: return -1.0, -1
+    if dc_region == 1 and store_region == 0: return -1.0, -1
+    if dc_region == 2 and store_region == 3: return -1.0, -1
+    if dc_region == 3 and store_region == 2: return -1.0, -1
+    
+    # Capacity constraint
+    if route_vol + store_vol > route_cap:
+        return -1.0, -1
+        
+    L = len(route_stores)
+    best_pos = -1
+    min_cost = 1e12
+    
+    # Construct base full route [DC, ..., DC]
+    full_route = np.zeros(L + 2, dtype=np.int64)
+    full_route[0] = dc_idx
+    full_route[L+1] = dc_idx
+    for i in range(L):
+        full_route[i+1] = route_stores[i]
+        
+    # Test insertions at pos = 1..L+1 (since POS corresponds to inserting before existing full_route[pos])
+    test_route = np.zeros(L + 3, dtype=np.int64)
+    
+    for pos in range(1, len(full_route)):
+        prev_idx = full_route[pos - 1]
+        next_idx = full_route[pos]
+        
+        insert_cost = dist_matrix[prev_idx, store_idx] + dist_matrix[store_idx, next_idx] - dist_matrix[prev_idx, next_idx]
+        
+        if 0 < insert_cost < min_cost:
+            # Build test route
+            for i in range(pos):
+                test_route[i] = full_route[i]
+            test_route[pos] = store_idx
+            for i in range(pos, len(full_route)):
+                test_route[i+1] = full_route[i]
+                
+            # If the original route had no stores, the first_pred_epoch doesn't exist.
+            # However, logic in python ensures we parse `route[1]` which IS the store we just inserted.
+            if _njit_check_time_constraint(test_route, dc_idx, dist_matrix, time_matrix, 
+                                           dwell_arr, earliest_arr, latest_arr, first_pred_epoch, time_limit):
+                best_pos = pos - 1
+                min_cost = insert_cost
+                
+    return min_cost, best_pos
+
+# ---------------- NUMBA WARMUP ----------------
+try:
+    _njit_check_time_constraint(np.array([0, 0, 0], dtype=np.int64), 0, np.zeros((1, 1)), np.zeros((1, 1)), np.array([0.0]), np.array([0.0]), np.array([0.0]), 0.0, 10.0)
+    _njit_get_store_insertion_cost_pos(0, np.array([0], dtype=np.int64), 0, 0, 0.0, 10.0, 0, 0.0, np.zeros((1, 1)), np.zeros((1, 1)), 
+                                       np.array([0.0]), np.array([0.0]), np.array([0.0]), 0.0, 10.0)
+except Exception:
+    pass
+# -----------------------------------------------
 
 ALLOC_ROUTES = None
 ALLOC_DIST = None
@@ -16,37 +110,13 @@ ALLOC_TIME = None
 ALLOC_GA_INSTANCE = None
 
 def init_alloc_worker(main_routes, distance_matrix, time_matrix, ga_instance):
-    """
-    Notes:
-        Initializes global variables for a worker process in parallel fitness evaluation.
-
-    Args:
-        main_routes (dict): Main routes information, e.g., {route_id: route_info}.
-        distance_matrix (json): 2D matrix of distances between stores.
-        time_matrix (json): 2D matrix of travel times between stores.
-        ga_instance (StoreAllocationGA): GA instance.
-
-    Returns:
-        None
-    """
     global ALLOC_ROUTES, ALLOC_DIST, ALLOC_TIME, ALLOC_GA_INSTANCE
     ALLOC_ROUTES = main_routes
     ALLOC_DIST = distance_matrix
     ALLOC_TIME = time_matrix
     ALLOC_GA_INSTANCE = ga_instance
 
-
 def alloc_fitness_worker(args):
-    """
-    Notes:
-        Computes the fitness of a given set of extracted stores using GA.
-
-    Args:
-        args (list): individual.
-
-    Returns:
-        float: The total cost of the allocation, as returned by StoreAllocationACO.
-    """
     chromo, key, shared_cache = args
 
     if key in shared_cache:
@@ -64,11 +134,12 @@ def alloc_fitness_worker(args):
     shared_cache[key] = result
     return result
 
-
 class StoreAllocationGA:
     """
-    Store Allocation using Genetic Algorithm (GA) with Strict Time Window & Capacity Constraints.
+    Store Allocation using Genetic Algorithm (GA) with Strict Time Window & Capacity Constraints (Numba Optimized).
     """
+    _cached_mappings = None
+
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, population_size=50, elite_rate=0.1, generations=50, cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
@@ -87,20 +158,110 @@ class StoreAllocationGA:
         self.best_solution = None
         self.best_remaining_solution = None
         self.log = []
+        
+        self._init_numpy_mappings()
         self.remaining_stores = self._sort_stores_by_insertion_cost(remaining_stores)
 
+    def _init_numpy_mappings(self):
+        """Map generic dict data to isolated numpy arrays for njit evaluation calls."""
+        if StoreAllocationGA._cached_mappings is not None:
+            self.s2i, self.i2s, self.np_dist, self.np_time, self.np_volume, self.np_dwell, \
+            self.np_earliest, self.np_latest, self.np_region = StoreAllocationGA._cached_mappings
+            return
+
+        self.s2i = {self.dc['store_id']: 0}
+        self.i2s = {0: self.dc}
+        idx = 1
+        # Include ALL stores from main routes AND remaining stores
+        all_stores = list(self.remaining_stores)
+        for r in self.main_routes.values():
+            all_stores.extend(r['stores'])
+            
+        for s in all_stores:
+            if s['store_id'] not in self.s2i:
+                self.s2i[s['store_id']] = idx
+                self.i2s[idx] = s
+                idx += 1
+                
+        n = len(self.s2i)
+        self.np_dist = np.zeros((n, n), dtype=np.float64)
+        self.np_time = np.zeros((n, n), dtype=np.float64)
+        self.np_volume = np.zeros(n, dtype=np.float64)
+        self.np_dwell = np.zeros(n, dtype=np.float64)
+        self.np_earliest = np.zeros(n, dtype=np.float64)
+        self.np_latest = np.zeros(n, dtype=np.float64)
+        self.np_region = np.full(n, -1, dtype=np.int64)
+        
+        region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        for i in range(1, n):
+            s_i = self.i2s[i]
+            s_i_id = s_i['store_id']
+            self.np_volume[i] = s_i.get('volume', 0.0)
+            self.np_dwell[i] = float(s_i.get('dwell_time', 0))
+            self.np_earliest[i] = float(int(datetime.fromisoformat(s_i['earliest_time']).timestamp()))
+            self.np_latest[i] = float(int(datetime.fromisoformat(s_i['latest_time']).timestamp()))
+            self.np_region[i] = region_map.get(s_i.get('region', ''), -1)
+            
+            for j in range(n):
+                s_j_id = self.i2s[j]['store_id']
+                if s_i_id in self.distance_matrix and s_j_id in self.distance_matrix[s_i_id]:
+                    self.np_dist[i, j] = self.distance_matrix[s_i_id][s_j_id]
+                if s_i_id in self.time_matrix and s_j_id in self.time_matrix[s_i_id]:
+                    self.np_time[i, j] = self.time_matrix[s_i_id][s_j_id]
+                    
+        # Fix DC -> elements
+        for j in range(n):
+            s_j_id = self.i2s[j]['store_id']
+            if self.dc['store_id'] in self.distance_matrix and s_j_id in self.distance_matrix[self.dc['store_id']]:
+                self.np_dist[0, j] = self.distance_matrix[self.dc['store_id']][s_j_id]
+            if self.dc['store_id'] in self.time_matrix and s_j_id in self.time_matrix[self.dc['store_id']]:
+                self.np_time[0, j] = self.time_matrix[self.dc['store_id']][s_j_id]
+                
+        StoreAllocationGA._cached_mappings = (
+            self.s2i, self.i2s, self.np_dist, self.np_time, self.np_volume, 
+            self.np_dwell, self.np_earliest, self.np_latest, self.np_region
+        )
+
+
+    def _get_store_insertion_cost_and_pos(self, route_info, store):
+        dc = route_info['dc']
+        stores = route_info['stores']
+        
+        store_idx = self.s2i[store['store_id']]
+        route_stores = np.array([self.s2i[s['store_id']] for s in stores], dtype=np.int64)
+        dc_region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        dc_region_int = dc_region_map.get(dc.get('region', ''), -1)
+        store_region_int = self.np_region[store_idx]
+        
+        # Calculate base pred time
+        if len(stores) > 0:
+            first_pred_epoch = float(int(datetime.fromisoformat(stores[0]['pred_time']).timestamp()))
+        else:
+            first_pred_epoch = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+            
+        cost, pos = _njit_get_store_insertion_cost_pos(
+            store_idx,
+            route_stores,
+            0,
+            dc_region_int,
+            float(dc.get('total_volume', 0)),
+            float(dc.get('max_capacity', 1e9)),
+            store_region_int,
+            float(store.get('volume', 0)),
+            self.np_dist,
+            self.np_time,
+            self.np_dwell,
+            self.np_earliest,
+            self.np_latest,
+            first_pred_epoch,
+            float(self.time_limit_per_route)
+        )
+        
+        if cost < 0:
+            return float('inf'), -1
+        return cost, pos
 
     def _sort_stores_by_insertion_cost(self, stores):
-        """
-        Notes:
-            Sorts the remaining stores based on their minimum insertion cost into any main route.
-        
-        Args:
-            stores (list): List of store dictionaries.
-            
-        Returns:
-            list: Sorted list of store dictionaries.
-        """
         temp_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
 
@@ -117,16 +278,6 @@ class StoreAllocationGA:
 
 
     def _generate_greedy_individual(self):
-        """
-        Notes:
-            Generates a greedy individual for initial population seed.
-        
-        Args:
-            None.
-            
-        Returns:
-            list: A chromosome representing the greedy solution.
-        """
         temp_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
         greedy_chromo = []
@@ -151,16 +302,6 @@ class StoreAllocationGA:
 
 
     def _copy_routes_info(self, routes):
-        """
-        Notes:
-            Creates a shallow copy of routes information.
-        
-        Args:
-            routes (dict): Original routes data.
-            
-        Returns:
-            dict: Copied routes data.
-        """
         return {
             route_id: {
                 "dc": route_data["dc"].copy(),
@@ -169,224 +310,11 @@ class StoreAllocationGA:
         }
 
 
-    def _check_region_constraint(self, store, dc):
-        """
-        Notes:
-            Check if a store is not within the opposite region.
-
-        Args:
-            store (dict): Store information.
-            dc (dict): DC information.
-
-        Returns:
-            bool: True if region constraint is satisfied, False otherwise.
-        """
-        opposite = {'north': 'south', 'south': 'north', 'east': 'west', 'west': 'east'}
-
-        if store['region'] == opposite[dc['region']]:
-            return False
-
-        return True
-
-
-    def _check_volume_constraint(self, store, route_volume, max_capacity):
-        """
-        Notes:
-            Check if adding a store violates the capacity constraint.
-
-        Args:
-            store (dict): Store information.
-            route_volume (float): Current route volume.
-            max_capacity (float): Route max capacity,
-
-        Returns:
-            bool: True if capacity constraint is satisfied, False otherwise.
-        """
-        return (route_volume + store['volume']) <= max_capacity
-
-
-    def _is_within_time_window(self, arrival_time, earliest_time, latest_time):
-        """
-        Notes:
-            Check if a given arrival time within store time window.
-
-        Args:
-            arrival_time (datetime): Arrival time.
-            earliest_time (datetime): Earliest time.
-            latest_time (datetime): Latest time.
-
-        Returns:
-            bool: True if arrival time within time window, False otherwise.
-        """
-        return earliest_time <= arrival_time and arrival_time <= latest_time
-
-
-    def _is_within_time_limit(self, duration):
-        """
-        Notes:
-            Check route duration is within time limit per route.
-
-        Args:
-            duration (int): Route duration.
-
-        Returns:
-            bool: True if route duration within time limit, False otherwise.
-        """
-        return duration <= self.time_limit_per_route
-
-
-    def _check_time_constraint(self, route, pos, store):
-        """
-        Notes:
-            Check if adding a store violates the time window constraint.
-
-        Args:
-            route (list): Current route (list of stores).
-            pos (int): Position to insert the store.
-            store (dict): Store information.
-
-        Returns:
-            bool: True if time window constraint is satisfied, False otherwise.
-        """
-        prev_store = route[pos - 1]
-        travel_time = self.time_matrix[prev_store['store_id']][store['store_id']]
-        pre_dwell = prev_store['dwell_time']
-        pre_pred_time = datetime.fromisoformat(prev_store['pred_time'])
-        arrival_time = pre_pred_time + timedelta(seconds=travel_time + pre_dwell)
-        arrival_time = arrival_time.replace(microsecond=0)
-        earliest_time = datetime.fromisoformat(store['earliest_time'])
-        latest_time = datetime.fromisoformat(store['latest_time'])
-
-        if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
-            return False
-
-        current_time = arrival_time + timedelta(seconds=store['dwell_time'])
-    
-        for i in range(pos, len(route) - 1):
-            curr_store = route[i]
-            travel = self.time_matrix[route[i-1]['store_id']][curr_store['store_id']]
-            arrival = current_time + timedelta(seconds=travel)
-            earliest_curr = datetime.fromisoformat(curr_store['earliest_time'])
-            latest_curr = datetime.fromisoformat(curr_store['latest_time'])
-            if not self._is_within_time_window(arrival, earliest_curr, latest_curr):
-                return False
-            current_time = arrival + timedelta(seconds=curr_store['dwell_time'])
-    
-        last_store = route[-2]
-        travel_back = self.time_matrix[last_store['store_id']]['dc']
-        total_duration = current_time + timedelta(seconds=travel_back)
-        if not self._is_within_time_limit(total_duration.total_seconds()):
-            return False
-
-        return True
-
-
-    def _check_time_constraint(self, route, pos, store):
-        """
-        Notes:
-            Check if adding a store violates the time window constraint.
-
-        Args:
-            route (list): Current route (list of stores).
-            pos (int): Position to insert the store.
-            store (dict): Store information.
-
-        Returns:
-            bool: True if time window constraint is satisfied, False otherwise.
-        """
-        new_route = route[:pos] + [store] + route[pos:]
-        duration = self.time_matrix['dc'][new_route[1]['store_id']] + self.time_matrix[new_route[-2]['store_id']]['dc']
-
-        for i in range(2, len(new_route) - 1):
-            prev_store, cur_store = new_route[i - 1], new_route[i]
-            prev_id, curr_id = prev_store['store_id'], cur_store['store_id']
-            travel_time = self.time_matrix[prev_id][curr_id]
-            pre_dwell = prev_store['dwell_time']
-            pre_pred_time = datetime.fromisoformat(prev_store['pred_time'])
-            arrival_time = pre_pred_time + timedelta(seconds=travel_time + pre_dwell)
-            arrival_time = arrival_time.replace(microsecond=0)
-            earliest_time = datetime.fromisoformat(cur_store['earliest_time'])
-            latest_time = datetime.fromisoformat(cur_store['latest_time'])
-            duration += travel_time + pre_dwell
-
-            if not self._is_within_time_window(arrival_time, earliest_time, latest_time):
-                return False
-
-        if not self._is_within_time_limit(duration):
-            return False
-
-        return True
-
-
-    def _get_store_insertion_cost_and_pos(self, route_info, store):
-        """
-        Notes:
-            Calculate the insertion cost of adding a store to a route.
-
-        Args:
-            route_info (dict): Route information.
-            store (dict): Store information.
-
-        Returns:
-            min_cost (float): Insertion cost.
-            best_pos (int): Best position to insert the store.
-        """
-        dc = route_info['dc']
-        stores = route_info['stores']
-        route_volume = dc['total_volume']
-        route_max_capacity = dc['max_capacity']
-
-        if not self._check_region_constraint(store, dc):
-            return -1, -1
-
-        if not self._check_volume_constraint(store, route_volume, route_max_capacity):
-            return -1, -1
-
-        best_pos = -1
-        min_cost = float('inf')
-
-        prev_store = self.dc
-        route = [self.dc] + stores + [self.dc]
-        for pos, (prev_store, next_store) in enumerate(zip(route, route[1:]), start=1):
-            prev_id, next_id, store_id = prev_store['store_id'], next_store['store_id'], store['store_id']
-            insert_cost = self.distance_matrix[prev_id][store_id] + self.distance_matrix[store_id][next_id] - self.distance_matrix[prev_id][next_id]
-
-            # if not self._is_angle_valid(prev_store, next_store, store):
-            #     continue
-
-            if 0 < insert_cost < min_cost and self._check_time_constraint(route, pos, store):
-                best_pos = pos - 1
-                min_cost = insert_cost
-
-        return min_cost, best_pos
-
-
     def _encode_individual(self, individual):
-        """
-        Notes:
-            Encode a list of routes id for allocation.
-
-        Args:
-            individual (list): List of routes id.
-
-        Returns:
-            str: Encoded individual.
-        """
         s = ','.join(map(str, individual))
         return hashlib.md5(s.encode()).hexdigest()
 
-
     def _calculate_total_distance(self, routes):
-        """
-        Notes:
-            Calculates total distance of all main routes.
-        
-        Args:
-            routes (dict): Routes Information.
-
-        Returns:
-            total_cost (float): total distance of all main routes.
-        """
         total_cost = 0
         for _, route_info in routes.items():
             prev = self.dc
@@ -397,20 +325,7 @@ class StoreAllocationGA:
 
         return total_cost
 
-
     def _evaluate_individual(self, individual):
-        """
-        Notes:
-            Decodes chromosome and calculates total fitness cost.
-
-        Args:
-            individual (list): individual
-
-        Returns:
-            costs (float): Main Routes & Support Line Cost
-            routes (dict): Routes Information.
-            support_pool (list): list of store
-        """
         temp_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
         support_pool = []
@@ -428,72 +343,30 @@ class StoreAllocationGA:
                 support_pool.append(store)
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
-        support_cost, _ = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+        # support_cost, _ = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
+        support_cost, _ = SupportLinePlanningGA(support_pool, self.distance_matrix, self.time_matrix, population_size=0, generations=0).run()
 
         return main_cost + support_cost, route_manager.routes_info, support_pool
 
-
     def _uniform_crossover(self, parent1, parent2):
-        """
-        Notes:
-            Performs uniform crossover on two parents. (50%)
-
-        Args:
-            parent1 (dict): First parent individual.
-            parent2 (dict): Second parent individual.
-
-        Returns:
-            tuple: Two children individuals (child1, child2).
-        """
-        child1, child2 = parent1, parent2
-        for i, (g1, g2) in enumerate(zip(parent1, parent2)):
+        child1, child2 = copy.deepcopy(parent1), copy.deepcopy(parent2)
+        for i in range(len(parent1)):
             if random.random() < 0.5:
-                child1[i], child2[i] = g2, g1
-
+                child1[i], child2[i] = child2[i], child1[i]
         return child1, child2
 
-
     def _crossover(self, parent1, parent2):
-        """
-        Notes:
-            Performs crossover on two parents.
-
-        Args:
-            parent1 (dict): First parent individual.
-            parent2 (dict): Second parent individual.
-
-        Returns:
-            tuple: Two children individuals.
-        """
         if random.random() < self.cross_rate:
             return self._uniform_crossover(parent1, parent2)
-
-        return parent1.copy(), parent2.copy()
-
+        return copy.deepcopy(parent1), copy.deepcopy(parent2)
 
     def _mutate(self, individual):
-        """
-        Notes:
-            Mutates an individual.
-
-        Args:
-            individual (dict): The individual to mutate.
-
-        Returns:
-            None.
-        """
-        for i, _ in enumerate(individual):
+        for i in range(len(individual)):
             if random.random() < self.mutation_rate:
                 individual[i] = random.choice(self.route_choices)
-
         return individual
 
-
     def run(self):
-        """
-        Notes:
-            Runs the genetic algorithm for store allocation.
-        """
         greedy_chromo = self._generate_greedy_individual()
         g_cost, g_routes, g_support = self._evaluate_individual(greedy_chromo)
         self.best_cost = g_cost
@@ -568,14 +441,45 @@ class StoreAllocationGA:
                         break
 
                     elites = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
-                    weights = [1.0 / min(ind['cost'], 1e-12) for ind in evaluated_pop]
+                    weights = [max(1.0 / ind['cost'], 1e-12) for ind in evaluated_pop]
 
-                    childrens = []
-                    while len(childrens) < (self.population_size - self.elite_size):
+                    child_pairs = []
+                    while len(child_pairs) < (self.population_size - self.elite_size):
                         p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
                         c1, c2 = self._crossover(copy.deepcopy(p1['individual']), copy.deepcopy(p2['individual']))
-                        childrens.append(self._mutate(list(c1)))
-                        childrens.append(self._mutate(list(c2)))
+                        c1 = self._mutate(list(c1))
+                        c2 = self._mutate(list(c2))
+                        child_pairs.append((c1, c2))
+                        
+                    task_candidates = []
+                    for c1, c2 in child_pairs:
+                        for c in (c1, c2):
+                            k = self._encode_individual(c)
+                            if k not in shared_cache:
+                                task_candidates.append((c, k, shared_cache))
+                                
+                    if len(task_candidates) > 0:
+                        try:
+                            num_procs = max(1, cpu_count() - 2)
+                            pool.map_async(alloc_fitness_worker, task_candidates, chunksize=max(1, len(task_candidates) // num_procs * 2)).get(timeout=120)
+                        except MPTimeoutError:
+                            print("Timeout Error during candidate evaluation")
+                            for _, k, _ in task_candidates:
+                                if k not in shared_cache:
+                                    shared_cache[k] = {'cost': float('inf'), 'routes': {}, 'support': []}
+                                    
+                    childrens = []
+                    for c1, c2 in child_pairs:
+                        k1 = self._encode_individual(c1)
+                        k2 = self._encode_individual(c2)
+                        
+                        cost1 = shared_cache[k1]['cost']
+                        cost2 = shared_cache[k2]['cost']
+                        
+                        if cost1 < cost2:
+                            childrens.append(c1)
+                        else:
+                            childrens.append(c2)
 
                     population = elites + childrens
 

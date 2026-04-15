@@ -16,12 +16,31 @@ class EarlyStopper:
             Check if early stopping condition is met.
 
         Args:
-            current_cost (float): The current cost to evaluate.
+            current_cost (float or tuple): The current cost to evaluate.
 
         Returns:
             bool: True if early stopping condition is met, False otherwise.
         """
-        if current_cost < (self.best_cost - self.min_delta):
+        is_inf = False
+        if isinstance(self.best_cost, tuple):
+            is_inf = (self.best_cost == (float('inf'), float('inf')))
+        else:
+            is_inf = (self.best_cost == float('inf'))
+            
+        if is_inf:
+            self.best_cost = current_cost
+            self.counter = 0
+            return False
+            
+        is_improved = False
+        if isinstance(current_cost, tuple):
+            if current_cost[0] < self.best_cost[0] or (current_cost[0] == self.best_cost[0] and current_cost[1] < self.best_cost[1] - self.min_delta):
+                is_improved = True
+        else:
+            if current_cost < (self.best_cost - self.min_delta):
+                is_improved = True
+                
+        if is_improved:
             self.best_cost = current_cost
             self.counter = 0
         else:

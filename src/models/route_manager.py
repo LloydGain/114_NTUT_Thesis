@@ -9,11 +9,12 @@ class RouteManager:
     Notes:
         Route Management.
     """
-    def __init__(self, routes_info, distance_matrix=None, time_matrix=None):
+    def __init__(self, routes_info, distance_matrix=None, time_matrix=None, is_solomon=False):
         self.routes_info = routes_info
         self.dc = config.DC_CONFIG
         self.distance_matrix = distance_matrix
         self.time_matrix = time_matrix
+        self.is_solomon = is_solomon
 
 
     def add_store(self, route_id, store):
@@ -394,6 +395,12 @@ class RouteManager:
             travel_time = self.time_matrix[pre_id][cur_id]
             pre_dwell = prev['dwell_time']
             arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
+            
+            if self.is_solomon and 'earliest_time' in curr:
+                earliest_time = datetime.fromisoformat(curr['earliest_time'])
+                if arrival_time < earliest_time:
+                    arrival_time = earliest_time
+                    
             curr['pred_time'] = arrival_time.isoformat(timespec='seconds')
 
 
