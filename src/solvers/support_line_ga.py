@@ -3,14 +3,15 @@ import random
 import hashlib
 import numpy as np
 from datetime import datetime
-from multiprocessing import Pool, cpu_count, Manager
-from multiprocessing import TimeoutError as MPTimeoutError
+from multiprocessing import cpu_count, Manager
+import concurrent.futures
 
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from numba import njit
 from solvers.support_line_aco import _njit_get_feasible_stores, _njit_greedy_selection
+from solvers.vnd import VND
 
 @njit(cache=True)
 def _njit_evaluate_insertion(route_arr, insert_idx, u_idx, capacity, time_limit,
@@ -212,20 +213,53 @@ def init_ga_worker(ga_instance):
 
 
 def ga_fitness_worker(args):
-    chromo, key, shared_cache = args
+    chromo, key, shared_cache, apply_vnd = args
 
     if key in shared_cache:
         return shared_cache[key]
 
     ga = ALLOC_GA_INSTANCE
-    cost = ga._evaluate_individual_fast(chromo)
+    
+    if apply_vnd:
+        c_cost, c_routes = ga._evaluate_individual(chromo)
+        vnd_solver = VND(ga.orig_distance_matrix, ga.orig_time_matrix, vehicle_cost=ga.vehicle_cost, is_solomon=ga.is_solomon)
+        opt_routes, opt_cost = vnd_solver.optimize(c_routes)
+        
+        is_improved = False
+        if ga.is_solomon:
+            if opt_cost < c_cost:
+                is_improved = True
+        else:
+            if opt_cost < c_cost:
+                is_improved = True
+
+        if is_improved:
+            opt_chromo = []
+            for route_id, route_data in opt_routes.items():
+                for store in route_data['stores']:
+                    opt_chromo.append(ga.s2i[store['store_id']])
+            fast_cost = ga._evaluate_individual_fast(opt_chromo)
+            final_chromo = opt_chromo
+        else:
+            fast_cost = ga._evaluate_individual_fast(chromo)
+            final_chromo = chromo
+    else:
+        fast_cost = ga._evaluate_individual_fast(chromo)
+        final_chromo = chromo
 
     result = {
-        'cost': cost,
-        'routes': None
+        'cost': fast_cost,
+        'routes': None,
+        'optimized_chromo': final_chromo
     }
 
     shared_cache[key] = result
+    
+    if apply_vnd and is_improved:
+        new_key = ga._encode_individual(final_chromo)
+        if new_key not in shared_cache:
+            shared_cache[new_key] = result
+
     return result
 
 
@@ -541,9 +575,8 @@ class SupportLinePlanningGA:
             shared_cache = manager.dict()
             num_procs = max(1, cpu_count() - 2)
 
-            with Pool(processes=num_procs, initializer=init_ga_worker, initargs=(self,)) as pool:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=num_procs, initializer=init_ga_worker, initargs=(self,)) as pool:
                 for gen_idx in range(self.generations):
-                    # --- A. 評估目前族群 ---
                     unique_tasks = []
                     keys = []
                     
@@ -551,24 +584,28 @@ class SupportLinePlanningGA:
                         key = self._encode_individual(chromo)
                         keys.append(key)
                         if key not in shared_cache:
-                            unique_tasks.append((chromo, key, shared_cache))
+                            unique_tasks.append((chromo, key, shared_cache, gen_idx == 0))
                             
                     if unique_tasks:
                         try:
-                            pool.map_async(ga_fitness_worker, unique_tasks, chunksize=max(1, len(unique_tasks) // num_procs * 2)).get(timeout=120)
-                        except MPTimeoutError:
+                            list(pool.map(ga_fitness_worker, unique_tasks, timeout=120, chunksize=max(1, len(unique_tasks) // num_procs * 2)))
+                        except concurrent.futures.TimeoutError:
                             print("Timeout Error")
-                            for _, key, _ in unique_tasks:
+                            inf_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+                            for c_chromo, key, _, _ in unique_tasks:
                                 if key not in shared_cache:
-                                    shared_cache[key] = {'cost': float('inf'), 'routes': {}}
+                                    shared_cache[key] = {'cost': inf_cost, 'routes': None, 'optimized_chromo': c_chromo}
                                     
                     evaluated_pop = []
                     fitnesses = []
                     for i, chromo in enumerate(population):
                         key = keys[i]
                         res = shared_cache[key]
+                        
+                        opt_chromo = res.get('optimized_chromo', chromo)
+                        
                         evaluated_pop.append({
-                            'individual': chromo,
+                            'individual': opt_chromo,
                             'cost': res['cost'],
                         })
                         fit_val = res['cost'][1] if self.is_solomon else res['cost']
@@ -626,28 +663,32 @@ class SupportLinePlanningGA:
                         for c in (c1, c2):
                             k = self._encode_individual(c)
                             if k not in shared_cache:
-                                task_candidates.append((c, k, shared_cache))
+                                task_candidates.append((c, k, shared_cache, False))
                                 
                     if task_candidates:
                         try:
-                            pool.map_async(ga_fitness_worker, task_candidates, chunksize=max(1, len(task_candidates) // num_procs * 2)).get(timeout=120)
-                        except MPTimeoutError:
+                            list(pool.map(ga_fitness_worker, task_candidates, timeout=120, chunksize=max(1, len(task_candidates) // num_procs * 2)))
+                        except concurrent.futures.TimeoutError:
                             print("Timeout Error during candidate evaluation")
-                            for _, k, _ in task_candidates:
+                            inf_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+                            for c_chromo, k, _, _ in task_candidates:
                                 if k not in shared_cache:
-                                    shared_cache[k] = {'cost': float('inf'), 'routes': None}
+                                    shared_cache[k] = {'cost': inf_cost, 'routes': None, 'optimized_chromo': c_chromo}
                                     
                     childrens = []
                     for c1, c2 in child_pairs:
                         k1 = self._encode_individual(c1)
                         k2 = self._encode_individual(c2)
-                        cost1 = shared_cache[k1]['cost']
-                        cost2 = shared_cache[k2]['cost']
+                        res1 = shared_cache[k1]
+                        res2 = shared_cache[k2]
                         
-                        if cost1 < cost2:
-                            childrens.append(c1)
+                        c1_opt = res1.get('optimized_chromo', c1)
+                        c2_opt = res2.get('optimized_chromo', c2)
+                        
+                        if res1['cost'] < res2['cost']:
+                            childrens.append(c1_opt)
                         else:
-                            childrens.append(c2)
+                            childrens.append(c2_opt)
                             
                     # --- D. 突變與進展 (區域搜尋) ---
                     for i in range(len(childrens)):

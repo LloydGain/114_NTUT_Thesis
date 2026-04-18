@@ -91,9 +91,9 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 200,
+            'population_size': 100,
             'elite_rate': 0.1,
-            'generations': 1000,
+            'generations': 500,
             'cross_rate': 1.0,
             'mutation_rate': 0.05,
             'early_stop_patience': 50
@@ -101,7 +101,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         'store_allocation_ga': {
             'population_size': 100,
             'elite_rate': 0.1,
-            'generations': 1000,
+            'generations': 500,
             'cross_rate': 0.9,
             'mutation_rate': 0.01,
             'early_stop_patience': 50
@@ -113,7 +113,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'rho': 0.5,
             'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 30,
+            'early_stop_patience': 50,
             'support_capacity': 7.2,
             'vehicle_cost': 2000
         },
@@ -262,17 +262,17 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
 # -----------------------------------------------------------------------------------
 
-    start_time = time.time()
+    # start_time = time.time()
 
-    print("Starting VND...")
-    vnd = VND(distance_matrix, time_matrix)
-    optimized_routes, optimized_cost = vnd.optimize(optimized_routes)
+    # print("Starting VND...")
+    # vnd = VND(distance_matrix, time_matrix)
+    # optimized_routes, optimized_cost = vnd.optimize(optimized_routes)
 
-    end_time = time.time()
-    time_consume = round(end_time - start_time, 2)
-    print(f"VND 執行時間: {time_consume} 秒")
+    # end_time = time.time()
+    # time_consume = round(end_time - start_time, 2)
+    # print(f"VND 執行時間: {time_consume} 秒")
 
-    times['Starting VND...'] = time_consume
+    # times['Starting VND...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -394,14 +394,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         end_time = time.time()
         print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
-    return optimized_cost
+    return None
 
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     try:
         args = parse_args()
-        optimized_cost = main(args.file_date, args.seed, args.test, args.google, args.comment)
+        main(args.file_date, args.seed, args.test, args.google, args.comment)
     except KeyboardInterrupt:
         print("Execution interrupted by user.")
         exit(1)

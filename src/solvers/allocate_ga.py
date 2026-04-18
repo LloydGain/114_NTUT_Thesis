@@ -4,8 +4,8 @@ import hashlib
 import numpy as np
 from config import config
 from datetime import datetime, timedelta
-from multiprocessing import Pool, cpu_count, Manager
-from multiprocessing import TimeoutError as MPTimeoutError
+from multiprocessing import cpu_count, Manager
+import concurrent.futures
 from numba import njit
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
@@ -126,9 +126,7 @@ def alloc_fitness_worker(args):
     cost, routes, support = ga._evaluate_individual(chromo)
 
     result = {
-        'cost': cost,
-        'routes': routes,
-        'support': support
+        'cost': cost
     }
 
     shared_cache[key] = result
@@ -157,6 +155,7 @@ class StoreAllocationGA:
         self.best_cost = float('inf')
         self.best_solution = None
         self.best_remaining_solution = None
+        self.best_individual = None
         self.log = []
         
         self._init_numpy_mappings()
@@ -372,6 +371,7 @@ class StoreAllocationGA:
         self.best_cost = g_cost
         self.best_solution = g_routes
         self.best_remaining_solution = g_support
+        self.best_individual = greedy_chromo
 
         if self.generations == 0:
             return self.best_cost, self.best_solution, self.best_remaining_solution
@@ -384,7 +384,7 @@ class StoreAllocationGA:
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
             shared_cache = manager.dict()
-            with Pool(processes=max(1, cpu_count() - 2), initializer=init_alloc_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix, self)) as pool:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, cpu_count() - 2), initializer=init_alloc_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix, self)) as pool:
                 for gen_idx in range(self.generations):
                     unique_tasks = []
                     individual_keys = []
@@ -397,13 +397,13 @@ class StoreAllocationGA:
 
                     if len(unique_tasks) > 0:
                         try:
-                            pool.map_async(alloc_fitness_worker, unique_tasks, chunksize=max(1, len(unique_tasks) // (cpu_count() - 2) * 2)).get(timeout=120)
-                        except MPTimeoutError:
+                            list(pool.map(alloc_fitness_worker, unique_tasks, timeout=120, chunksize=max(1, len(unique_tasks) // (cpu_count() - 2) * 2)))
+                        except concurrent.futures.TimeoutError:
                             print('Timeout error')
                             for _, _, key in unique_tasks:
                                 if key not in shared_cache:
                                     print(f"Skipping individual {key}")
-                                    shared_cache[key] = float('inf')
+                                    shared_cache[key] = {'cost': float('inf')}
 
                     fitnesses = []
                     evaluated_pop = []
@@ -412,9 +412,7 @@ class StoreAllocationGA:
                         res = shared_cache[key]
                         evaluated_pop.append({
                             'individual': chromo,
-                            'cost': res['cost'],
-                            'routes': res['routes'],
-                            'support': res['support']
+                            'cost': res['cost']
                         })
                         fitnesses.append(res['cost'])
 
@@ -423,8 +421,7 @@ class StoreAllocationGA:
 
                     if current_best['cost'] < self.best_cost:
                         self.best_cost = current_best['cost']
-                        self.best_solution = current_best['routes']
-                        self.best_remaining_solution = current_best['support']
+                        self.best_individual = copy.deepcopy(current_best['individual'])
 
                     self.log.append({
                         'generation': gen_idx + 1,
@@ -461,12 +458,12 @@ class StoreAllocationGA:
                     if len(task_candidates) > 0:
                         try:
                             num_procs = max(1, cpu_count() - 2)
-                            pool.map_async(alloc_fitness_worker, task_candidates, chunksize=max(1, len(task_candidates) // num_procs * 2)).get(timeout=120)
-                        except MPTimeoutError:
+                            list(pool.map(alloc_fitness_worker, task_candidates, timeout=120, chunksize=max(1, len(task_candidates) // num_procs * 2)))
+                        except concurrent.futures.TimeoutError:
                             print("Timeout Error during candidate evaluation")
                             for _, k, _ in task_candidates:
                                 if k not in shared_cache:
-                                    shared_cache[k] = {'cost': float('inf'), 'routes': {}, 'support': []}
+                                    shared_cache[k] = {'cost': float('inf')}
                                     
                     childrens = []
                     for c1, c2 in child_pairs:
@@ -482,5 +479,8 @@ class StoreAllocationGA:
                             childrens.append(c2)
 
                     population = elites + childrens
+
+        if self.best_individual is not None:
+             _, self.best_solution, self.best_remaining_solution = self._evaluate_individual(self.best_individual)
 
         return self.best_cost, self.best_solution, self.best_remaining_solution

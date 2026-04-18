@@ -1,7 +1,7 @@
 import hashlib
 import numpy as np
-from multiprocessing import Pool, cpu_count, Manager
-from multiprocessing import TimeoutError as MPTimeoutError
+from multiprocessing import cpu_count, Manager
+import concurrent.futures
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
@@ -482,7 +482,7 @@ class StoreExtractionGA:
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
             shared_cache = manager.dict()
-            with Pool(processes=max(1, cpu_count() - 2), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, cpu_count() - 2), initializer=init_worker, initargs=(self.main_routes, self.distance_matrix, self.time_matrix)) as pool:
                 for i in range(self.generations):
                     individual_keys = []
                     unique_tasks_to_run = []
@@ -497,8 +497,8 @@ class StoreExtractionGA:
 
                     if unique_tasks_to_run:
                         try:
-                            pool.map_async(fitness_worker, unique_tasks_to_run, chunksize=max(1, len(unique_tasks_to_run) // (cpu_count() - 2) * 2)).get(timeout=120)
-                        except MPTimeoutError:
+                            list(pool.map(fitness_worker, unique_tasks_to_run, timeout=120, chunksize=max(1, len(unique_tasks_to_run) // (cpu_count() - 2) * 2)))
+                        except concurrent.futures.TimeoutError:
                             print('Timeout error')
                             for _, _, key in unique_tasks_to_run:
                                 if key not in shared_cache:
