@@ -12,8 +12,8 @@ class Log:
         self.log_dir = log_dir
         self.parameters = parameters
         self.times = times
-        self.params_file = f'{log_dir}/params.json'
-        self.times_file = f'{log_dir}/times.json'
+        self.params_file = f'{log_dir}/log_params.json'
+        self.times_file = f'{log_dir}/log_times.json'
         os.makedirs(log_dir, exist_ok=True)
 
 

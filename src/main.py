@@ -71,10 +71,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     program_route_html = f'{program_routes_dir}/routes.html'
     optimized_routes_html = f'{optimized_routes_dir}/routes.html'
 
-    store_count_log_file = 'store_count_log.xlsx'
+    store_count_log_file = 'log_store_count.xlsx'
     store_extract_log_file = 'store_extraction_log.xlsx'
     store_allocate_log_file = 'store_allocation_log.xlsx'
-    support_line_log_file = 'support_line_log.xlsx'
+    support_line_log_file = 'store_support_line_log.xlsx'
 
 # -----------------------------------------------------------------------------------
 
@@ -403,7 +403,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     optimized_distance = sum(route['dc']['distance'] for route in optimized_routes.values())
     vehicle_cost = params['support_line_aco']['vehicle_cost']
-    optimized_cost = optimized_distance + (len(optimized_routes) * vehicle_cost)
+    support_vehicle_count = sum(1 for route in optimized_routes.values() if route['dc']['route_id'].isdigit())
+    optimized_cost = optimized_distance + (support_vehicle_count * vehicle_cost)
 
     return optimized_cost
 
