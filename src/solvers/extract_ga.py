@@ -7,7 +7,6 @@ from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.allocate_ga import StoreAllocationGA
 
-GLOBAL_ALLOC_GA = None
 ROUTES = None
 DIST = None
 TIME = None
@@ -25,21 +24,15 @@ def init_worker(main_routes, distance_matrix, time_matrix):
     Returns:
         None
     """
-    global ROUTES, DIST, TIME, GLOBAL_ALLOC_GA
+    global ROUTES, DIST, TIME
     ROUTES = main_routes
     DIST = distance_matrix
     TIME = time_matrix
-    # Pre-build a StoreAllocationGA to trigger _init_numpy_mappings and cache matrices
-    GLOBAL_ALLOC_GA = StoreAllocationGA(
-        main_routes, [], distance_matrix, time_matrix,
-        population_size=0, generations=0
-    )
 
 def fitness_worker(args):
     """
     Notes:
         Computes the fitness of a given set of extracted stores using GA.
-        Reuses the pre-built global StoreAllocationGA instance.
 
     Args:
         store_list (list): A list of store (extracted from the main routes).
@@ -52,11 +45,14 @@ def fitness_worker(args):
     if cache_key in shared_cache:
         return shared_cache[cache_key]
 
-    # Reuse global instance - only swap remaining_stores
-    ga = GLOBAL_ALLOC_GA
-    ga.remaining_stores = ga._sort_stores_by_insertion_cost(store_list)
-    greedy_chromo = ga._generate_greedy_individual()
-    ac_cost = ga._evaluate_individual_fast(greedy_chromo)
+    ac_cost, _, _ = StoreAllocationGA(
+        ROUTES,
+        store_list,
+        DIST,
+        TIME,
+        population_size=0,
+        generations=0
+    ).run()
 
     shared_cache[cache_key] = ac_cost
     return ac_cost
@@ -514,6 +510,12 @@ class StoreExtractionGA:
                         fitnesses.append(shared_cache[key])
 
                     fitnesses = np.array(fitnesses)
+
+                    # tasks = [self._individual_to_list(ind) for ind in population]
+                    # fitnesses = pool.map(fitness_worker, tasks, chunksize=4)
+                    # print(len(self.fitness_cache))
+                    # for idx, fitness in enumerate(fitnesses):
+                    #     print(f'individual{idx+1} -> cost = {fitness}')
 
                     current_best_index = np.argmin(fitnesses)
                     current_best_cost = fitnesses[current_best_index]

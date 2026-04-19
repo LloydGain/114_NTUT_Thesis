@@ -71,7 +71,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     program_route_html = f'{program_routes_dir}/routes.html'
     optimized_routes_html = f'{optimized_routes_dir}/routes.html'
 
-    store_count_log_file = 'log_store_count.xlsx'
+    store_count_log_file = 'log_count.xlsx'
     store_extract_log_file = 'store_extraction_log.xlsx'
     store_allocate_log_file = 'store_allocation_log.xlsx'
     support_line_log_file = 'store_support_line_log.xlsx'
@@ -142,7 +142,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 1
         },
         'support_line_aco': {
-            'iterations': 500,
+            'iterations': 10,
             'alpha': 1,
             'beta': 1,
             'rho': 0.5,
