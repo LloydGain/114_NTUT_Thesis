@@ -93,7 +93,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         'store_extraction_ga': {
             'population_size': 100,
             'elite_rate': 0.1,
-            'generations': 500,
+            'generations': 1000,
             'cross_rate': 1.0,
             'mutation_rate': 0.05,
             'early_stop_patience': 50
@@ -101,7 +101,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         'store_allocation_ga': {
             'population_size': 100,
             'elite_rate': 0.1,
-            'generations': 500,
+            'generations': 1000,
             'cross_rate': 0.9,
             'mutation_rate': 0.01,
             'early_stop_patience': 50
@@ -115,7 +115,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'q0': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2,
-            'vehicle_cost': 2000
+            'vehicle_cost': 2000,
+            'vnd_strategy': 'best'
         },
         'comment': comment,
         'date': file_date,
@@ -141,16 +142,16 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 1
         },
         'support_line_aco': {
-            'num_ants': 2,
-            'iterations': 2,
+            'iterations': 500,
             'alpha': 1,
             'beta': 1,
-            'rho': 0.1,
+            'rho': 0.5,
             'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 2,
+            'early_stop_patience': 50,
             'support_capacity': 7.2,
-            'vehicle_cost': 2000
+            'vehicle_cost': 2000,
+            'vnd_strategy': 'first'
         },
         'Test': True,
         'comment': comment
@@ -162,15 +163,21 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         params = production_params
 
     if hyper_params:
-        for key in ['population_size', 'cross_rate', 'mutation_rate']:
-            if key in hyper_params:
-                params['store_extraction_ga'][key] = hyper_params[key]
+        if 'ex_pop' in hyper_params:
+            params['store_extraction_ga']['population_size'] = hyper_params['ex_pop']
+        if 'ex_cx' in hyper_params:
+            params['store_extraction_ga']['cross_rate'] = hyper_params['ex_cx']
+        if 'ex_mut' in hyper_params:
+            params['store_extraction_ga']['mutation_rate'] = hyper_params['ex_mut']
 
-        for key in ['population_size', 'cross_rate', 'mutation_rate']:
-            if key in hyper_params:
-                params['store_allocation_ga'][key] = hyper_params[key]
+        if 'al_pop' in hyper_params:
+            params['store_allocation_ga']['population_size'] = hyper_params['al_pop']
+        if 'al_cx' in hyper_params:
+            params['store_allocation_ga']['cross_rate'] = hyper_params['al_cx']
+        if 'al_mut' in hyper_params:
+            params['store_allocation_ga']['mutation_rate'] = hyper_params['al_mut']
 
-        for key in ['alpha', 'beta', 'gamma', 'rho']:
+        for key in ['alpha', 'beta', 'rho']:
             if key in hyper_params:
                 params['support_line_aco'][key] = hyper_params[key]
 
@@ -394,7 +401,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         end_time = time.time()
         print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
-    return None
+    optimized_distance = sum(route['dc']['distance'] for route in optimized_routes.values())
+    vehicle_cost = params['support_line_aco']['vehicle_cost']
+    optimized_cost = optimized_distance + (len(optimized_routes) * vehicle_cost)
+
+    return optimized_cost
 
 # ---------------------------------------------------------------------------
 

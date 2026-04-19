@@ -196,7 +196,6 @@ def run_single_aco_seed(args_tuple):
         vehicle_cost=2000,
         time_limit_per_route=time_limit,
         is_solomon=True,
-        # target_cost=target_cost
     )
     
     try:

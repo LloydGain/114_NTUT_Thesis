@@ -9,7 +9,7 @@ import concurrent.futures
 from numba import njit
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.support_line_aco import SupportLinePlanningACO, _njit_get_feasible_stores, _njit_greedy_selection
 from solvers.support_line_ga import SupportLinePlanningGA
 
 @njit(cache=True)
@@ -123,7 +123,7 @@ def alloc_fitness_worker(args):
         return shared_cache[key]
 
     ga = ALLOC_GA_INSTANCE
-    cost, routes, support = ga._evaluate_individual(chromo)
+    cost = ga._evaluate_individual_fast(chromo)
 
     result = {
         'cost': cost
@@ -165,7 +165,7 @@ class StoreAllocationGA:
         """Map generic dict data to isolated numpy arrays for njit evaluation calls."""
         if StoreAllocationGA._cached_mappings is not None:
             self.s2i, self.i2s, self.np_dist, self.np_time, self.np_volume, self.np_dwell, \
-            self.np_earliest, self.np_latest, self.np_region = StoreAllocationGA._cached_mappings
+            self.np_earliest, self.np_latest, self.np_region, self.np_group = StoreAllocationGA._cached_mappings
             return
 
         self.s2i = {self.dc['store_id']: 0}
@@ -190,8 +190,10 @@ class StoreAllocationGA:
         self.np_earliest = np.zeros(n, dtype=np.float64)
         self.np_latest = np.zeros(n, dtype=np.float64)
         self.np_region = np.full(n, -1, dtype=np.int64)
+        self.np_group = np.full(n, -1, dtype=np.int64)
         
         region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        group_map = {'near': 0, 'mid': 1, 'far': 2}
         for i in range(1, n):
             s_i = self.i2s[i]
             s_i_id = s_i['store_id']
@@ -200,6 +202,7 @@ class StoreAllocationGA:
             self.np_earliest[i] = float(int(datetime.fromisoformat(s_i['earliest_time']).timestamp()))
             self.np_latest[i] = float(int(datetime.fromisoformat(s_i['latest_time']).timestamp()))
             self.np_region[i] = region_map.get(s_i.get('region', ''), -1)
+            self.np_group[i] = group_map.get(s_i.get('dist_group', ''), -1)
             
             for j in range(n):
                 s_j_id = self.i2s[j]['store_id']
@@ -218,7 +221,7 @@ class StoreAllocationGA:
                 
         StoreAllocationGA._cached_mappings = (
             self.s2i, self.i2s, self.np_dist, self.np_time, self.np_volume, 
-            self.np_dwell, self.np_earliest, self.np_latest, self.np_region
+            self.np_dwell, self.np_earliest, self.np_latest, self.np_region, self.np_group
         )
 
 
@@ -261,41 +264,168 @@ class StoreAllocationGA:
         return cost, pos
 
     def _sort_stores_by_insertion_cost(self, stores):
-        temp_routes = self._copy_routes_info(self.main_routes)
-        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+        """Sort stores by regret-2 cost (descending).
 
-        store_with_costs = []
+        Regret cost = 2nd_best_insertion_cost - best_insertion_cost.
+        Stores with higher regret are placed first so that stores
+        which suffer the most from NOT being assigned to their best
+        route are prioritised early.
+        """
+        route_keys = list(self.main_routes.keys())
+
+        main_route_stores = []
+        main_route_vols = []
+        main_route_first_epochs = []
+        main_route_caps = []
+        main_route_dc_regions = []
+
+        dc_region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+
+        for r_id in route_keys:
+            r_info = self.main_routes[r_id]
+            r_stores = [self.s2i[s['store_id']] for s in r_info['stores']]
+            main_route_stores.append(r_stores)
+            main_route_vols.append(float(r_info['dc'].get('total_volume', 0)))
+            if r_stores:
+                epoch = float(int(datetime.fromisoformat(r_info['stores'][0]['pred_time']).timestamp()))
+            else:
+                epoch = 0.0  # dummy
+            main_route_first_epochs.append(epoch)
+            main_route_caps.append(float(r_info['dc'].get('max_capacity', 1e9)))
+            main_route_dc_regions.append(dc_region_map.get(r_info['dc'].get('region', ''), -1))
+
+        store_regrets = []
+
+        from solvers.allocate_ga import _njit_get_store_insertion_cost_pos
+
         for store in stores:
-            min_cost = float('inf')
-            for r_id in self.main_routes.keys():
-                cost, pos = self._get_store_insertion_cost_and_pos(route_manager.routes_info[r_id], store)
-                if pos != -1 and cost < min_cost:
-                    min_cost = cost
-            store_with_costs.append((store, min_cost))
+            store_idx = self.s2i[store['store_id']]
+            best_cost = float('inf')
+            second_best_cost = float('inf')
 
-        return [s[0] for s in sorted(store_with_costs, key=lambda x: x[1])]
+            for r_idx in range(len(route_keys)):
+                route_stores_arr = np.array(main_route_stores[r_idx], dtype=np.int64)
+
+                if len(main_route_stores[r_idx]) == 0:
+                    epoch = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+                else:
+                    epoch = main_route_first_epochs[r_idx]
+
+                cost, pos = _njit_get_store_insertion_cost_pos(
+                    store_idx,
+                    route_stores_arr,
+                    0,
+                    main_route_dc_regions[r_idx],
+                    main_route_vols[r_idx],
+                    main_route_caps[r_idx],
+                    self.np_region[store_idx],
+                    self.np_volume[store_idx],
+                    self.np_dist,
+                    self.np_time,
+                    self.np_dwell,
+                    self.np_earliest,
+                    self.np_latest,
+                    epoch,
+                    float(self.time_limit_per_route)
+                )
+
+                if pos != -1 and cost < best_cost:
+                    second_best_cost = best_cost
+                    best_cost = cost
+                elif pos != -1 and cost < second_best_cost:
+                    second_best_cost = cost
+
+            # Regret = difference between 2nd-best and best insertion cost.
+            # If only one feasible route exists, regret = inf (must place now).
+            # If no feasible route exists, regret = -inf (hopeless; place last).
+            if best_cost == float('inf'):
+                regret = float('-inf')
+            elif second_best_cost == float('inf'):
+                regret = float('inf')
+            else:
+                regret = second_best_cost - best_cost
+
+            store_regrets.append((store, regret))
+
+        # Sort descending: highest regret first
+        store_regrets.sort(key=lambda x: x[1], reverse=True)
+        return [item[0] for item in store_regrets]
+
 
 
     def _generate_greedy_individual(self):
-        temp_routes = self._copy_routes_info(self.main_routes)
-        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+        route_keys = list(self.main_routes.keys())
+        
+        main_route_stores = []
+        main_route_vols = []
+        main_route_first_epochs = []
+        main_route_caps = []
+        main_route_dc_regions = []
+        
+        dc_region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        
+        for r_id in route_keys:
+            r_info = self.main_routes[r_id]
+            stores = [self.s2i[s['store_id']] for s in r_info['stores']]
+            main_route_stores.append(stores)
+            main_route_vols.append(float(r_info['dc'].get('total_volume', 0)))
+            if stores:
+                epoch = float(int(datetime.fromisoformat(r_info['stores'][0]['pred_time']).timestamp()))
+            else:
+                epoch = 0.0 # dummy
+            main_route_first_epochs.append(epoch)
+            main_route_caps.append(float(r_info['dc'].get('max_capacity', 1e9)))
+            main_route_dc_regions.append(dc_region_map.get(r_info['dc'].get('region', ''), -1))
+            
         greedy_chromo = []
-
+        
+        from solvers.allocate_ga import _njit_get_store_insertion_cost_pos
+        
         for store in self.remaining_stores:
-            best_r = 'SUPPORT'
+            store_idx = self.s2i[store['store_id']]
+            best_r_idx = -1
             min_cost = float('inf')
             best_pos = -1
-
-            for r_id in self.main_routes.keys():
-                cost, pos = self._get_store_insertion_cost_and_pos(route_manager.routes_info[r_id], store)
+            
+            for r_idx in range(len(route_keys)):
+                route_stores_arr = np.array(main_route_stores[r_idx], dtype=np.int64)
+                
+                if len(main_route_stores[r_idx]) == 0:
+                    epoch = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+                else:
+                    epoch = main_route_first_epochs[r_idx]
+                    
+                cost, pos = _njit_get_store_insertion_cost_pos(
+                    store_idx,
+                    route_stores_arr,
+                    0,
+                    main_route_dc_regions[r_idx],
+                    main_route_vols[r_idx],
+                    main_route_caps[r_idx],
+                    self.np_region[store_idx],
+                    self.np_volume[store_idx],
+                    self.np_dist,
+                    self.np_time,
+                    self.np_dwell,
+                    self.np_earliest,
+                    self.np_latest,
+                    epoch,
+                    float(self.time_limit_per_route)
+                )
+                
                 if pos != -1 and cost < min_cost:
                     min_cost = cost
-                    best_r = r_id
+                    best_r_idx = r_idx
                     best_pos = pos
-
-            greedy_chromo.append(best_r)
-            if best_r != 'SUPPORT':
-                route_manager.insert_store(store, best_r, best_pos)
+                    
+            if best_r_idx != -1:
+                greedy_chromo.append(route_keys[best_r_idx])
+                main_route_stores[best_r_idx].insert(best_pos, store_idx)
+                main_route_vols[best_r_idx] += self.np_volume[store_idx]
+                if best_pos == 0:
+                    main_route_first_epochs[best_r_idx] = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+            else:
+                greedy_chromo.append('SUPPORT')
 
         return greedy_chromo
 
@@ -342,10 +472,155 @@ class StoreAllocationGA:
                 support_pool.append(store)
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
-        # support_cost, _ = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-        support_cost, _ = SupportLinePlanningGA(support_pool, self.distance_matrix, self.time_matrix, population_size=0, generations=0).run()
+        support_pool_indices = [self.s2i[s['store_id']] for s in support_pool]
+        support_cost = self._fast_support_cost(support_pool_indices)
 
         return main_cost + support_cost, route_manager.routes_info, support_pool
+
+    def _fast_support_cost(self, support_pool_indices):
+        if not support_pool_indices:
+            return 0.0
+
+        num_vehicles = 0
+        total_distance = 0.0
+        
+        unvisited_idx = set(support_pool_indices)
+        
+        # Dummy pheromone matrix for greedy
+        dummy_pheromone = np.ones((len(self.s2i), len(self.s2i)), dtype=np.float64)
+
+        while unvisited_idx:
+            num_vehicles += 1
+            
+            feasible_arr = np.array(list(unvisited_idx), dtype=np.int64)
+            current_idx = _njit_greedy_selection(0, feasible_arr, self.np_dist, dummy_pheromone, 1.0, 1.0)
+            
+            # Init route state
+            route_vol = self.np_volume[current_idx]
+            
+            # depart time
+            depart_time = float(self.np_earliest[current_idx]) - self.np_time[0, current_idx]
+            curr_time = float(self.np_earliest[current_idx])
+            ret_time = curr_time + self.np_dwell[current_idx] + self.np_time[current_idx, 0]
+            curr_duration = ret_time - depart_time
+            
+            prev_pred_time_epoch = float(self.np_earliest[current_idx])
+            
+            total_distance += self.np_dist[0, current_idx]
+            unvisited_idx.remove(current_idx)
+            
+            while unvisited_idx:
+                unv_arr = np.array(list(unvisited_idx), dtype=np.int64)
+                feasible_arr = _njit_get_feasible_stores(
+                    unv_arr, current_idx, route_vol, curr_duration,
+                    prev_pred_time_epoch, 0, float(config.DC_CONFIG.get('max_capacity', 7.2)), float(self.time_limit_per_route),
+                    self.np_group, self.np_region, self.np_volume, self.np_time, self.np_dwell,
+                    self.np_earliest, self.np_latest, False
+                )
+                
+                if len(feasible_arr) == 0:
+                    break
+                    
+                next_idx = _njit_greedy_selection(current_idx, feasible_arr, self.np_dist, dummy_pheromone, 1.0, 1.0)
+                
+                # Update route state
+                route_vol += self.np_volume[next_idx]
+                arr_time = prev_pred_time_epoch + self.np_time[current_idx, next_idx] + self.np_dwell[current_idx]
+                curr_time = arr_time # since is_solomon=False
+                ret_time = curr_time + self.np_dwell[next_idx] + self.np_time[next_idx, 0]
+                curr_duration = ret_time - depart_time
+                prev_pred_time_epoch = curr_time
+                
+                total_distance += self.np_dist[current_idx, next_idx]
+                
+                current_idx = next_idx
+                unvisited_idx.remove(next_idx)
+                
+            total_distance += self.np_dist[current_idx, 0]
+
+        return total_distance + num_vehicles * 2000.0
+
+    def _evaluate_individual_fast(self, individual):
+        route_keys = list(self.main_routes.keys())
+        
+        main_route_stores = []
+        main_route_vols = []
+        main_route_first_epochs = []
+        main_route_caps = []
+        main_route_dc_regions = []
+        
+        dc_region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        
+        for r_id in route_keys:
+            r_info = self.main_routes[r_id]
+            stores = [self.s2i[s['store_id']] for s in r_info['stores']]
+            main_route_stores.append(stores)
+            main_route_vols.append(float(r_info['dc'].get('total_volume', 0)))
+            if stores:
+                epoch = float(int(datetime.fromisoformat(r_info['stores'][0]['pred_time']).timestamp()))
+            else:
+                epoch = 0.0 # dummy
+            main_route_first_epochs.append(epoch)
+            main_route_caps.append(float(r_info['dc'].get('max_capacity', 1e9)))
+            main_route_dc_regions.append(dc_region_map.get(r_info['dc'].get('region', ''), -1))
+            
+        support_pool_indices = []
+        
+        for i, target in enumerate(individual):
+            store = self.remaining_stores[i]
+            store_idx = self.s2i[store['store_id']]
+            
+            if target == 'SUPPORT':
+                support_pool_indices.append(store_idx)
+                continue
+                
+            r_idx = route_keys.index(target)
+            route_stores_arr = np.array(main_route_stores[r_idx], dtype=np.int64)
+            
+            if len(main_route_stores[r_idx]) == 0:
+                epoch = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+            else:
+                epoch = main_route_first_epochs[r_idx]
+                
+            cost, pos = _njit_get_store_insertion_cost_pos(
+                store_idx,
+                route_stores_arr,
+                0,
+                main_route_dc_regions[r_idx],
+                main_route_vols[r_idx],
+                main_route_caps[r_idx],
+                self.np_region[store_idx],
+                self.np_volume[store_idx],
+                self.np_dist,
+                self.np_time,
+                self.np_dwell,
+                self.np_earliest,
+                self.np_latest,
+                epoch,
+                float(self.time_limit_per_route)
+            )
+            
+            if pos != -1:
+                main_route_stores[r_idx].insert(pos, store_idx)
+                main_route_vols[r_idx] += self.np_volume[store_idx]
+                if pos == 0:
+                    main_route_first_epochs[r_idx] = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
+            else:
+                support_pool_indices.append(store_idx)
+                
+        main_cost = 0.0
+        for r_idx in range(len(route_keys)):
+            stores = main_route_stores[r_idx]
+            if len(stores) == 0:
+                continue
+            main_cost += self.np_dist[0, stores[0]]
+            for j in range(len(stores) - 1):
+                main_cost += self.np_dist[stores[j], stores[j+1]]
+            main_cost += self.np_dist[stores[-1], 0]
+            
+        support_cost = self._fast_support_cost(support_pool_indices)
+        
+        return main_cost + support_cost
 
     def _uniform_crossover(self, parent1, parent2):
         child1, child2 = copy.deepcopy(parent1), copy.deepcopy(parent2)
@@ -367,14 +642,16 @@ class StoreAllocationGA:
 
     def run(self):
         greedy_chromo = self._generate_greedy_individual()
+        
+        if self.generations == 0:
+            g_cost = self._evaluate_individual_fast(greedy_chromo)
+            return g_cost, None, None
+
         g_cost, g_routes, g_support = self._evaluate_individual(greedy_chromo)
         self.best_cost = g_cost
         self.best_solution = g_routes
         self.best_remaining_solution = g_support
         self.best_individual = greedy_chromo
-
-        if self.generations == 0:
-            return self.best_cost, self.best_solution, self.best_remaining_solution
 
         population = [greedy_chromo]
         num_stores = len(self.remaining_stores)
