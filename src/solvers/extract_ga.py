@@ -2,9 +2,11 @@ import hashlib
 import numpy as np
 from multiprocessing import cpu_count, Manager
 import concurrent.futures
+
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
+# 請確保這裡的路徑與你的檔案結構一致
 from solvers.allocate_ga import StoreAllocationGA
 
 ROUTES = None
@@ -15,14 +17,6 @@ def init_worker(main_routes, distance_matrix, time_matrix):
     """
     Notes:
         Initializes global variables for a worker process in parallel fitness evaluation.
-
-    Args:
-        main_routes (dict): Main routes information, e.g., {route_id: route_info}.
-        distance_matrix (json): 2D matrix of distances between stores.
-        time_matrix (json): 2D matrix of travel times between stores.
-
-    Returns:
-        None
     """
     global ROUTES, DIST, TIME
     ROUTES = main_routes
@@ -33,20 +27,31 @@ def fitness_worker(args):
     """
     Notes:
         Computes the fitness of a given set of extracted stores using GA.
-
-    Args:
-        store_list (list): A list of store (extracted from the main routes).
-
-    Returns:
-        float: The total cost of the extraction, as returned by StoreAllocationGA.
     """
-    store_list, shared_cache, cache_key = args
+    ind, shared_cache, cache_key = args
 
     if cache_key in shared_cache:
         return shared_cache[cache_key]
 
+    copy_routes = {
+        route_id: {
+            "dc": route_data["dc"].copy(),
+            "stores": [store.copy() for store in route_data["stores"]]
+        } for route_id, route_data in ROUTES.items()
+    }
+
+    route_manager = RouteManager(copy_routes, DIST, TIME)
+    store_list = []
+    
+    for route_id, stores in ind.items():
+        for store in stores:
+            route_manager.remove_store(route_id, store, fast_update=True)
+            store_list.append(store)
+
+    stripped_routes = route_manager.routes_info
+
     ac_cost, _, _ = StoreAllocationGA(
-        ROUTES,
+        stripped_routes,
         store_list,
         DIST,
         TIME,
@@ -80,36 +85,12 @@ class StoreExtractionGA:
         self.fitness_cache = {}
         self.log = []
 
-
     def _routes(self, routes):
-        """
-        Notes:
-            Update route info.
-
-        Args:
-            routes (dict): Original routes info.
-
-        Returns:
-            routes (dict): Updated routes info.
-        """
-
         route_manager = RouteManager(routes, self.distance_matrix, self.time_matrix)
         route_manager.update_all_routes_info()
-
         return routes
 
-
     def _copy_routes_info(self, routes):
-        """
-        Notes:
-            Create a shallow copy of routes info.
-
-        Args:
-            routes (dict): Original routes info.
-
-        Returns:
-            dict: Routes Info.
-        """
         return {
             route_id: {
                 "dc": route_data["dc"].copy(),
@@ -117,48 +98,15 @@ class StoreExtractionGA:
             } for route_id, route_data in routes.items()
         }
 
-
     def _copy_individual(self, individual):
-        """
-        Notes:
-            Create a shallow copy of individual.
-
-        Args:
-            routes (dict): Original individual.
-
-        Returns:
-            dict: Individual.
-        """
         return {
             route_id: [store.copy() for store in stores] for route_id, stores in individual.items()
         }
 
-
     def _get_overloaded_routes(self):
-        """
-        Notes:
-            Get overloaded routes from main_routes.
-
-        Args:
-            None.
-
-        Returns:
-            dict: Loaded routes {route_id: route_info}.
-        """
         return {route_id: route_info for route_id, route_info in self.main_routes.items() if route_info['dc']['load_rate'] > 1.0}
 
-
     def _calculate_removal_weights(self, stores):
-        """
-        Notes:
-            Calculate the store's weight to be removed.
-
-        Args:
-            stores (list): [store1, store2, ...]
-
-        Return:
-            probs (list): store's removing probability.
-        """
         weights = []
         depot_id = self.dc['store_id']
         store_ids = [depot_id] + [store['store_id'] for store in stores] + [depot_id]
@@ -174,28 +122,14 @@ class StoreExtractionGA:
             detour_cost = max(detour_cost, 1e-6)
 
             store_volume = stores[i-1]['volume']
-
             weight = detour_cost * store_volume
-
             weights.append(weight)
 
         weights = np.array(weights)
         probs = weights / np.sum(weights)
-
         return probs
 
-
     def _extract_stores(self, route_id):
-        """
-        Notes:
-            Randomly extracts stores from a route until load constraint is satisfied.
-
-        Args:
-            route_id (str): Route ID.
-
-        Returns:
-            list: Selected stores for the route.
-        """
         copy_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         selected_stores = []
@@ -211,25 +145,12 @@ class StoreExtractionGA:
 
         return selected_stores
 
-
     def _mutate_gene(self, route_id, extracted_stores):
-        """
-        Notes:
-            Mutates a specific gene
-
-        Args:
-            route_id (str): Route ID.
-            extracted_stores (list): The current list of extracted stores.
-
-        Returns:
-            list: The newly mutated list of extracted stores.
-        """
         if not extracted_stores:
             return extracted_stores
 
         idx_to_put_back = np.random.choice(len(extracted_stores))
         store_to_put_back = extracted_stores[idx_to_put_back]
-
         new_extracted_stores = [s for i, s in enumerate(extracted_stores) if i != idx_to_put_back]
 
         copy_routes = self._copy_routes_info({route_id: self.main_routes[route_id]})
@@ -260,113 +181,32 @@ class StoreExtractionGA:
 
         return new_extracted_stores
 
-
     def _generate_individual(self):
-        """
-        Notes:
-            Generate an individual for the population.
-
-        Args:
-            None.
-
-        Returns:
-            dict: {route_id: list of selected store dicts}.
-        """
         individual = {}
         for route_id in self.overloaded_routes:
             individual[route_id] = self._extract_stores(route_id)
         return individual
 
-
     def _init_population(self):
-        """
-        Notes:
-            Initialize GA population with valid individuals.
-
-        Args:
-            None.
-
-        Returns:
-            list: List of individuals (dicts)
-        """
         population = []
         for _ in range(self.population_size):
             individual = self._generate_individual()
             population.append(individual)
         return population
 
-
     def _get_individual_routes(self, indiviudal):
-        """
-        Notes:
-            Remove the extracted stores from main routes.
-
-        Args:
-            individual (dict): { route_id: [store1, store2, ...] }
-
-        Returns:
-            dict: route info { dc: {...}, stores: [...] }.
-        """
         copy_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         for route_id in indiviudal:
             route_manager.remove_stores(route_id, indiviudal[route_id])
-
         return route_manager.routes_info
 
-
     def _encode_individual(self, individual):
-        """
-        Notes:
-            Generates a unique string key for an individual.
-
-        Args:
-            individual (dict): { route_id: [store1, store2, ...] }
-
-        Returns:
-            str: Unique key representing the individual
-        """
         store_set = sorted([s['store_id'] for stores in individual.values() for s in stores])
         s = ','.join(map(str, store_set))
         return hashlib.md5(s.encode()).hexdigest()
 
-
-    # def _fitness(self, individual):
-    #     """
-    #     Notes:
-    #         Calculates the fitness value for an individual solution
-
-    #     Args:
-    #         individual (dict): { route_id: [store1, store2, ...] }
-
-    #     Returns:
-    #         float: The fitness value
-    #     """
-    #     key = self._encode_individual(individual)
-    #     if key in self.fitness_cache:
-    #         return self.fitness_cache[key]
-
-    #     stores = self._individual_to_list(individual)
-    #     # fitness = len(stores)
-    #     ac_cost, _, _ = StoreAllocationACO(self.main_routes, stores, self.distance_matrix, self.time_matrix, num_ants=0, iterations=0).run()
-    #     fitness = ac_cost
-
-    #     self.fitness_cache[key] = fitness
-    #     return fitness
-
-
     def _roulette_wheel_selection(self, population, fitnesses):
-        """
-        Notes:
-            Selects two parents from the population using roulette wheel selection.
-
-        Args:
-            population (list): List of individuals.
-            fitnesses (list): Fitness values for each individual.
-
-        Returns:
-            tuple: Two selected parents (individuals).
-        """
         inverse_fitnesses = 1 / np.array([min(f, 1e-12) for f in fitnesses])
         total_inverse_fitness = sum(inverse_fitnesses)
         probabilities = np.array(inverse_fitnesses) / total_inverse_fitness
@@ -374,60 +214,22 @@ class StoreExtractionGA:
         parent2_idx = np.random.choice(len(fitnesses), p=probabilities)
         return population[parent1_idx], population[parent2_idx]
 
-
     def _uniform_crossover(self, parent1, parent2):
-        """
-        Notes:
-            Performs uniform crossover on two parents. (50%)
-
-        Args:
-            parent1 (dict): First parent individual.
-            parent2 (dict): Second parent individual.
-
-        Returns:
-            tuple: Two children individuals (child1, child2).
-        """
         child1 = self._copy_individual(parent1)
         child2 = self._copy_individual(parent2)
-
         route_ids = list(self.overloaded_routes.keys())
-
         for r in route_ids:
             if np.random.rand() < 0.5:
                 child1[r], child2[r] = child2[r], child1[r]
-
         return child1, child2
 
-
     def _crossover(self, parent1, parent2):
-        """
-        Notes:
-            Performs crossover on two parents.
-
-        Args:
-            parent1 (dict): First parent individual.
-            parent2 (dict): Second parent individual.
-
-        Returns:
-            tuple: Two children individuals.
-        """
         cross = np.random.rand()
         if cross < self.cross_rate:
             return self._uniform_crossover(parent1, parent2)
         return self._copy_individual(parent1), self._copy_individual(parent2)
 
-
     def _mutate(self, individual):
-        """
-        Notes:
-            Mutates an individual.
-
-        Args:
-            individual (dict): The individual to mutate.
-
-        Returns:
-            None.
-        """
         for route_id in self.overloaded_routes.keys():
             mutate = np.random.rand()
             if mutate < self.mutation_rate:
@@ -435,18 +237,7 @@ class StoreExtractionGA:
                 mutated_stores = self._mutate_gene(route_id, current_extracted_stores)
                 individual[route_id] = mutated_stores
 
-
     def _best_main_routes(self, individual):
-        """
-        Notes:
-            Get the main routes after extraction based on the individual.
-
-        Args:
-            individual (dict): The individual representing extracted stores.
-
-        Returns:
-            dict: Updated main routes after extraction.
-        """
         copy_routes = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(copy_routes, self.distance_matrix, self.time_matrix)
         for route_id, stores in individual.items():
@@ -454,30 +245,14 @@ class StoreExtractionGA:
                 route_manager.remove_store(route_id, store)
         return route_manager.routes_info
 
-
     def _individual_to_list(self, individual):
-        """
-        Notes:
-            Converts an individual to a set of store IDs.
-
-        Args:
-            individual (dict): The individual to convert.
-
-        Returns:
-            extracted_stores (list): List of extracted stores.
-        """
         extracted_stores = []
         for route_id in individual:
             for store in individual[route_id]:
                 extracted_stores.append(store)
         return extracted_stores
 
-
     def run(self):
-        """
-        Notes:
-            Runs the genetic algorithm for store extraction.
-        """
         population = self._init_population()
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
@@ -492,15 +267,14 @@ class StoreExtractionGA:
                         individual_keys.append(key)
 
                         if key not in shared_cache:
-                            store_list = self._individual_to_list(ind)
-                            unique_tasks_to_run.append((store_list, shared_cache, key))
+                            unique_tasks_to_run.append((ind, shared_cache, key))
 
                     if unique_tasks_to_run:
                         try:
                             list(pool.map(fitness_worker, unique_tasks_to_run, timeout=120, chunksize=max(1, len(unique_tasks_to_run) // (cpu_count() - 2) * 2)))
                         except concurrent.futures.TimeoutError:
                             print('Timeout error')
-                            for _, _, key in unique_tasks_to_run:
+                            for ind_task, cache_key_task, key in unique_tasks_to_run:
                                 if key not in shared_cache:
                                     print(f"Skipping individual {key}")
                                     shared_cache[key] = float('inf')
@@ -510,12 +284,6 @@ class StoreExtractionGA:
                         fitnesses.append(shared_cache[key])
 
                     fitnesses = np.array(fitnesses)
-
-                    # tasks = [self._individual_to_list(ind) for ind in population]
-                    # fitnesses = pool.map(fitness_worker, tasks, chunksize=4)
-                    # print(len(self.fitness_cache))
-                    # for idx, fitness in enumerate(fitnesses):
-                    #     print(f'individual{idx+1} -> cost = {fitness}')
 
                     current_best_index = np.argmin(fitnesses)
                     current_best_cost = fitnesses[current_best_index]

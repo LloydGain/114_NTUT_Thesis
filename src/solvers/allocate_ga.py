@@ -2,17 +2,18 @@ import copy
 import random
 import hashlib
 import numpy as np
-from config import config
 from datetime import datetime, timedelta
 from multiprocessing import cpu_count, Manager
 import concurrent.futures
 from numba import njit
+from numba.typed import List as NumbaList
+
+from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
-from solvers.support_line_ga import SupportLinePlanningGA
+# from solvers.support_line_ga import SupportLinePlanningGA
 
-                                                                               
 @njit(cache=True)
 def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix,
                                 dwell_arr, earliest_arr, latest_arr, first_node_pred_time_epoch, time_limit):
@@ -86,7 +87,6 @@ def _njit_get_store_insertion_cost_pos(store_idx, route_stores, dc_idx, dc_regio
 
 @njit(cache=True)
 def _njit_total_distance(route_paths, dist_matrix):
-           
     total = 0.0
     for k in range(len(route_paths)):
         path = route_paths[k]
@@ -106,7 +106,6 @@ try:
         np.zeros((1, 1)), np.zeros((1, 1)),
         np.array([0.0]), np.array([0.0]), np.array([0.0]), 0.0, 10.0
     )
-    from numba.typed import List as NumbaList
     _dummy = NumbaList()
     _dummy.append(np.array([0, 0], dtype=np.int64))
     _njit_total_distance(_dummy, np.zeros((1, 1)))
@@ -119,14 +118,12 @@ ALLOC_DIST        = None
 ALLOC_TIME        = None
 ALLOC_GA_INSTANCE = None
 
-
 def init_alloc_worker(main_routes, distance_matrix, time_matrix, ga_instance):
     global ALLOC_ROUTES, ALLOC_DIST, ALLOC_TIME, ALLOC_GA_INSTANCE
     ALLOC_ROUTES      = main_routes
     ALLOC_DIST        = distance_matrix
     ALLOC_TIME        = time_matrix
     ALLOC_GA_INSTANCE = ga_instance
-
 
 def alloc_fitness_worker(args):
     chromo, key, shared_cache = args
@@ -141,7 +138,7 @@ def alloc_fitness_worker(args):
 
 
 class StoreAllocationGA:
-           
+    
     _cached_mappings = None
 
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix,
@@ -168,8 +165,7 @@ class StoreAllocationGA:
 
         self._init_numpy_mappings()
         self.remaining_stores = self._sort_stores_by_insertion_cost(remaining_stores)
-
-                                                                               
+                                                                
     def _init_numpy_mappings(self):
         if StoreAllocationGA._cached_mappings is not None:
             (self.s2i, self.i2s, self.np_dist, self.np_time,
@@ -230,7 +226,6 @@ class StoreAllocationGA:
             self.np_latest, self.np_region
         )
 
-                                                                               
     def _get_store_insertion_cost_and_pos(self, route_info, store):
         dc      = route_info['dc']
         stores  = route_info['stores']
@@ -259,7 +254,6 @@ class StoreAllocationGA:
             return float('inf'), -1
         return cost, pos
 
-                                                                               
     def _sort_stores_by_insertion_cost(self, stores):
         temp_routes   = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
@@ -297,7 +291,6 @@ class StoreAllocationGA:
 
         return greedy_chromo
 
-                                                                               
     def _copy_routes_info(self, routes):
         return {
             route_id: {
@@ -311,10 +304,7 @@ class StoreAllocationGA:
         s = ','.join(map(str, individual))
         return hashlib.md5(s.encode()).hexdigest()
 
-                                                                               
     def _routes_to_paths(self, routes_info):
-                                                                           
-        from numba.typed import List as NumbaList
         dc_idx = self.s2i[self.dc['store_id']]
         paths  = NumbaList()
         for route_data in routes_info.values():
@@ -335,7 +325,6 @@ class StoreAllocationGA:
             return 0.0
         return float(_njit_total_distance(paths, self.np_dist))
 
-                                                                               
     def _evaluate_individual(self, individual):
         temp_routes   = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
@@ -354,14 +343,16 @@ class StoreAllocationGA:
                 support_pool.append(store)
 
         main_cost    = self._calculate_total_distance(route_manager.routes_info)
-        support_cost, _ = SupportLinePlanningGA(
-            support_pool, self.distance_matrix, self.time_matrix,
-            population_size=0, generations=0
+        # support_cost, _ = SupportLinePlanningACO(
+        #     support_pool, self.distance_matrix, self.time_matrix,
+        #     population_size=0, generations=0
+        # ).run()
+        support_cost, _ = SupportLinePlanningACO(
+            support_pool, self.distance_matrix, self.time_matrix, iterations=0
         ).run()
 
         return main_cost + support_cost, route_manager.routes_info, support_pool
 
-                                                                               
     def _uniform_crossover(self, parent1, parent2):
         child1, child2 = copy.deepcopy(parent1), copy.deepcopy(parent2)
         for i in range(len(parent1)):
@@ -380,7 +371,6 @@ class StoreAllocationGA:
                 individual[i] = random.choice(self.route_choices)
         return individual
 
-                                                                               
     def run(self):
         greedy_chromo = self._generate_greedy_individual()
         g_cost, g_routes, g_support = self._evaluate_individual(greedy_chromo)
@@ -391,6 +381,15 @@ class StoreAllocationGA:
 
         if self.generations == 0:
             return self.best_cost, self.best_solution, self.best_remaining_solution
+
+        self.log.append({
+            'generation': 0,
+            'iter_worst_cost': float(g_cost),
+            'iter_best_cost': float(g_cost),
+            'iter_avg_cost': float(g_cost),
+            'std_cost': float(0.0),
+            'best_cost': g_cost,
+        })
 
         population  = [greedy_chromo]
         num_stores  = len(self.remaining_stores)
@@ -461,7 +460,7 @@ class StoreAllocationGA:
                     while len(child_pairs) < (self.population_size - self.elite_size):
                         p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
                         c1, c2 = self._crossover(copy.deepcopy(p1['individual']),
-                                                  copy.deepcopy(p2['individual']))
+                                                 copy.deepcopy(p2['individual']))
                         c1 = self._mutate(list(c1))
                         c2 = self._mutate(list(c2))
                         child_pairs.append((c1, c2))
@@ -495,6 +494,6 @@ class StoreAllocationGA:
                     population = elites + childrens
 
         if self.best_individual is not None:
-            _, self.best_solution, self.best_remaining_solution =                self._evaluate_individual(self.best_individual)
+            _, self.best_solution, self.best_remaining_solution = self._evaluate_individual(self.best_individual)
 
         return self.best_cost, self.best_solution, self.best_remaining_solution

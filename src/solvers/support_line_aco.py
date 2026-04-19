@@ -331,7 +331,7 @@ class SupportLinePlanningACO:
             iter_worst_cost = float(np.max(ant_costs))
 
         self.log.append({
-            'iteration': i + 1,
+            'iteration': i,
             'iter_worst_cost': iter_worst_cost,
             'iter_best_cost': iter_best_cost,
             'iter_avg_cost': float(sum(ant_costs) / len(ant_costs)),
@@ -457,7 +457,7 @@ class SupportLinePlanningACO:
 
             self._evaporate_pheromone()
             self._deposit_global_pheromone(optimized_routes, optimized_cost)
-            self._log_iteration(i, distances, optimized_cost[1] if self.is_solomon else optimized_cost)
+            self._log_iteration(i + 1, distances, optimized_cost[1] if self.is_solomon else optimized_cost)
 
             if early_stopper.check(self.best_cost):
                 break
