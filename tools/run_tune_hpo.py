@@ -1,4 +1,6 @@
 import optuna
+import argparse
+import pandas as pd
 from pathlib import Path
 from setup import *
 from main import main
@@ -87,8 +89,36 @@ def objective(trial, data_name, seed):
     )
 
 
+def save_results(study, output_dir, data_name, seed):
+    records = []
+
+    for t in study.trials:
+        if t.value is None:
+            continue
+
+        row = t.params.copy()
+        row["value"] = t.value
+        row["trial"] = t.number
+        records.append(row)
+
+    df = pd.DataFrame(records)
+
+    min_val = df["value"].min()
+    max_val = df["value"].max()
+
+    if max_val == min_val:
+        df["norm_value"] = 1.0
+    else:
+        df["norm_value"] = (max_val - df["value"]) / (max_val - min_val)
+
+    excel_path = output_dir / f"optuna_{data_name}_seed{seed}.xlsx"
+    df.to_excel(excel_path, index=False)
+
+    print(f"Saved Excel to: {excel_path}")
+
+
 def run(data_name, seed=0):
-    output_dir = Path(r"C:\Users\User\Documents\ntut\115_NTUT_Thesis\output\optuna")
+    output_dir = ROOT / "output" / "optuna"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     db_path = output_dir / f"optuna_{data_name}.db"
@@ -108,8 +138,14 @@ def run(data_name, seed=0):
     print("Best value:", study.best_value)
     print("Best params:", study.best_params)
 
+    save_results(study, output_dir, data_name, seed)
+
     return study
 
 
 if __name__ == "__main__":
-    run("20221203", seed=0)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--file_date", type=str, required=True)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    run(args.file_date, args.seed)
