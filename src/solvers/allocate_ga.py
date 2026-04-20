@@ -16,32 +16,40 @@ from solvers.support_line_aco import SupportLinePlanningACO
 
 @njit(cache=True)
 def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix,
-                                dwell_arr, earliest_arr, latest_arr, first_node_pred_time_epoch, time_limit):
-    duration_sec = time_matrix[dc_idx, full_route[1]] + time_matrix[full_route[-2], dc_idx]
-    curr_pred_time = first_node_pred_time_epoch
+                                dwell_arr, earliest_arr, latest_arr, sched_arr, time_limit):
+    first_store_idx = full_route[1]
+    
+    curr_time = sched_arr[first_store_idx]
+    
+    dc_depart_time = curr_time - time_matrix[dc_idx, first_store_idx]
 
-    for i in range(2, len(full_route) - 1):
+    for i in range(1, len(full_route) - 1):
         prev_idx = full_route[i - 1]
         curr_idx = full_route[i]
-        travel_time = time_matrix[prev_idx, curr_idx]
-        pre_dwell   = dwell_arr[prev_idx]
-        arrival_time = curr_pred_time + travel_time + pre_dwell
 
-        if arrival_time < earliest_arr[curr_idx] or arrival_time > latest_arr[curr_idx]:
+        if i > 1:
+            travel_time = time_matrix[prev_idx, curr_idx]
+            pre_dwell = dwell_arr[prev_idx]
+            curr_time += travel_time + pre_dwell
+        if curr_time < earliest_arr[curr_idx]:
+            curr_time = earliest_arr[curr_idx]
+
+        if curr_time > latest_arr[curr_idx]:
             return False
 
-        duration_sec   += travel_time + pre_dwell
-        curr_pred_time  = arrival_time
+    last_store_idx = full_route[-2]
+    curr_time += dwell_arr[last_store_idx] + time_matrix[last_store_idx, dc_idx]
 
-    if duration_sec > time_limit:
+    total_duration = curr_time - dc_depart_time
+    if total_duration > time_limit:
         return False
-    return True
 
+    return True
 
 @njit(cache=True)
 def _njit_get_store_insertion_cost_pos(store_idx, route_stores, dc_idx, dc_region, route_vol, route_cap,
                                        store_region, store_vol, dist_matrix, time_matrix,
-                                       dwell_arr, earliest_arr, latest_arr, first_pred_epoch, time_limit):
+                                       dwell_arr, earliest_arr, latest_arr, sched_arr, time_limit):
     if dc_region == 0 and store_region == 1: return -1.0, -1
     if dc_region == 1 and store_region == 0: return -1.0, -1
     if dc_region == 2 and store_region == 3: return -1.0, -1
@@ -78,12 +86,11 @@ def _njit_get_store_insertion_cost_pos(store_idx, route_stores, dc_idx, dc_regio
 
             if _njit_check_time_constraint(test_route, dc_idx, dist_matrix, time_matrix,
                                            dwell_arr, earliest_arr, latest_arr,
-                                           first_pred_epoch, time_limit):
+                                           sched_arr, time_limit):
                 best_pos = pos - 1
                 min_cost = insert_cost
 
     return min_cost, best_pos
-
 
 @njit(cache=True)
 def _njit_total_distance(route_paths, dist_matrix):
@@ -94,24 +101,22 @@ def _njit_total_distance(route_paths, dist_matrix):
             total += dist_matrix[path[m], path[m + 1]]
     return total
 
-
 try:
     _njit_check_time_constraint(
         np.array([0, 0, 0], dtype=np.int64), 0,
         np.zeros((1, 1)), np.zeros((1, 1)),
-        np.array([0.0]), np.array([0.0]), np.array([0.0]), 0.0, 10.0
+        np.array([0.0]), np.array([0.0]), np.array([0.0]), np.array([0.0]), 10.0
     )
     _njit_get_store_insertion_cost_pos(
         0, np.array([0], dtype=np.int64), 0, 0, 0.0, 10.0, 0, 0.0,
         np.zeros((1, 1)), np.zeros((1, 1)),
-        np.array([0.0]), np.array([0.0]), np.array([0.0]), 0.0, 10.0
+        np.array([0.0]), np.array([0.0]), np.array([0.0]), np.array([0.0]), 10.0
     )
     _dummy = NumbaList()
     _dummy.append(np.array([0, 0], dtype=np.int64))
     _njit_total_distance(_dummy, np.zeros((1, 1)))
 except Exception:
     pass
-
 
 ALLOC_ROUTES      = None
 ALLOC_DIST        = None
@@ -129,16 +134,13 @@ def alloc_fitness_worker(args):
     chromo, key, shared_cache = args
     if key in shared_cache:
         return shared_cache[key]
-
     ga   = ALLOC_GA_INSTANCE
     cost, routes, support = ga._evaluate_individual(chromo)
     result = {'cost': cost}
     shared_cache[key] = result
     return result
 
-
 class StoreAllocationGA:
-    
     _cached_mappings = None
 
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix,
@@ -170,7 +172,7 @@ class StoreAllocationGA:
         if StoreAllocationGA._cached_mappings is not None:
             (self.s2i, self.i2s, self.np_dist, self.np_time,
              self.np_volume, self.np_dwell, self.np_earliest,
-             self.np_latest, self.np_region) = StoreAllocationGA._cached_mappings
+             self.np_latest, self.np_region, self.np_sched) = StoreAllocationGA._cached_mappings
             return
 
         self.s2i = {self.dc['store_id']: 0}
@@ -194,6 +196,7 @@ class StoreAllocationGA:
         self.np_earliest = np.zeros(n, dtype=np.float64)
         self.np_latest   = np.zeros(n, dtype=np.float64)
         self.np_region   = np.full(n, -1, dtype=np.int64)
+        self.np_sched    = np.zeros(n, dtype=np.float64)
 
         region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
         for i in range(1, n):
@@ -204,6 +207,9 @@ class StoreAllocationGA:
             self.np_earliest[i] = float(int(datetime.fromisoformat(s_i['earliest_time']).timestamp()))
             self.np_latest[i]   = float(int(datetime.fromisoformat(s_i['latest_time']).timestamp()))
             self.np_region[i]   = region_map.get(s_i.get('region', ''), -1)
+            
+            sched_str = s_i.get('sched_time', s_i.get('pred_time', s_i['earliest_time']))
+            self.np_sched[i]    = float(int(datetime.fromisoformat(sched_str).timestamp()))
 
             for j in range(n):
                 s_j_id = self.i2s[j]['store_id']
@@ -223,7 +229,7 @@ class StoreAllocationGA:
         StoreAllocationGA._cached_mappings = (
             self.s2i, self.i2s, self.np_dist, self.np_time,
             self.np_volume, self.np_dwell, self.np_earliest,
-            self.np_latest, self.np_region
+            self.np_latest, self.np_region, self.np_sched
         )
 
     def _get_store_insertion_cost_and_pos(self, route_info, store):
@@ -236,18 +242,13 @@ class StoreAllocationGA:
         dc_region_int  = dc_region_map.get(dc.get('region', ''), -1)
         store_region_int = self.np_region[store_idx]
 
-        if len(stores) > 0:
-            first_pred_epoch = float(int(datetime.fromisoformat(stores[0]['pred_time']).timestamp()))
-        else:
-            first_pred_epoch = float(int(datetime.fromisoformat(store['sched_time']).timestamp()))
-
         cost, pos = _njit_get_store_insertion_cost_pos(
             store_idx, route_stores, 0, dc_region_int,
             float(dc.get('total_volume', 0)), float(dc.get('max_capacity', 1e9)),
             store_region_int, float(store.get('volume', 0)),
             self.np_dist, self.np_time, self.np_dwell,
             self.np_earliest, self.np_latest,
-            first_pred_epoch, float(self.time_limit_per_route)
+            self.np_sched, float(self.time_limit_per_route)
         )
 
         if cost < 0:
@@ -343,10 +344,6 @@ class StoreAllocationGA:
                 support_pool.append(store)
 
         main_cost    = self._calculate_total_distance(route_manager.routes_info)
-        # support_cost, _ = SupportLinePlanningACO(
-        #     support_pool, self.distance_matrix, self.time_matrix,
-        #     population_size=0, generations=0
-        # ).run()
         support_cost, _ = SupportLinePlanningACO(
             support_pool, self.distance_matrix, self.time_matrix, iterations=0
         ).run()
@@ -390,6 +387,7 @@ class StoreAllocationGA:
             'std_cost': float(0.0),
             'best_cost': g_cost,
         })
+        print(f'Store Allocation: iteration{0} -> best cost = {g_cost:.4f}')
 
         population  = [greedy_chromo]
         num_stores  = len(self.remaining_stores)

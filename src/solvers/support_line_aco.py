@@ -427,7 +427,9 @@ class SupportLinePlanningACO:
         self._log_iteration(0, [greedy_cost[1] if self.is_solomon else greedy_cost], greedy_cost[1] if self.is_solomon else greedy_cost, greedy_cost[1] if self.is_solomon else greedy_cost)
         self._initial_pheromone(greedy_cost)
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
-        
+
+        print(f'Support Line: iteration{0} -> best_cost: {self.best_cost[1] if self.is_solomon else self.best_cost:.4f}')
+
         for i in range(self.iterations):
             ant_costs = []
             distances = []

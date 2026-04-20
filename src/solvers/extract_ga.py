@@ -6,7 +6,6 @@ import concurrent.futures
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-# 請確保這裡的路徑與你的檔案結構一致
 from solvers.allocate_ga import StoreAllocationGA
 
 ROUTES = None
@@ -45,7 +44,7 @@ def fitness_worker(args):
     
     for route_id, stores in ind.items():
         for store in stores:
-            route_manager.remove_store(route_id, store, fast_update=True)
+            route_manager.remove_store(route_id, store)
             store_list.append(store)
 
     stripped_routes = route_manager.routes_info
