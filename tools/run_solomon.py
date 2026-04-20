@@ -19,18 +19,23 @@ from solvers.support_line_ga import SupportLinePlanningGA
 BEST_KNOWN_SOLUTIONS = {
     'c101': (10, 828.94), 'c102': (10, 828.94), 'c103': (10, 828.06), 'c104': (10, 824.78), 'c105': (10, 828.94),
     'c106': (10, 828.94), 'c107': (10, 828.94), 'c108': (10, 828.94), 'c109': (10, 828.94),
+    
     'c201': (3, 591.56), 'c202': (3, 591.56), 'c203': (3, 591.17), 'c204': (3, 590.6), 'c205': (3, 588.85),
     'c206': (3, 588.49), 'c207': (3, 588.29), 'c208': (3, 588.32),
-    'r101': (20, 1637.7), 'r102': (18, 1466.6), 'r103': (14, 1208.7), 'r104': (11, 976.61), 'r105': (15, 1355.3),
-    'r106': (13, 1234.6), 'r107': (11, 1064.6), 'r108': (10, 938.2), 'r109': (13, 1146.9), 'r110': (12, 1068),
-    'r111': (12, 1048.7), 'r112': (10, 953.63),
-    'r201': (8, 1143.2), 'r202': (8, 1034.4), 'r203': (6, 874.87), 'r204': (5, 735.8), 'r205': (5, 954.16),
-    'r206': (4, 879.86), 'r207': (4, 797.99), 'r208': (4, 705.33), 'r209': (5, 859.39), 'r210': (6, 905.21),
-    'r211': (4, 753.15),
-    'rc101': (14, 1619.8), 'rc102': (14, 1457.4), 'rc103': (11, 1258.0), 'rc104': (10, 1135.5), 'rc105': (15, 1513.7),
-    'rc106': (13, 1378.0), 'rc107': (12, 1212.8), 'rc108': (11, 1117.5),
-    'rc201': (9, 1261.8), 'rc202': (8, 1095.6), 'rc203': (5, 926.82), 'rc204': (4, 786.38), 'rc205': (7, 1157.6),
-    'rc206': (7, 1054.6), 'rc207': (6, 966.08), 'rc208': (4, 778.93)
+    
+    'r101': (19, 1650.8), 'r102': (17, 1486.12), 'r103': (13, 1292.68), 'r104': (9, 1007.31), 'r105': (14, 1377.11),
+    'r106': (12, 1252.03), 'r107': (10, 1104.66), 'r108': (9, 960.88), 'r109': (11, 1194.73), 'r110': (10, 1118.84),
+    'r111': (10, 1096.72), 'r112': (9, 982.14),
+    
+    'r201': (4, 1252.37), 'r202': (3, 1191.7), 'r203': (3, 939.5), 'r204': (2, 825.52), 'r205': (3, 994.43),
+    'r206': (3, 906.14), 'r207': (2, 890.61), 'r208': (2, 726.82), 'r209': (3, 909.16), 'r210': (3, 939.37),
+    'r211': (2, 885.71),
+    
+    'rc101': (14, 1696.95), 'rc102': (12, 1554.75), 'rc103': (11, 1261.67), 'rc104': (10, 1135.48), 'rc105': (13, 1629.44),
+    'rc106': (11, 1424.73), 'rc107': (11, 1230.48), 'rc108': (10, 1139.82),
+    
+    'rc201': (4, 1406.94), 'rc202': (3, 1365.65), 'rc203': (3, 1049.62), 'rc204': (3, 798.46), 'rc205': (4, 1297.65),
+    'rc206': (3, 1146.32), 'rc207': (3, 1061.14), 'rc208': (3, 828.14)
 }
 
 def export_routes(filename, best_solution, output_dir):
@@ -104,6 +109,7 @@ config.DC_CONFIG = {
 from models.route_manager import RouteManager
 from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.support_line_ga import SupportLinePlanningGA
+from solvers.macs import MACSSolver
 
 def parse_solomon_file(filepath):
     with open(filepath, 'r') as f:
@@ -165,7 +171,7 @@ def build_matrices(nodes):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--solver", type=str, choices=["aco", "ga"], default=None, help="Choose solver to run (aco or ga). If not specified, runs both.")
+    parser.add_argument("--solver", type=str, choices=["aco", "ga", "macs"], default=None, help="Choose solver to run (aco, ga, or macs). If not specified, runs all.")
     parser.add_argument("--dataset", type=str, default=None, help="Specific dataset to run, e.g., 'c101.txt'.")
     parser.add_argument("--run-mode", type=str, choices=["only", "onward"], default="only", help="If --dataset is provided, 'only' runs just that dataset, 'onward' runs from that dataset to the end.")
     parser.add_argument("--seed", type=int, default=None, help="Specific seed to run.")
@@ -219,7 +225,7 @@ def run_single_aco_seed(args_tuple):
 
 def main():
     args = parse_args()
-    solvers_to_run = [args.solver] if args.solver else ["aco", "ga"]
+    solvers_to_run = [args.solver] if args.solver else ["aco", "ga", "macs"]
     solomon_dir = r"..\solomon-100"
     
     all_files = [f for f in os.listdir(solomon_dir) if f.endswith('.txt')]
@@ -379,7 +385,7 @@ def main():
                                 if dataset_csv_writer is not None:
                                     dataset_csv_writer.writerow(row_data)
                                     dataset_csv_file.flush()
-                else:
+                elif solver_name == "ga":
                     for run_idx in runs_to_execute:
                         seed_val = run_idx
                         random.seed(seed_val)
@@ -391,13 +397,76 @@ def main():
                             distance_matrix=distance_matrix,
                             time_matrix=time_matrix,
                             population_size=1000,
-                            generations=200, 
-                            early_stop_patience=200,
+                            generations=500, 
+                            early_stop_patience=100,
                             support_capacity=capacity,
                             vehicle_cost=2000,
                             time_limit_per_route=time_limit,
                             is_solomon=True,
                             # target_cost=target_cost
+                        )
+                        
+                        try:
+                            start_time = time.time()
+                            best_cost, best_solution = support.run()
+                            duration = time.time() - start_time
+                            num_routes = len(best_solution) if best_solution else 0
+                            
+                            if isinstance(best_cost, tuple):
+                                distance = best_cost[1]
+                                best_cost_scalar = num_routes * 2000 + distance
+                            else:
+                                distance = best_cost - num_routes * 2000
+                                best_cost_scalar = best_cost
+                                
+                            print(f"  Run {run_idx+1}/{NUM_RUNS} (Seed {seed_val}): Cost: {best_cost_scalar:.2f}, Distance: {distance:.2f}, Routes: {num_routes}, Time: {duration:.2f}s")
+                            
+                            row_data = [filename, len(remaining_stores), capacity, run_idx+1, seed_val, round(best_cost_scalar, 2), num_routes, round(distance, 2), round(duration, 2)]
+                            instance_results[filename].append(row_data)
+                            
+                            if dataset_csv_writer is not None:
+                                dataset_csv_writer.writerow(row_data)
+                                dataset_csv_file.flush()
+                            
+                            if best_cost < overall_best_cost:
+                                overall_best_cost = best_cost
+                                overall_best_sol = best_solution
+                                overall_best_dist = distance
+                                overall_best_routes = num_routes
+                                
+                            run_costs.append(best_cost_scalar)
+                            run_distances.append(distance)
+                            run_routes.append(num_routes)
+                            run_times.append(duration)
+                            successful_runs += 1
+                            
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            print(f"  Run {run_idx+1}/{NUM_RUNS} ERROR: {e}")
+                            row_data = [filename, len(remaining_stores), capacity, run_idx+1, seed_val, "ERROR", "ERROR", "ERROR", "ERROR"]
+                            instance_results[filename].append(row_data)
+                            if dataset_csv_writer is not None:
+                                dataset_csv_writer.writerow(row_data)
+                                dataset_csv_file.flush()
+                elif solver_name == "macs":
+                    for run_idx in runs_to_execute:
+                        seed_val = run_idx
+                        random.seed(seed_val)
+                        np.random.seed(seed_val)
+                        set_numba_seed(seed_val)
+                        
+                        support = MACSSolver(
+                            remaining_stores=remaining_stores,
+                            distance_matrix=distance_matrix,
+                            time_matrix=time_matrix,
+                            num_ants=len(remaining_stores),
+                            iterations=180, # 180 seconds max per seed
+                            support_capacity=capacity,
+                            vehicle_cost=2000,
+                            time_limit_per_route=time_limit,
+                            is_solomon=True,
+                            target_cost=target_cost
                         )
                         
                         try:
