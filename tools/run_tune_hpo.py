@@ -119,9 +119,13 @@ def save_results(study, output_dir, data_name, seed):
 
 def run(data_name, seed=0):
     output_dir = ROOT / "output" / "optuna"
+    db_dir = ROOT / "output" / "optuna" / "db"
+    trial_dir = ROOT / "output" / "optuna" / "trial"
     output_dir.mkdir(parents=True, exist_ok=True)
+    db_dir.mkdir(parents=True, exist_ok=True)
+    trial_dir.mkdir(parents=True, exist_ok=True)
 
-    db_path = output_dir / f"optuna_{data_name}.db"
+    db_path = db_dir / f"optuna_{data_name}.db"
 
     study = optuna.create_study(
         direction="minimize",
@@ -138,7 +142,7 @@ def run(data_name, seed=0):
     print("Best value:", study.best_value)
     print("Best params:", study.best_params)
 
-    save_results(study, output_dir, data_name, seed)
+    save_results(study, trial_dir, data_name, seed)
 
     return study
 
