@@ -346,26 +346,35 @@ class RouteManager:
         """
         Notes:
             Calculate and update total time of the route.
-
-        Args:
-            route (dict): Route information.
-
-        Returns:
-            None.
         """
         if self.time_matrix is None:
             raise ValueError("Time matrix must be provided to update route time.")
 
-        duration = 0
-        stores = [self.dc] + route['stores'] + [self.dc]
+        stores = route.get('stores', [])
+        if not stores:
+            route['dc']['duration'] = 0
+            return
 
-        for prev, curr in zip(stores[:-1], stores[1:]):
-            prev_id, cur_id = prev['store_id'], curr['store_id']
-            travel_time = self.time_matrix[prev_id][cur_id]
-            duration += travel_time
-
-        total_dwell_time = sum(store['dwell_time'] for store in route['stores'])
-        duration += total_dwell_time
+        # For accurate time (including wait time), we use the pred_time of the last store
+        last_store = stores[-1]
+        last_pred = datetime.fromisoformat(last_store['pred_time'])
+        last_dwell = last_store['dwell_time']
+        
+        depot_id = self.dc['store_id']
+        cur_to_dc = self.time_matrix[last_store['store_id']][depot_id]
+        
+        base_dt = last_pred.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        if self.is_solomon:
+            finish_time = last_pred + timedelta(minutes=last_dwell)
+            return_time = finish_time + timedelta(minutes=cur_to_dc)
+            duration = (return_time - base_dt).total_seconds() / 60
+        else:
+            duration = 0
+            all_stops = [self.dc] + stores + [self.dc]
+            for prev, curr in zip(all_stops[:-1], all_stops[1:]):
+                duration += self.time_matrix[prev['store_id']][curr['store_id']]
+            duration += sum(s['dwell_time'] for s in stores)
 
         route['dc']['duration'] = duration
 
@@ -374,34 +383,43 @@ class RouteManager:
         """
         Notes:
             Update predicted time for all stores in all routes.
-
-        Args:
-            route (dict): Route information.
-
-        Returns:
-            None.
         """
         if self.time_matrix is None:
             raise ValueError("Time matrix must be provided to update predicted times.")
 
         stores = route.get('stores', [])
-
         if not stores:
             return
 
-        stores[0]['pred_time'] = stores[0]['sched_time']
-        for prev, curr in zip(stores[:-1], stores[1:]):
-            pre_id, cur_id = prev['store_id'], curr['store_id']
-            travel_time = self.time_matrix[pre_id][cur_id]
-            pre_dwell = prev['dwell_time']
-            arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
-            
-            if self.is_solomon and 'earliest_time' in curr:
+        if self.is_solomon:
+            # Solomon: calculate from midnight, including depot travel and minutes
+            base_dt = datetime.fromisoformat(stores[0]['earliest_time']).replace(hour=0, minute=0, second=0, microsecond=0)
+            depot_id = self.dc['store_id']
+            current_time = base_dt
+
+            for i, curr in enumerate(stores):
+                prev_id = depot_id if i == 0 else stores[i-1]['store_id']
+                travel_time = self.time_matrix[prev_id][curr['store_id']]
+                
+                if i > 0:
+                    prev_dwell = stores[i-1]['dwell_time']
+                    current_time = datetime.fromisoformat(stores[i-1]['pred_time']) + timedelta(minutes=prev_dwell)
+                
+                # Arrival at current store
+                arrival_time = current_time + timedelta(minutes=travel_time)
+                # Wait if early
                 earliest_time = datetime.fromisoformat(curr['earliest_time'])
-                if arrival_time < earliest_time:
-                    arrival_time = earliest_time
-                    
-            curr['pred_time'] = arrival_time.isoformat(timespec='seconds')
+                start_service_time = max(arrival_time, earliest_time)
+                curr['pred_time'] = start_service_time.isoformat(timespec='seconds')
+        else:
+            # Original non-Solomon logic: start from first store's sched_time and use seconds
+            stores[0]['pred_time'] = stores[0].get('sched_time', stores[0]['pred_time'])
+            for prev, curr in zip(stores[:-1], stores[1:]):
+                pre_id, cur_id = prev['store_id'], curr['store_id']
+                travel_time = self.time_matrix[pre_id][cur_id]
+                pre_dwell = prev['dwell_time']
+                arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
+                curr['pred_time'] = arrival_time.isoformat(timespec='seconds')
 
 
     def _update_route_volume(self, route):
@@ -462,8 +480,8 @@ class RouteManager:
             None
         """
         self._update_route_distance(route)
-        self._update_route_time(route)
         self._update_all_stores_pred_time(route)
+        self._update_route_time(route)
         self._update_route_volume(route)
         self._update_route_load_rate(route)
         self._update_route_id(route)

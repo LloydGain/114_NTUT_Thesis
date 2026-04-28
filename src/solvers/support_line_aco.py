@@ -61,9 +61,9 @@ def _njit_roulette_selection(current_idx, feasible_indices, distance_matrix, phe
 
 @njit
 def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_duration,
-                              prev_pred_time_epoch, dc_idx, support_capacity, time_limit,
-                              dist_group, region, volume, time_matrix, dwell_time, 
-                              earliest_time, latest_time, is_solomon):
+                               prev_pred_time_epoch, dc_idx, support_capacity, time_limit,
+                               dist_group, region, volume, time_matrix, dwell_time, 
+                               earliest_time, latest_time, is_solomon):
     feasible = []
     last_g = dist_group[last_idx]
     last_r = region[last_idx]
@@ -102,47 +102,34 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
             if arrival_time > latest_time[store_idx]:
                 continue
                 
-            start_time = arrival_time if arrival_time > earliest_time[store_idx] else earliest_time[store_idx]
+            start_time = max(arrival_time, earliest_time[store_idx])
             pre_to_dc = time_matrix[last_idx, dc_idx]
             cur_to_dc = time_matrix[store_idx, dc_idx]
+            # new_duration in minutes
             new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + (start_time - arrival_time) + dwell_time[store_idx]
         else:
-            if arrival_time < earliest_time[store_idx] or arrival_time > latest_time[store_idx]:
+            # Non-Solomon: arrival_time and start_time are huge timestamps (seconds)
+            if arrival_time > latest_time[store_idx]:
                 continue
+            
+            start_time = max(arrival_time, earliest_time[store_idx])
+            wait_time = start_time - arrival_time
+            
+            # If it's the first store, don't count the billion-seconds gap from T=0 as duration
+            if last_idx == dc_idx:
+                wait_time = 0
                 
             pre_to_dc = time_matrix[last_idx, dc_idx]
             cur_to_dc = time_matrix[store_idx, dc_idx]
-            new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + dwell_time[store_idx]
-        
+            # new_duration in seconds
+            new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + wait_time + dwell_time[store_idx]
+
         if new_duration > time_limit:
             continue
             
         feasible.append(store_idx)
         
-    n_feas = len(feasible)
-    if n_feas == 0:
-        return np.zeros(0, dtype=np.int64)
-        
-    feas_arr = np.zeros(n_feas, dtype=np.int64)
-    for i in range(n_feas):
-        feas_arr[i] = feasible[i]
-
-    K = 20
-
-    if n_feas <= K:
-        return feas_arr
-
-    dists = np.zeros(n_feas, dtype=np.float64)
-    for i in range(n_feas):
-        dists[i] = time_matrix[last_idx, feas_arr[i]]
-
-    idx_sorted = np.argsort(dists)
-    
-    result = np.zeros(K, dtype=np.int64)
-    for i in range(K):
-        result[i] = feas_arr[idx_sorted[i]]
-
-    return result
+    return np.array(feasible, dtype=np.int64)
 
 
 class SupportLinePlanningACO:
@@ -152,7 +139,7 @@ class SupportLinePlanningACO:
     """
     _cached_mappings = None
 
-    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=None, iterations=1, alpha=1, beta=2, rho=0.1, q=1, q0=0.9, early_stop_patience=10, support_capacity=7.2, vehicle_cost=2000, time_limit_per_route=5 * 60 * 60, is_solomon=False, target_cost=None, vnd_strategy='best'):
+    def __init__(self, remaining_stores, distance_matrix, time_matrix, num_ants=None, iterations=1, alpha=1.0, beta=1.0, rho=0.1, q=1.0, q0=0.8, early_stop_patience=10, support_capacity=7.2, vehicle_cost=2000, time_limit_per_route=5 * 60 * 60, is_solomon=False, target_cost=None, vnd_strategy='best'):
         self.dc = config.DC_CONFIG
         self.remaining_stores = remaining_stores
         self.orig_distance_matrix = distance_matrix
@@ -208,14 +195,24 @@ class SupportLinePlanningACO:
         group_map = {'near': 0, 'mid': 1, 'far': 2}
         
         # Populate arrays
+        base_dt = datetime(2024, 1, 1, 0, 0, 0)
         for i in range(n):
             s_i = self.i2s[i]
             s_i_id = s_i['store_id']
             if i > 0:
                 self.np_volume[i] = s_i.get('volume', 0.0)
                 self.np_dwell[i] = s_i.get('dwell_time', 0)
-                self.np_earliest[i] = int(datetime.fromisoformat(s_i['earliest_time']).timestamp())
-                self.np_latest[i] = int(datetime.fromisoformat(s_i['latest_time']).timestamp())
+                
+                dt_e = datetime.fromisoformat(s_i['earliest_time'])
+                dt_l = datetime.fromisoformat(s_i['latest_time'])
+                
+                if self.is_solomon:
+                    self.np_earliest[i] = int((dt_e - base_dt).total_seconds() / 60)
+                    self.np_latest[i] = int((dt_l - base_dt).total_seconds() / 60)
+                else:
+                    self.np_earliest[i] = int(dt_e.timestamp())
+                    self.np_latest[i] = int(dt_l.timestamp())
+                
                 self.np_group[i] = group_map.get(s_i.get('dist_group', ''), -1)
                 self.np_region[i] = region_map.get(s_i.get('region', ''), -1)
                 
@@ -244,16 +241,23 @@ class SupportLinePlanningACO:
         }
 
     def _feasible_stores_idx(self, route, unvisited_idx):
+        base_dt = datetime(2024, 1, 1, 0, 0, 0)
         if len(route['stores']) == 0:
-            return np.array(list(unvisited_idx), dtype=np.int64)
-
-        last_store = route['stores'][-1]
-        last_idx = self.s2i[last_store['store_id']]
-        
-        route_vol = route['dc']['total_volume']
-        curr_duration = route['dc']['duration']
-        # The true pred time
-        prev_pred_time_epoch = int(datetime.fromisoformat(last_store['pred_time']).timestamp())
+            last_idx = 0 # DC
+            route_vol = 0.0
+            curr_duration = 0.0
+            prev_pred_time_epoch = 0 # Start at t=0
+        else:
+            last_store = route['stores'][-1]
+            last_idx = self.s2i[last_store['store_id']]
+            route_vol = route['dc']['total_volume']
+            curr_duration = route['dc']['duration']
+            
+            dt = datetime.fromisoformat(last_store['pred_time'])
+            if self.is_solomon:
+                prev_pred_time_epoch = int((dt - base_dt).total_seconds() / 60)
+            else:
+                prev_pred_time_epoch = int(dt.timestamp())
 
         unv_arr = np.array(list(unvisited_idx), dtype=np.int64)
         
@@ -279,7 +283,10 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             solution[vehicle_id] = route
 
-            feasible_arr = np.array(list(unvisited_idx), dtype=np.int64)
+            feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
+            if len(feasible_arr) == 0:
+                break
+
             current_idx = _njit_greedy_selection(0, feasible_arr, self.np_dist, self.pheromone_matrix, self.alpha, self.beta)
             current_store = self.i2s[current_idx]
 
@@ -289,7 +296,6 @@ class SupportLinePlanningACO:
             while unvisited_idx:
                 feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
                 if len(feasible_arr) == 0:
-                    vehicle_num += 1
                     break
 
                 next_idx = _njit_greedy_selection(current_idx, feasible_arr, self.np_dist, self.pheromone_matrix, self.alpha, self.beta)
@@ -297,6 +303,8 @@ class SupportLinePlanningACO:
                 route_manager.add_store(vehicle_id, next_store)
                 current_idx = next_idx
                 unvisited_idx.remove(next_idx)
+            
+            vehicle_num += 1
 
         return solution
 
@@ -353,31 +361,47 @@ class SupportLinePlanningACO:
             route = self._initial_route(vehicle_id)
             ant_solution[vehicle_id] = route
 
+            # Try to pick the first store for this route
+            feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
+            if len(feasible_arr) == 0:
+                break 
+
             if start_store_idx is not None and start_store_idx in unvisited_idx and vehicle_num == 101:
-                current_idx = start_store_idx
+                if start_store_idx in feasible_arr:
+                    current_idx = start_store_idx
+                else:
+                    current_idx = feasible_arr[0]
             else:
-                feasible_arr = np.array(list(unvisited_idx), dtype=np.int64)
                 rand_q = random.uniform(0.0, 1.0)
                 rand_r = random.uniform(0.0, 1.0)
                 current_idx = _njit_roulette_selection(0, feasible_arr, self.np_dist, self.pheromone_matrix, self.alpha, self.beta, self.q0, rand_q, rand_r)
             
+            if current_idx == -1:
+                break
+
             current_store = self.i2s[current_idx]
             route_manager.add_store(vehicle_id, current_store)
             unvisited_idx.remove(current_idx)
 
+            # Pick subsequent stores
             while unvisited_idx:
                 feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
                 if len(feasible_arr) == 0:
-                    vehicle_num += 1
                     break
 
                 rand_q = random.uniform(0.0, 1.0)
                 rand_r = random.uniform(0.0, 1.0)
                 next_idx = _njit_roulette_selection(current_idx, feasible_arr, self.np_dist, self.pheromone_matrix, self.alpha, self.beta, self.q0, rand_q, rand_r)
+                
+                if next_idx == -1:
+                    break
+
                 next_store = self.i2s[next_idx]
                 route_manager.add_store(vehicle_id, next_store)
                 current_idx = next_idx
                 unvisited_idx.remove(next_idx)
+            
+            vehicle_num += 1
 
         return ant_solution
 
@@ -396,6 +420,8 @@ class SupportLinePlanningACO:
 
     def _deposit_global_pheromone(self, solution, cost):
         cost_val = cost[0] * self.vehicle_cost + cost[1] if self.is_solomon else cost
+        if cost_val == 0:
+            return
         delta_pheromone = self.q / cost_val
         tau_max, tau_min = self._calculate_tau_bounds()
         
