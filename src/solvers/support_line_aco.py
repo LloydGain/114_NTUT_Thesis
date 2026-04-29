@@ -108,21 +108,16 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
             # new_duration in minutes
             new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + (start_time - arrival_time) + dwell_time[store_idx]
         else:
-            # Non-Solomon: arrival_time and start_time are huge timestamps (seconds)
+            # Non-Solomon: strict time window — arrival must be within [earliest, latest]
+            if arrival_time < earliest_time[store_idx]:
+                continue
             if arrival_time > latest_time[store_idx]:
                 continue
-            
-            start_time = max(arrival_time, earliest_time[store_idx])
-            wait_time = start_time - arrival_time
-            
-            # If it's the first store, don't count the billion-seconds gap from T=0 as duration
-            if last_idx == dc_idx:
-                wait_time = 0
-                
+
             pre_to_dc = time_matrix[last_idx, dc_idx]
             cur_to_dc = time_matrix[store_idx, dc_idx]
-            # new_duration in seconds
-            new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + wait_time + dwell_time[store_idx]
+            # new_duration in seconds (no waiting allowed)
+            new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + dwell_time[store_idx]
 
         if new_duration > time_limit:
             continue
@@ -223,6 +218,12 @@ class SupportLinePlanningACO:
                 if s_i_id in self.orig_time_matrix and s_j_id in self.orig_time_matrix[s_i_id]:
                     self.np_time[i, j] = self.orig_time_matrix[s_i_id][s_j_id]
 
+        # DC departure time: for non-Solomon, use the earliest store opening time
+        if not self.is_solomon and self.store_count > 0:
+            self.dc_departure_time = int(np.min(self.np_earliest[1:self.store_count + 1]))
+        else:
+            self.dc_departure_time = 0
+
     # Re-wrap original functions referencing Numpy mappings
     def _initial_route(self, vehicle_id):
         return {
@@ -246,7 +247,7 @@ class SupportLinePlanningACO:
             last_idx = 0 # DC
             route_vol = 0.0
             curr_duration = 0.0
-            prev_pred_time_epoch = 0 # Start at t=0
+            prev_pred_time_epoch = self.dc_departure_time if not self.is_solomon else 0
         else:
             last_store = route['stores'][-1]
             last_idx = self.s2i[last_store['store_id']]
@@ -285,7 +286,14 @@ class SupportLinePlanningACO:
 
             feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
             if len(feasible_arr) == 0:
-                break
+                # No feasible stores from DC: force-assign one store regardless of time window
+                # so no store is left behind
+                forced_idx = next(iter(unvisited_idx))
+                forced_store = self.i2s[forced_idx]
+                route_manager.add_store(vehicle_id, forced_store)
+                unvisited_idx.remove(forced_idx)
+                vehicle_num += 1
+                continue
 
             current_idx = _njit_greedy_selection(0, feasible_arr, self.np_dist, self.pheromone_matrix, self.alpha, self.beta)
             current_store = self.i2s[current_idx]
@@ -364,7 +372,13 @@ class SupportLinePlanningACO:
             # Try to pick the first store for this route
             feasible_arr = self._feasible_stores_idx(route, unvisited_idx)
             if len(feasible_arr) == 0:
-                break 
+                # No feasible stores from DC: force-assign one store and continue
+                forced_idx = next(iter(unvisited_idx))
+                forced_store = self.i2s[forced_idx]
+                route_manager.add_store(vehicle_id, forced_store)
+                unvisited_idx.remove(forced_idx)
+                vehicle_num += 1
+                continue
 
             if start_store_idx is not None and start_store_idx in unvisited_idx and vehicle_num == 101:
                 if start_store_idx in feasible_arr:
