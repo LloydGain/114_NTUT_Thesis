@@ -1,6 +1,8 @@
 import os
 import random
 import time
+import threading
+import queue
 from datetime import datetime, timedelta
 
 from config.config import DC_CONFIG
@@ -370,18 +372,18 @@ class _ACSTime(_ACSColony):
         for _ in range(self.num_ants):
             routes = _new_active_ant(self, self.num_vehicles, self._in,
                                      False, self.nodes, self.dist, self.capacity)
-            opt_routes = _apply_vnd(routes, self.nodes, self.vnd, self.dc_config)
-            f, cost = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
+            # opt_routes = _apply_vnd(routes, self.nodes, self.vnd, self.dc_config)
+            f, cost = _solution_cost(routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
             if f and cost < best_cost:
                 best_cost = cost
-                best_sol = [r[:] for r in opt_routes]
+                best_sol = [r[:] for r in routes]
                 
-        # if best_sol is not None and hasattr(self, 'vnd') and self.vnd is not None:
-        #     opt_routes = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
-        #     f_opt, cost_opt = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
-        #     if f_opt and cost_opt < best_cost:
-        #         best_cost = cost_opt
-        #         best_sol = [r[:] for r in opt_routes]
+        if best_sol is not None and hasattr(self, 'vnd') and self.vnd is not None:
+            opt_routes = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
+            f_opt, cost_opt = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
+            if f_opt and cost_opt < best_cost:
+                best_cost = cost_opt
+                best_sol = [r[:] for r in opt_routes]
                 
         if gb_routes:
             self._global_upd(gb_routes, gb_cost)
@@ -427,6 +429,40 @@ class _ACSVei(_ACSColony):
         return new_feasible
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Multiprocessing Workers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _acs_time_worker(nodes, dist, time_mat, capacity, num_vehicles,
+                     colony_kw, gb_routes, gb_cost, iterations, result_queue):
+    acs = _ACSTime(nodes=nodes, dist=dist, time_mat=time_mat,
+                   capacity=capacity, num_vehicles=num_vehicles, **colony_kw)
+    for iter_num in range(iterations):
+        sol, cost = acs.cycle(gb_routes, gb_cost)
+        if sol is not None and len(sol) <= num_vehicles and cost < gb_cost:
+            gb_routes, gb_cost = sol, cost
+            print(f"    [ACS-TIME] iter {iter_num}, vehicle={len(sol)}, dist={cost:.2f}")
+            result_queue.put(('TIME_IMPROVED', [r[:] for r in sol], cost))
+
+
+def _acs_vei_worker(nodes, dist, time_mat, capacity, num_vehicles_minus1,
+                    colony_kw, gb_routes, gb_cost, iterations, result_queue):
+    acs = _ACSVei(nodes=nodes, dist=dist, time_mat=time_mat,
+                  capacity=capacity, num_vehicles=num_vehicles_minus1, **colony_kw)
+    for iter_num in range(iterations):
+        res = acs.cycle(gb_routes, gb_cost)
+        if res is not None:
+            r, c = res
+            nv_new = len(r)
+            if nv_new < num_vehicles_minus1 + 1:
+                print(f"    [ACS-VEI] iter {iter_num}, vehicle={len(r)}, dist={c:.2f}")
+                result_queue.put(('VEI_FEASIBLE', [ri[:] for ri in r], c))
+                break
+            elif nv_new == num_vehicles_minus1 + 1 and c < gb_cost:
+                gb_routes, gb_cost = r, c
+                print(f"    [ACS-VEI] iter {iter_num}, vehicle={len(r)}, dist={c:.2f}")
+                result_queue.put(('VEI_IMPROVED', [ri[:] for ri in r], c))
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MACSSolver 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -436,7 +472,7 @@ class MACSSolver:
                  support_capacity=200,
                  time_limit_per_route=1236.0,
                  is_solomon=False,
-                 beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
+                 beta=1.0, rho=0.5, q0=0.8, early_stop_patience=10,
                  verbose=True, vnd_strategy='best'):
 
         self.remaining_stores = remaining_stores
@@ -463,11 +499,11 @@ class MACSSolver:
         self.dc_config = DC_CONFIG.copy()
         self.dc_config['max_capacity'] = support_capacity
 
-        self.num_ants = max(num_ants, 5)
+        self.num_ants = num_ants
         self.beta = beta
         self.rho  = rho
         self.q0   = q0
-        self.tau0 = 1.0 / (len(self.nodes) * 10.0)
+        self.tau0 = 1.0
 
         self._nodes_internal = self.nodes
 
@@ -478,8 +514,9 @@ class MACSSolver:
         gb_routes = _nearest_neighbor(nodes, dist, self.time_mat, cap, self.is_solomon)
         gb_routes = _insertion(gb_routes, nodes, dist, self.time_mat, cap, self.is_solomon)
         gb_f, gb_cost = _solution_cost(gb_routes, nodes, dist, self.time_mat, cap, self.is_solomon)
-        gb_nv   = len(gb_routes)
+        gb_nv = len(gb_routes)
 
+        self.tau0 = 1.0 / (len(nodes) * len(gb_routes))
         if self.verbose:
             print(f"    [MACS] Init: {gb_nv} vehicles, dist={gb_cost:.2f}, feasible={gb_f}")
 
@@ -488,42 +525,58 @@ class MACSSolver:
 
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
 
+        colony_kw = dict(num_ants=self.num_ants, beta=self.beta,
+                         rho=self.rho, q0=self.q0, tau0=self.tau0,
+                         is_solomon=self.is_solomon,
+                         vnd=self.vnd, dc_config=self.dc_config)
+
+        inner_iters = 20
+
         for iter_num in range(self.iterations):
+            print(f"    [MACS] iter {iter_num}, vehicle={gb_nv}, dist={gb_cost:.2f}, feasible={gb_f}")
             v = gb_nv
+            result_queue = queue.Queue()
 
-            kw = dict(nodes=nodes, dist=dist, capacity=cap,
-                      num_ants=self.num_ants, beta=self.beta,
-                      rho=self.rho, q0=self.q0, tau0=self.tau0,
-                      is_solomon=self.is_solomon, vnd=self.vnd, dc_config=self.dc_config)
+            t_time = threading.Thread(
+                target=_acs_time_worker,
+                args=(nodes, dist, self.time_mat, cap, v,
+                      colony_kw,
+                      [r[:] for r in gb_routes], gb_cost,
+                      inner_iters, result_queue))
+            t_vei = threading.Thread(
+                target=_acs_vei_worker,
+                args=(nodes, dist, self.time_mat, cap, max(1, v - 1),
+                      colony_kw,
+                      [r[:] for r in gb_routes], gb_cost,
+                      inner_iters, result_queue))
 
-            acs_vei  = _ACSVei(num_vehicles=max(1, v - 1), time_mat=self.time_mat, **kw)
-            acs_time = _ACSTime(num_vehicles=v,            time_mat=self.time_mat, **kw)
+            t_time.start()
+            t_vei.start()
 
-            # Optional: do a few targeted Vehicle reductions if needed.
-            found_fewer = False
-            inner_max = 10 # instead of max_inner reliant on time, give VEI a limited # of attempts
-            
-            for _ in range(inner_max):
-                vei_res = acs_vei.cycle(gb_routes, gb_cost)
-                if vei_res is not None:
-                    r, c = vei_res
-                    nv_new = len(r)
-                    if nv_new < gb_nv:
-                        gb_routes, gb_cost, gb_nv = r, c, nv_new
-                        found_fewer = True
-                        v = gb_nv
-                        break
-                    elif nv_new == gb_nv and c < gb_cost:
-                        gb_routes, gb_cost = r, c
+            t_time.join()
+            t_vei.join()
 
-            # Then do TIME cycle for distance optimization
-            if found_fewer:
-                acs_time.num_vehicles = gb_nv
-                
-            time_sol, time_cost = acs_time.cycle(gb_routes, gb_cost)
-            if time_sol is not None and len(time_sol) <= gb_nv and time_cost < gb_cost:
-                gb_routes, gb_cost = time_sol, time_cost
-                gb_nv = len(gb_routes)
+            while not result_queue.empty():
+                msg = result_queue.get_nowait()
+                source, sol, cost = msg
+
+                if source == 'VEI_FEASIBLE':
+                    nv_new = len(sol)
+                    if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
+                        gb_routes, gb_cost, gb_nv = sol, cost, nv_new
+                        if self.verbose:
+                            print(f"    [MACS Iter {iter_num}] VEI ✓ vehicles={gb_nv}, dist={gb_cost:.2f}")
+
+                elif source == 'VEI_IMPROVED':
+                    if len(sol) == gb_nv and cost < gb_cost:
+                        gb_routes, gb_cost = sol, cost
+
+                elif source == 'TIME_IMPROVED':
+                    if len(sol) <= gb_nv and cost < gb_cost:
+                        gb_routes, gb_cost = sol, cost
+                        gb_nv = len(gb_routes)
+                        if self.verbose:
+                            print(f"    [MACS Iter {iter_num}] TIME ✓ dist={gb_cost:.2f}")
 
             if early_stopper.check((gb_nv, gb_cost)):
                 print(f"    [MACS] Early stop triggered at iteration {iter_num}.")
@@ -531,7 +584,7 @@ class MACSSolver:
 
             if self.verbose:
                 elapsed = time.time() - t_start
-                print(f"    [MACS Iter {iter_num}] Time: {elapsed:.1f}s, Vehicles: {gb_nv}, Dist: {gb_cost:.2f}")
+                print(f"    [MACS Iter {iter_num}] elapsed={elapsed:.1f}s, vehicles={gb_nv}, dist={gb_cost:.2f}")
 
         elapsed = time.time() - t_start
         if self.verbose:
