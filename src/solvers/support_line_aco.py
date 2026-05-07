@@ -468,7 +468,7 @@ class SupportLinePlanningACO:
         self._initial_pheromone(greedy_cost)
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
 
-        print(f'Support Line: iteration{0} -> best_cost: {self.best_cost[1] if self.is_solomon else self.best_cost:.4f}')
+        print(f'Support Line: iteration{0} -> best_cost: {self.best_cost[1] if self.is_solomon else self.best_cost:.2f}')
 
         for i in range(self.iterations):
             ant_costs = []
@@ -493,9 +493,9 @@ class SupportLinePlanningACO:
                 self.best_solution = optimized_routes
 
             if self.is_solomon:
-                print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost[0]} vehicles, {self.best_cost[1]:.4f} distance')
+                print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost[0]} vehicles, {self.best_cost[1]:.2f} distance')
             else:
-                print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.4f}')
+                print(f'Support Line: iteration{i + 1} -> best_cost: {self.best_cost:.2f}')
 
             self._evaporate_pheromone()
             self._deposit_global_pheromone(optimized_routes, optimized_cost)
@@ -507,11 +507,11 @@ class SupportLinePlanningACO:
             if self.target_cost is not None:
                 if self.is_solomon:
                     if self.best_cost[0] < self.target_cost[0] or (self.best_cost[0] == self.target_cost[0] and self.best_cost[1] <= self.target_cost[1] + 1e-4):
-                        print(f"ACO Early Stop: Reached target cost NV={self.target_cost[0]}, Dist={self.target_cost[1]:.4f} (Best Known)")
+                        print(f"ACO Early Stop: Reached target cost NV={self.target_cost[0]}, Dist={self.target_cost[1]:.2f} (Best Known)")
                         break
                 else:
                     if self.best_cost <= self.target_cost + 1e-4:
-                        print(f"ACO Early Stop: Reached target cost {self.target_cost:.4f} (Best Known)")
+                        print(f"ACO Early Stop: Reached target cost {self.target_cost:.2f} (Best Known)")
                         break
 
         return self.best_cost, self.best_solution

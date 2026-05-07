@@ -119,7 +119,7 @@ from models.route_manager import RouteManager
 from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.support_line_ga import SupportLinePlanningGA
 from solvers.macs import MACSSolver
-from solvers.macs_numba import MACSNumbaSolver
+from solvers.support_line_macs import SupportLinePlanningMACS
 
 def parse_solomon_file(filepath):
     with open(filepath, 'r') as f:
@@ -181,7 +181,7 @@ def build_matrices(nodes):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--solver", type=str, choices=["aco", "ga", "macs", "macs_numba"], default=None, help="Choose solver to run (aco, ga, macs, or macs_numba). If not specified, runs all.")
+    parser.add_argument("--solver", type=str, choices=["aco", "ga", "macs", "support_line_macs"], default=None, help="Choose solver to run (aco, ga, macs, or support_line_macs). If not specified, runs all.")
     parser.add_argument("--dataset", type=str, default=None, help="Specific dataset to run, e.g., 'c101.txt'.")
     parser.add_argument("--run-mode", type=str, choices=["only", "onward"], default="only", help="If --dataset is provided, 'only' runs just that dataset, 'onward' runs from that dataset to the end.")
     parser.add_argument("--seed", type=int, default=None, help="Specific seed to run.")
@@ -248,12 +248,12 @@ def run_single_macs_seed(args_tuple):
         remaining_stores=remaining_stores,
         distance_matrix=distance_matrix,
         time_matrix=time_matrix,
-        num_ants=10, 
-        iterations=20,
+        num_ants=5, 
+        iterations=100,
         support_capacity=capacity,
         time_limit_per_route=time_limit,
         is_solomon=True,
-        early_stop_patience=30,
+        early_stop_patience=10,
         verbose=True,
         vnd_strategy='best'
     )
@@ -275,12 +275,12 @@ def run_single_macs_seed(args_tuple):
     except Exception as e:
         raise e
 
-def run_single_macs_numba_seed(args_tuple):
+def run_single_support_line_macs_seed(args_tuple):
     run_idx, remaining_stores, distance_matrix, time_matrix, capacity, time_limit = args_tuple
     import random
     import numpy as np
     import time
-    from solvers.macs_numba import MACSNumbaSolver
+    from solvers.support_line_macs import SupportLinePlanningMACS
     import run_solomon
     
     seed_val = run_idx
@@ -288,7 +288,7 @@ def run_single_macs_numba_seed(args_tuple):
     np.random.seed(seed_val)
     run_solomon.set_numba_seed(seed_val)
     
-    support = MACSNumbaSolver(
+    support = SupportLinePlanningMACS(
         remaining_stores=remaining_stores,
         distance_matrix=distance_matrix,
         time_matrix=time_matrix,
@@ -594,14 +594,14 @@ def main():
                                     dataset_csv_writer.writerow(row_data)
                                     dataset_csv_file.flush()
 
-                elif solver_name == "macs_numba":
+                elif solver_name == "support_line_macs":
                     import concurrent.futures
                     max_workers = max(1, os.cpu_count() - 2) if os.cpu_count() else 4
                     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
                         future_to_run_idx = {}
                         for run_idx in runs_to_execute:
                             args_tuple = (run_idx, remaining_stores, distance_matrix, time_matrix, capacity, time_limit)
-                            fut = executor.submit(run_single_macs_numba_seed, args_tuple)
+                            fut = executor.submit(run_single_support_line_macs_seed, args_tuple)
                             future_to_run_idx[fut] = run_idx
                             
                         for future in concurrent.futures.as_completed(future_to_run_idx):
@@ -632,7 +632,7 @@ def main():
                                 successful_runs += 1
                                 
                             except Exception as e:
-                                print(f"  Run {run_idx+1}/{NUM_RUNS} ERROR (MACS-NUMBA): {e}")
+                                print(f"  Run {run_idx+1}/{NUM_RUNS} ERROR (SUPPORT_LINE_MACS): {e}")
                                 row_data = [filename, len(remaining_stores), capacity, run_idx+1, seed_val, "ERROR", "ERROR", "ERROR", "ERROR"]
                                 instance_results[filename].append(row_data)
                                 if dataset_csv_writer is not None:

@@ -15,6 +15,7 @@ from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
 from solvers.allocate_ga import StoreAllocationGA
 from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.support_line_macs import SupportLinePlanningMACS
 from solvers.vnd import VND
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
@@ -107,13 +108,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 50
         },
         'support_line_aco': {
-            'iterations': 1000,
-            'alpha': 1,
+            'iterations': 200,
+            'num_ants': 20,
+            # 'alpha': 1,
             'beta': 1,
             'rho': 0.5,
-            'q': 1,
+            # 'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 50,
+            'early_stop_patience': 20,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
             'vnd_strategy': 'best'
@@ -143,14 +145,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         },
         'support_line_aco': {
             'iterations': 10,
-            'alpha': 1,
+            # 'alpha': 1,
             'beta': 1,
             'rho': 0.5,
-            'q': 1,
+            # 'q': 1,
             'q0': 0.9,
             'early_stop_patience': 50,
             'support_capacity': 7.2,
-            'vehicle_cost': 2000,
+            # 'vehicle_cost': 2000,
             'vnd_strategy': 'first'
         },
         'Test': True,
@@ -234,7 +236,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     print("Starting Store Allocation using GA...")
     allocate_params = params['store_allocation_ga']
     store_allocate = StoreAllocationGA(main_routes, extracted_stores, distance_matrix, time_matrix, **allocate_params)
-    _, main_routes, remaining_stores = store_allocate.run()
+    _, main_routes, remaining_stores, _ = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 
     end_time = time.time()
@@ -247,9 +249,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    print("Starting Support Line Planning using ACO...")
+    print("Starting Support Line Planning using MACS...")
     support_params = params['support_line_aco']
     support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, **support_params)
+    # support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, **support_params)
     _, support_routes = support.run()
     support_line_log_data = support.log
 
@@ -402,7 +405,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
     optimized_distance = sum(route['dc']['distance'] for route in optimized_routes.values())
-    vehicle_cost = params['support_line_aco']['vehicle_cost']
+    vehicle_cost = 2000
     support_vehicle_count = sum(1 for route in optimized_routes.values() if route['dc']['route_id'].isdigit())
     optimized_cost = optimized_distance + (support_vehicle_count * vehicle_cost)
 

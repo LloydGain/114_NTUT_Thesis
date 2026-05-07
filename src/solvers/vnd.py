@@ -214,6 +214,40 @@
 #                 prev_store = cur_store
 #             return True
 
+#     def _check_region_constraint(self, stores):
+#         if self.is_solomon or not stores:
+#             return True
+            
+#         region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+#         group_map = {'near': 0, 'mid': 1, 'far': 2}
+        
+#         for i in range(len(stores) - 1):
+#             curr = stores[i]
+#             nxt = stores[i+1]
+            
+#             curr_g = group_map.get(curr.get('dist_group', ''), -1)
+#             nxt_g = group_map.get(nxt.get('dist_group', ''), -1)
+#             curr_r = region_map.get(curr.get('region', ''), -1)
+#             nxt_r = region_map.get(nxt.get('region', ''), -1)
+            
+#             if curr_g == -1 or nxt_g == -1: continue
+            
+#             # 1. Opposite region restriction for Far stores
+#             if curr_g == 2:
+#                 if (curr_r == 0 and nxt_r == 1) or \
+#                    (curr_r == 1 and nxt_r == 0) or \
+#                    (curr_r == 2 and nxt_r == 3) or \
+#                    (curr_r == 3 and nxt_r == 2):
+#                     return False
+            
+#             # 2. Far -> Mid -> Near hierarchy
+#             if curr_g == 1 and nxt_g not in (0, 1): # Cannot go back to Far(2)
+#                 return False
+#             if curr_g == 0 and nxt_g != 0: # Cannot go back to Mid(1) or Far(2)
+#                 return False
+                
+#         return True
+
 #     def _check_capacity_constraint(self, route, store):
 #         cap = route['dc']['max_capacity']
 #         total = sum(s['volume'] for s in route['stores']) + store['volume']
@@ -233,7 +267,7 @@
 #                 new_stores[i:j + 1] = list(reversed(new_stores[i:j + 1]))
 #                 new_dist = self._calculate_route_distance(new_stores)
 #                 if cost - new_dist > 1e-6:
-#                     if self._check_time_constraint(new_stores):
+#                     if self._check_time_constraint(new_stores) and self._check_region_constraint(new_stores):
 #                         return new_stores, new_dist
 #         return stores, cost
 
@@ -246,7 +280,7 @@
 #                 new_stores[i:j + 1] = list(reversed(new_stores[i:j + 1]))
 #                 new_dist = self._calculate_route_distance(new_stores)
 #                 if best_dist - new_dist > 1e-6:
-#                     if self._check_time_constraint(new_stores):
+#                     if self._check_time_constraint(new_stores) and self._check_region_constraint(new_stores):
 #                         best_stores, best_dist = new_stores, new_dist
 #         return best_stores, best_dist
 
@@ -267,7 +301,7 @@
 #                 new_dist = self._calculate_route_distance(new_r)
 #                 improvement = original_dist - new_dist
 
-#                 if improvement > 1e-6 and self._check_time_constraint(new_r):
+#                 if improvement > 1e-6 and self._check_time_constraint(new_r) and self._check_region_constraint(new_r):
 #                     return new_r, new_dist
 
 #         return r_stores, original_dist
@@ -293,7 +327,7 @@
 #                 improvement = original_dist - new_dist
 
 #                 if improvement > best_improvement and improvement > 1e-6:
-#                     if self._check_time_constraint(new_r):
+#                     if self._check_time_constraint(new_r) and self._check_region_constraint(new_r):
 #                         best_r, best_dist = new_r, new_dist
 #                         best_improvement = improvement
 
@@ -319,7 +353,9 @@
 #                 if improvement <= 1e-6: continue
 #                 new_r1 = r1_stores[:idx] + r1_stores[idx+1:]
 #                 new_r2 = r2_stores[:idy] + [r1_store] + r2_stores[idy:]
-#                 if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route2_id, new_r2)):
+#                 if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                     self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                     self._check_order_principle(route2_id, new_r2)):
 #                     return r1_store, idy, improvement
 #         return None, -1, 0.0
 
@@ -344,7 +380,9 @@
 #                 if improvement <= best_improvement or improvement <= 1e-6: continue
 #                 new_r1 = r1_stores[:idx] + r1_stores[idx+1:]
 #                 new_r2 = r2_stores[:idy] + [r1_store] + r2_stores[idy:]
-#                 if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route2_id, new_r2)):
+#                 if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                     self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                     self._check_order_principle(route2_id, new_r2)):
 #                     best_store, best_pos, best_improvement = r1_store, idy, improvement
 #         return best_store, best_pos, best_improvement
 
@@ -370,7 +408,9 @@
 #                 if improvement <= 1e-6: continue
 #                 new_r1, new_r2 = r1_stores[:], r2_stores[:]
 #                 new_r1[i], new_r2[j] = s2, s1
-#                 if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
+#                 if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                     self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                     self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
 #                     return s1, s2, improvement
 #         return None, None, 0.0
 
@@ -397,7 +437,9 @@
 #                 if improvement <= best_improvement or improvement <= 1e-6: continue
 #                 new_r1, new_r2 = r1_stores[:], r2_stores[:]
 #                 new_r1[i], new_r2[j] = s2, s1
-#                 if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
+#                 if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                     self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                     self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
 #                     best_s1, best_s2, best_improvement = s1, s2, improvement
 #         return best_s1, best_s2, best_improvement
 
@@ -428,7 +470,9 @@
 #                         improvement = -delta
 #                         if improvement <= 1e-6: continue
 #                         new_r1, new_r2 = r1_stores[:i] + seg2 + r1_stores[i + l1:], r2_stores[:j] + seg1 + r2_stores[j + l2:]
-#                         if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
+#                         if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                             self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                             self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
 #                             return new_r1, new_r2, improvement
 #         return None, None, 0.0
 
@@ -460,7 +504,9 @@
 #                         improvement = -delta
 #                         if improvement <= best_improvement or improvement <= 1e-6: continue
 #                         new_r1, new_r2 = r1_stores[:i] + seg2 + r1_stores[i+l1:], r2_stores[:j] + seg1 + r2_stores[j+l2:]
-#                         if (self._check_time_constraint(new_r1) and self._check_time_constraint(new_r2) and self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
+#                         if (self._check_time_constraint(new_r1) and self._check_region_constraint(new_r1) and 
+#                             self._check_time_constraint(new_r2) and self._check_region_constraint(new_r2) and 
+#                             self._check_order_principle(route1_id, new_r1) and self._check_order_principle(route2_id, new_r2)):
 #                             best_r1, best_r2, best_improvement = new_r1, new_r2, improvement
 #         return best_r1, best_r2, best_improvement
 

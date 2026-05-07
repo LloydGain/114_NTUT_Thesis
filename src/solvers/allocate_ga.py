@@ -12,7 +12,6 @@ from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_aco import SupportLinePlanningACO
-# from solvers.support_line_ga import SupportLinePlanningGA
 
 @njit(cache=True)
 def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix,
@@ -32,7 +31,7 @@ def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix
             pre_dwell = dwell_arr[prev_idx]
             curr_time += travel_time + pre_dwell
         if curr_time < earliest_arr[curr_idx]:
-            curr_time = earliest_arr[curr_idx]
+            return False
 
         if curr_time > latest_arr[curr_idx]:
             return False
@@ -135,8 +134,8 @@ def alloc_fitness_worker(args):
     if key in shared_cache:
         return shared_cache[key]
     ga   = ALLOC_GA_INSTANCE
-    cost, routes, support = ga._evaluate_individual(chromo)
-    result = {'cost': cost}
+    cost, routes, support, repaired, vn = ga._evaluate_individual(chromo)
+    result = {'cost': cost, 'repaired': repaired, 'vn': vn}
     shared_cache[key] = result
     return result
 
@@ -273,6 +272,7 @@ class StoreAllocationGA:
         temp_routes   = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
         greedy_chromo = []
+        support_pool  = []
 
         for store in self.remaining_stores:
             best_r    = 'SUPPORT'
@@ -289,8 +289,53 @@ class StoreAllocationGA:
             greedy_chromo.append(best_r)
             if best_r != 'SUPPORT':
                 route_manager.insert_store(store, best_r, best_pos)
+            else:
+                support_pool.append(store)
 
-        return greedy_chromo
+        main_cost = self._calculate_total_distance(route_manager.routes_info)
+        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
+        aco_cost, support_routes = aco.run()
+        vn = len(support_routes)
+        total_cost = main_cost + aco_cost
+        return greedy_chromo, total_cost, route_manager.routes_info, support_pool, vn
+
+    def _generate_random_individual(self):
+        """Probabilistic construction weighted by inverse insertion cost.
+        Returns (chromo, total_cost, routes_info, support_pool, vn)."""
+        temp_routes   = self._copy_routes_info(self.main_routes)
+        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+        chromo       = []
+        support_pool = []
+
+        for store in self.remaining_stores:
+            feasible_routes = []
+            feasible_costs  = []
+            for r_id in self.main_routes.keys():
+                cost, pos = self._get_store_insertion_cost_and_pos(
+                    route_manager.routes_info[r_id], store)
+                if pos != -1:
+                    feasible_routes.append((r_id, pos))
+                    feasible_costs.append(cost)
+
+            if not feasible_routes:
+                chromo.append('SUPPORT')
+                support_pool.append(store)
+                continue
+
+            inv_costs = np.array([1.0 / (c + 1e-6) for c in feasible_costs])
+            probs     = inv_costs / inv_costs.sum()
+            chosen_idx           = np.random.choice(len(feasible_routes), p=probs)
+            chosen_r, chosen_pos = feasible_routes[chosen_idx]
+
+            chromo.append(chosen_r)
+            route_manager.insert_store(store, chosen_r, chosen_pos)
+
+        main_cost = self._calculate_total_distance(route_manager.routes_info)
+        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
+        aco_cost, support_routes = aco.run()
+        vn = len(support_routes)
+        total_cost = main_cost + aco_cost
+        return chromo, total_cost, route_manager.routes_info, support_pool, vn
 
     def _copy_routes_info(self, routes):
         return {
@@ -326,58 +371,264 @@ class StoreAllocationGA:
             return 0.0
         return float(_njit_total_distance(paths, self.np_dist))
 
+    def _repair_individual(self, individual):
+        """
+        Repair Operator using DROP Phase and ADD Phase based on Pseudo-utility Ratio.
+        u_j = v_j / (c_j^2 - c_j^1)
+        """
+        new_individual = list(individual)
+        
+        # 0. Pre-calculate utility for each store
+        temp_routes = self._copy_routes_info(self.main_routes)
+        rm = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+        
+        utilities = {}
+        for idx in range(len(self.remaining_stores)):
+            store = self.remaining_stores[idx]
+            store_idx = self.s2i[store['store_id']]
+            
+            c_j2 = 2 * self.np_dist[0, store_idx]
+            
+            c_j1 = float('inf')
+            for r_id in self.main_routes.keys():
+                cost, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[r_id], store)
+                if pos != -1 and cost < c_j1:
+                    c_j1 = cost
+                    
+            if c_j1 == float('inf'):
+                c_j1 = c_j2
+                
+            v_j = max(0, c_j2 - c_j1) 
+            capacity = self.np_volume[store_idx]
+            
+            utilities[idx] = v_j / (capacity + 1e-6)
+
+        def get_utility(idx):
+            return utilities[idx]
+
+        # 1. DROP Phase: Restore feasibility for each route
+        route_to_indices = {r_id: [] for r_id in self.main_routes.keys()}
+        for i, target in enumerate(new_individual):
+            if target != 'SUPPORT':
+                route_to_indices[target].append(i)
+
+        for r_id, indices in route_to_indices.items():
+            if not indices: continue
+            
+            # Sort by utility ascending (lowest utility first for DROP)
+            indices.sort(key=get_utility)
+            
+            while indices:
+                temp_route_info = self._copy_routes_info({r_id: self.main_routes[r_id]})
+                rm = RouteManager(temp_route_info, self.distance_matrix, self.time_matrix)
+                
+                success = True
+                for idx in indices:
+                    s = self.remaining_stores[idx]
+                    cost, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[r_id], s)
+                    if pos != -1:
+                        rm.insert_store(s, r_id, pos)
+                    else:
+                        success = False
+                        break
+                
+                if success:
+                    break
+                else:
+                    dropped_idx = indices.pop(0)
+                    new_individual[dropped_idx] = 'SUPPORT'
+
+        # 2. ADD Phase: Improve quality by re-inserting unassigned nodes
+        support_indices = [i for i, target in enumerate(new_individual) if target == 'SUPPORT']
+        # Sort by utility descending (highest utility first for ADD)
+        support_indices.sort(key=get_utility, reverse=True)
+        
+        current_routes = self._copy_routes_info(self.main_routes)
+        rm = RouteManager(current_routes, self.distance_matrix, self.time_matrix)
+        for i, target in enumerate(new_individual):
+            if target != 'SUPPORT':
+                s = self.remaining_stores[i]
+                cost, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[target], s)
+                if pos != -1: rm.insert_store(s, target, pos)
+
+        for idx in support_indices:
+            store = self.remaining_stores[idx]
+            best_r, best_pos, min_inc = None, -1, float('inf')
+            
+            for r_id in self.main_routes.keys():
+                cost, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[r_id], store)
+                if pos != -1 and cost < min_inc:
+                    min_inc, best_r, best_pos = cost, r_id, pos
+            
+            if best_r:
+                rm.insert_store(store, best_r, best_pos)
+                new_individual[idx] = best_r
+
+        return new_individual
+
     def _evaluate_individual(self, individual):
+        """Evaluate a chromosome directly. Chromosomes produced by the initialisation,
+        BCRC crossover and swap mutation are feasible by construction; any residual
+        infeasibility (pos == -1) is handled inline by falling back to SUPPORT."""
+        chromo        = list(individual)  # work on a local copy
         temp_routes   = self._copy_routes_info(self.main_routes)
         route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
         support_pool  = []
 
-        for i, target in enumerate(individual):
+        for i, target in enumerate(chromo):
             store = self.remaining_stores[i]
             if target == 'SUPPORT':
                 support_pool.append(store)
                 continue
-            _, pos = self._get_store_insertion_cost_and_pos(
+            cost, pos = self._get_store_insertion_cost_and_pos(
                 route_manager.routes_info[target], store)
             if pos != -1:
                 route_manager.insert_store(store, target, pos)
             else:
                 support_pool.append(store)
+                chromo[i] = 'SUPPORT'
 
-        main_cost    = self._calculate_total_distance(route_manager.routes_info)
-        support_cost, _ = SupportLinePlanningACO(
-            support_pool, self.distance_matrix, self.time_matrix, iterations=0
-        ).run()
+        main_cost = self._calculate_total_distance(route_manager.routes_info)
 
-        return main_cost + support_cost, route_manager.routes_info, support_pool
+        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
+        aco_cost, support_routes = aco.run()
+        vn = len(support_routes)
 
-    def _uniform_crossover(self, parent1, parent2):
-        child1, child2 = copy.deepcopy(parent1), copy.deepcopy(parent2)
-        for i in range(len(parent1)):
-            if random.random() < 0.5:
-                child1[i], child2[i] = child2[i], child1[i]
+        total_cost = main_cost + aco_cost
+
+        return total_cost, route_manager.routes_info, support_pool, chromo, vn
+
+    def _bcrc_crossover(self, parent1, parent2):
+        """Best Cost Route Crossover (BCRC).
+
+        Step a) Randomly select one route from each parent.
+        Step b) Remove those customers from the *other* parent → pending re-insertion.
+        Step c) Re-insert the removed customers in random order at the cheapest
+                feasible position in the child, or assign to SUPPORT if none exists.
+
+        Returns (child1, child2).
+        """
+        # Collect route → [store indices] mapping for each parent
+        def routes_with_stores(parent):
+            mapping = {}
+            for i, r_id in enumerate(parent):
+                if r_id != 'SUPPORT':
+                    mapping.setdefault(r_id, []).append(i)
+            return mapping
+
+        p1_map = routes_with_stores(parent1)
+        p2_map = routes_with_stores(parent2)
+
+        # Fall back to uniform crossover if a parent has no real routes
+        if not p1_map or not p2_map:
+            child = list(parent1)
+            for i in range(len(parent1)):
+                if random.random() < 0.5:
+                    child[i] = parent2[i]
+            return child, list(parent2)
+
+        # Step a: select one route randomly from each parent
+        r_from_p1 = random.choice(list(p1_map.keys()))  # will be removed from P2 → C2
+        r_from_p2 = random.choice(list(p2_map.keys()))  # will be removed from P1 → C1
+
+        p1_selected_indices = set(p1_map[r_from_p1])  # stores to pull out of P2
+        p2_selected_indices = set(p2_map[r_from_p2])  # stores to pull out of P1
+
+        def make_child(base_parent, remove_indices):
+            """Build a child from base_parent, removing the given store indices,
+            then re-inserting them at the best feasible location."""
+            child = list(base_parent)
+
+            # Mark removed stores as unassigned
+            for idx in remove_indices:
+                child[idx] = 'SUPPORT'
+
+            # Reconstruct current route state from the (non-removed) assignments
+            temp_routes   = self._copy_routes_info(self.main_routes)
+            route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+
+            for i, r_id in enumerate(child):
+                if r_id == 'SUPPORT':
+                    continue
+                store = self.remaining_stores[i]
+                cost, pos = self._get_store_insertion_cost_and_pos(
+                    route_manager.routes_info[r_id], store)
+                if pos != -1:
+                    route_manager.insert_store(store, r_id, pos)
+                else:
+                    child[i] = 'SUPPORT'  # can't fit: mark as unassigned
+
+            # Step b & c: re-insert removed stores in random order at best cost
+            to_insert = list(remove_indices)
+            random.shuffle(to_insert)
+
+            for idx in to_insert:
+                store = self.remaining_stores[idx]
+                best_r, best_pos, min_cost = 'SUPPORT', -1, float('inf')
+                for r_id in self.main_routes.keys():
+                    cost, pos = self._get_store_insertion_cost_and_pos(
+                        route_manager.routes_info[r_id], store)
+                    if pos != -1 and cost < min_cost:
+                        min_cost = cost
+                        best_r   = r_id
+                        best_pos = pos
+                child[idx] = best_r
+                if best_r != 'SUPPORT':
+                    route_manager.insert_store(store, best_r, best_pos)
+
+            return child
+
+        child1 = make_child(parent1, p2_selected_indices)
+        child2 = make_child(parent2, p1_selected_indices)
         return child1, child2
 
     def _crossover(self, parent1, parent2):
         if random.random() < self.cross_rate:
-            return self._uniform_crossover(parent1, parent2)
+            c1, c2 = self._bcrc_crossover(parent1, parent2)
+            return c1, c2
         return copy.deepcopy(parent1), copy.deepcopy(parent2)
 
+
     def _mutate(self, individual):
-        for i in range(len(individual)):
-            if random.random() < self.mutation_rate:
-                individual[i] = random.choice(self.route_choices)
+        """Swap Mutation: randomly pick two different groups (real route or SUPPORT),
+        swap one store from each. Repair handles any resulting infeasibility."""
+        if random.random() >= self.mutation_rate:
+            return individual
+
+        # Build ALL groups → [store indices] mapping
+        group_to_indices = {}
+        for i, r_id in enumerate(individual):
+            group_to_indices.setdefault(r_id, []).append(i)
+
+        groups = [g for g in group_to_indices if group_to_indices[g]]
+        if len(groups) < 2:
+            return individual
+
+        # Pick two distinct groups
+        group_a, group_b = random.sample(groups, 2)
+
+        idx_a = random.choice(group_to_indices[group_a])
+        idx_b = random.choice(group_to_indices[group_b])
+
+        # Perform the swap
+        individual[idx_a], individual[idx_b] = individual[idx_b], individual[idx_a]
+
+        # Repair infeasibilities introduced by the swap
+        individual = self._repair_individual(individual)
+
         return individual
 
+
     def run(self):
-        greedy_chromo = self._generate_greedy_individual()
-        g_cost, g_routes, g_support = self._evaluate_individual(greedy_chromo)
+        greedy_chromo, g_cost, g_routes, g_support, g_vn = self._generate_greedy_individual()
         self.best_cost               = g_cost
         self.best_solution           = g_routes
         self.best_remaining_solution = g_support
         self.best_individual         = greedy_chromo
+        self.best_vn                 = g_vn
 
         if self.generations == 0:
-            return self.best_cost, self.best_solution, self.best_remaining_solution
+            return self.best_cost, self.best_solution, self.best_remaining_solution, self.best_vn
 
         self.log.append({
             'generation': 0,
@@ -387,16 +638,22 @@ class StoreAllocationGA:
             'std_cost': float(0.0),
             'best_cost': g_cost,
         })
-        print(f'Store Allocation: iteration{0} -> best cost = {g_cost:.4f}')
+        print(f'Store Allocation: iteration{0} -> vn = {g_vn}, cost = {g_cost - g_vn * 2000:.2f}, fitness = {g_cost:.2f}')
 
-        population  = [greedy_chromo]
-        num_stores  = len(self.remaining_stores)
+        # Build initial population; pre-evaluate inline so gen-0 needs no workers
+        population = [greedy_chromo]
+        pre_cache  = {self._encode_individual(greedy_chromo): {'cost': g_cost, 'repaired': greedy_chromo, 'vn': g_vn}}
+
         while len(population) < self.population_size:
-            population.append([random.choice(self.route_choices) for _ in range(num_stores)])
+            rand_chromo, rand_cost, _, _, rand_vn = self._generate_random_individual()
+            rand_key = self._encode_individual(rand_chromo)
+            pre_cache[rand_key] = {'cost': rand_cost, 'repaired': rand_chromo, 'vn': rand_vn}
+            population.append(rand_chromo)
 
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         with Manager() as manager:
             shared_cache = manager.dict()
+            shared_cache.update(pre_cache)  # seed with pre-evaluated initial population
             with concurrent.futures.ProcessPoolExecutor(
                 max_workers=max(1, cpu_count() - 2),
                 initializer=init_alloc_worker,
@@ -428,7 +685,7 @@ class StoreAllocationGA:
                     for i, chromo in enumerate(population):
                         key = individual_keys[i]
                         res = shared_cache[key]
-                        evaluated_pop.append({'individual': chromo, 'cost': res['cost']})
+                        evaluated_pop.append({'individual': chromo, 'cost': res['cost'], 'vn': res['vn']})
                         fitnesses.append(res['cost'])
 
                     evaluated_pop.sort(key=lambda x: x['cost'])
@@ -436,7 +693,11 @@ class StoreAllocationGA:
 
                     if current_best['cost'] < self.best_cost:
                         self.best_cost       = current_best['cost']
-                        self.best_individual = copy.deepcopy(current_best['individual'])
+                        self.best_individual = copy.deepcopy(shared_cache[individual_keys[0]]['repaired'])
+
+                    # Update population with repaired individuals
+                    for i in range(len(population)):
+                        population[i] = shared_cache[individual_keys[i]]['repaired']
 
                     self.log.append({
                         'generation': gen_idx + 1,
@@ -446,7 +707,7 @@ class StoreAllocationGA:
                         'std_cost': float(np.std(fitnesses)),
                         'best_cost': self.best_cost,
                     })
-                    print(f'Store Allocation: iteration{gen_idx + 1} -> best cost = {self.best_cost}')
+                    print(f'Store Allocation: iteration{gen_idx + 1} -> vn = {current_best["vn"]}, cost = {current_best["cost"] - current_best["vn"] * 2000:.2f}, fitness = {self.best_cost:.2f}')
 
                     if early_stopper.check(self.best_cost):
                         break
@@ -454,18 +715,18 @@ class StoreAllocationGA:
                     elites  = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
                     weights = [max(1.0 / ind['cost'], 1e-12) for ind in evaluated_pop]
 
-                    child_pairs = []
-                    while len(child_pairs) < (self.population_size - self.elite_size):
+                    children_generated = []
+                    while len(children_generated) < (self.population_size - self.elite_size):
                         p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
                         c1, c2 = self._crossover(copy.deepcopy(p1['individual']),
-                                                 copy.deepcopy(p2['individual']))
+                                            copy.deepcopy(p2['individual']))
                         c1 = self._mutate(list(c1))
                         c2 = self._mutate(list(c2))
-                        child_pairs.append((c1, c2))
+                        children_generated.append(c1)
+                        children_generated.append(c2)
 
                     task_candidates = []
-                    for c1, c2 in child_pairs:
-                        for c in (c1, c2):
+                    for c in children_generated:
                             k = self._encode_individual(c)
                             if k not in shared_cache:
                                 task_candidates.append((c, k, shared_cache))
@@ -481,17 +742,9 @@ class StoreAllocationGA:
                                 if k not in shared_cache:
                                     shared_cache[k] = {'cost': float('inf')}
 
-                    childrens = []
-                    for c1, c2 in child_pairs:
-                        k1 = self._encode_individual(c1)
-                        k2 = self._encode_individual(c2)
-                        cost1 = shared_cache[k1]['cost']
-                        cost2 = shared_cache[k2]['cost']
-                        childrens.append(c1 if cost1 < cost2 else c2)
-
-                    population = elites + childrens
+                    population = elites + children_generated
 
         if self.best_individual is not None:
-            _, self.best_solution, self.best_remaining_solution = self._evaluate_individual(self.best_individual)
+            _, self.best_solution, self.best_remaining_solution, _, self.best_vn = self._evaluate_individual(self.best_individual)
 
-        return self.best_cost, self.best_solution, self.best_remaining_solution
+        return self.best_cost, self.best_solution, self.best_remaining_solution, self.best_vn

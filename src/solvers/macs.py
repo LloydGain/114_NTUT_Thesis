@@ -372,18 +372,18 @@ class _ACSTime(_ACSColony):
         for _ in range(self.num_ants):
             routes = _new_active_ant(self, self.num_vehicles, self._in,
                                      False, self.nodes, self.dist, self.capacity)
-            # opt_routes = _apply_vnd(routes, self.nodes, self.vnd, self.dc_config)
+            routes = _apply_vnd(routes, self.nodes, self.vnd, self.dc_config)
             f, cost = _solution_cost(routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
             if f and cost < best_cost:
                 best_cost = cost
                 best_sol = [r[:] for r in routes]
                 
-        if best_sol is not None and hasattr(self, 'vnd') and self.vnd is not None:
-            opt_routes = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
-            f_opt, cost_opt = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
-            if f_opt and cost_opt < best_cost:
-                best_cost = cost_opt
-                best_sol = [r[:] for r in opt_routes]
+        # if best_sol is not None and hasattr(self, 'vnd') and self.vnd is not None:
+        #     opt_routes = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
+        #     f_opt, cost_opt = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
+        #     if f_opt and cost_opt < best_cost:
+        #         best_cost = cost_opt
+        #         best_sol = [r[:] for r in opt_routes]
                 
         if gb_routes:
             self._global_upd(gb_routes, gb_cost)
@@ -530,7 +530,7 @@ class MACSSolver:
                          is_solomon=self.is_solomon,
                          vnd=self.vnd, dc_config=self.dc_config)
 
-        inner_iters = 20
+        inner_iters = 30
 
         for iter_num in range(self.iterations):
             print(f"    [MACS] iter {iter_num}, vehicle={gb_nv}, dist={gb_cost:.2f}, feasible={gb_f}")
