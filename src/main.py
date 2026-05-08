@@ -92,30 +92,30 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 100,
+            'population_size': 30,
             'elite_rate': 0.1,
-            'generations': 1000,
-            'cross_rate': 1.0,
+            'generations': 200,
+            'cross_rate': 0.9,
             'mutation_rate': 0.05,
-            'early_stop_patience': 50
+            'early_stop_patience': 10
         },
         'store_allocation_ga': {
             'population_size': 100,
             'elite_rate': 0.1,
             'generations': 1000,
             'cross_rate': 0.9,
-            'mutation_rate': 0.01,
+            'mutation_rate': 0.05,
             'early_stop_patience': 50
         },
         'support_line_aco': {
             'iterations': 200,
-            'num_ants': 20,
+            'num_ants': 10,
             # 'alpha': 1,
             'beta': 1,
             'rho': 0.5,
             # 'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 20,
+            'early_stop_patience': 5,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
             'vnd_strategy': 'best'
@@ -249,10 +249,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
+    # print("Starting Support Line Planning using ACO...")
     print("Starting Support Line Planning using MACS...")
     support_params = params['support_line_aco']
-    support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, **support_params)
-    # support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, **support_params)
+    # support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, **support_params)
+    support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, **support_params)
     _, support_routes = support.run()
     support_line_log_data = support.log
 
@@ -269,20 +270,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     print(f'Extracted Store Count: {len(extracted_stores)}')
     print(f'Allocate Store Count: {len(extracted_stores) - len(remaining_stores)}')
     print(f'Support Line Store Count: {len(remaining_stores)}')
-
-# -----------------------------------------------------------------------------------
-
-    # start_time = time.time()
-
-    # print("Starting VND...")
-    # vnd = VND(distance_matrix, time_matrix)
-    # optimized_routes, optimized_cost = vnd.optimize(optimized_routes)
-
-    # end_time = time.time()
-    # time_consume = round(end_time - start_time, 2)
-    # print(f"VND 執行時間: {time_consume} 秒")
-
-    # times['Starting VND...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 

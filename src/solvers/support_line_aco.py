@@ -126,6 +126,77 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
         
     return np.array(feasible, dtype=np.int64)
 
+@njit(cache=True)
+def _njit_fast_greedy_eval(store_count, is_solomon, dc_departure_time, support_capacity, time_limit_per_route,
+                           np_group, np_region, np_volume, np_time, np_dwell, np_earliest, np_latest,
+                           np_dist, pheromone_matrix, alpha, beta):
+    vn = 0
+    total_dist = 0.0
+    
+    unvisited = np.ones(store_count + 1, dtype=np.bool_)
+    unvisited[0] = False
+    num_unvisited = store_count
+    
+    while num_unvisited > 0:
+        vn += 1
+        curr_idx = 0
+        route_vol = 0.0
+        curr_duration = 0.0
+        prev_pred_time_epoch = dc_departure_time if not is_solomon else 0
+        
+        while True:
+            unvisited_arr = np.empty(num_unvisited, dtype=np.int64)
+            idx = 0
+            for i in range(1, store_count + 1):
+                if unvisited[i]:
+                    unvisited_arr[idx] = i
+                    idx += 1
+                    
+            feasible_arr = _njit_get_feasible_stores(
+                unvisited_arr, curr_idx, route_vol, curr_duration,
+                prev_pred_time_epoch, 0, support_capacity, time_limit_per_route,
+                np_group, np_region, np_volume, np_time, np_dwell,
+                np_earliest, np_latest, is_solomon
+            )
+            
+            if len(feasible_arr) == 0:
+                if curr_idx == 0:
+                    best_next = unvisited_arr[0]
+                else:
+                    break
+            else:
+                best_next = _njit_greedy_selection(curr_idx, feasible_arr, np_dist, pheromone_matrix, alpha, beta)
+                
+            unvisited[best_next] = False
+            num_unvisited -= 1
+            
+            total_dist += np_dist[curr_idx, best_next]
+            route_vol += np_volume[best_next]
+            
+            pre_to_cur = np_time[curr_idx, best_next]
+            prev_dwell = np_dwell[curr_idx] if curr_idx != 0 else 0
+            arrival_time = prev_pred_time_epoch + pre_to_cur + prev_dwell
+            
+            if is_solomon:
+                start_time = max(arrival_time, np_earliest[best_next])
+                pre_to_dc = np_time[curr_idx, 0]
+                cur_to_dc = np_time[best_next, 0]
+                curr_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + (start_time - arrival_time) + np_dwell[best_next]
+                prev_pred_time_epoch = start_time
+            else:
+                pre_to_dc = np_time[curr_idx, 0]
+                cur_to_dc = np_time[best_next, 0]
+                curr_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + np_dwell[best_next]
+                prev_pred_time_epoch = arrival_time
+                
+            curr_idx = best_next
+            if num_unvisited == 0:
+                break
+                
+        total_dist += np_dist[curr_idx, 0]
+        
+    return total_dist, vn
+
 
 class SupportLinePlanningACO:
     """
@@ -223,6 +294,18 @@ class SupportLinePlanningACO:
             self.dc_departure_time = int(np.min(self.np_earliest[1:self.store_count + 1]))
         else:
             self.dc_departure_time = 0
+
+    def get_fast_greedy_cost(self):
+        if self.store_count == 0:
+            return 0.0, 0
+        total_dist, vn = _njit_fast_greedy_eval(
+            self.store_count, self.is_solomon, self.dc_departure_time, self.support_capacity, self.time_limit_per_route,
+            self.np_group, self.np_region, self.np_volume, self.np_time, self.np_dwell, self.np_earliest, self.np_latest,
+            self.np_dist, self.pheromone_matrix, self.alpha, self.beta
+        )
+        if self.is_solomon:
+            return (vn, total_dist), vn
+        return total_dist + vn * self.vehicle_cost, vn
 
     # Re-wrap original functions referencing Numpy mappings
     def _initial_route(self, vehicle_id):
@@ -529,6 +612,13 @@ try:
         np.array([0], dtype=np.int64), 0, 0.0, 0.0, 0, 0, 10.0, 10.0,
         np.array([0], dtype=np.int64), np.array([0], dtype=np.int64), np.array([0.0]),
         np.zeros((1, 1)), np.array([0], dtype=np.int64), np.array([0], dtype=np.int64), np.array([0], dtype=np.int64), False
+    )
+    _njit_fast_greedy_eval(
+        1, False, 0, 10.0, 10.0,
+        np.array([0, 0], dtype=np.int64), np.array([0, 0], dtype=np.int64),
+        np.array([0.0, 0.0]), np.zeros((2, 2)), np.array([0, 0], dtype=np.int64),
+        np.array([0, 0], dtype=np.int64), np.array([0, 0], dtype=np.int64),
+        np.zeros((2, 2)), np.zeros((2, 2)), 1.0, 1.0
     )
 except Exception as e:
     pass

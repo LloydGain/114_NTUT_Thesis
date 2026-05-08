@@ -530,7 +530,8 @@ class MACSSolver:
                          is_solomon=self.is_solomon,
                          vnd=self.vnd, dc_config=self.dc_config)
 
-        inner_iters = 30
+        vei_inner_iters = 5
+        time_inner_iters = 20
 
         for iter_num in range(self.iterations):
             print(f"    [MACS] iter {iter_num}, vehicle={gb_nv}, dist={gb_cost:.2f}, feasible={gb_f}")
@@ -542,13 +543,13 @@ class MACSSolver:
                 args=(nodes, dist, self.time_mat, cap, v,
                       colony_kw,
                       [r[:] for r in gb_routes], gb_cost,
-                      inner_iters, result_queue))
+                      time_inner_iters, result_queue))
             t_vei = threading.Thread(
                 target=_acs_vei_worker,
                 args=(nodes, dist, self.time_mat, cap, max(1, v - 1),
                       colony_kw,
                       [r[:] for r in gb_routes], gb_cost,
-                      inner_iters, result_queue))
+                      vei_inner_iters, result_queue))
 
             t_time.start()
             t_vei.start()

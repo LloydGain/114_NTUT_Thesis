@@ -254,33 +254,48 @@ class StoreAllocationGA:
             return float('inf'), -1
         return cost, pos
 
+    def _fast_get_store_insertion_cost_and_pos(self, r_id, store_idx, route_stores_idx, route_vols, route_caps, route_regions):
+        cost, pos = _njit_get_store_insertion_cost_pos(
+            store_idx, np.array(route_stores_idx[r_id], dtype=np.int64), 0, route_regions[r_id],
+            route_vols[r_id], route_caps[r_id],
+            self.np_region[store_idx], self.np_volume[store_idx],
+            self.np_dist, self.np_time, self.np_dwell,
+            self.np_earliest, self.np_latest,
+            self.np_sched, float(self.time_limit_per_route)
+        )
+        if cost < 0:
+            return float('inf'), -1
+        return cost, pos
+
     def _sort_stores_by_insertion_cost(self, stores):
-        temp_routes   = self._copy_routes_info(self.main_routes)
-        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
         store_with_costs = []
         for store in stores:
             min_cost = float('inf')
-            for r_id in self.main_routes.keys():
-                cost, pos = self._get_store_insertion_cost_and_pos(
-                    route_manager.routes_info[r_id], store)
+            for r_id, r_info in self.main_routes.items():
+                cost, pos = self._get_store_insertion_cost_and_pos(r_info, store)
                 if pos != -1 and cost < min_cost:
                     min_cost = cost
             store_with_costs.append((store, min_cost))
         return [s[0] for s in sorted(store_with_costs, key=lambda x: x[1])]
 
-    def _generate_greedy_individual(self):
-        temp_routes   = self._copy_routes_info(self.main_routes)
-        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+    def _generate_greedy_individual(self, return_routes=False):
         greedy_chromo = []
-        support_pool  = []
+        support_pool_indices = []
 
-        for store in self.remaining_stores:
+        route_stores_idx = {r_id: [self.s2i[s['store_id']] for s in r_info['stores']] for r_id, r_info in self.main_routes.items()}
+        route_vols = {r_id: float(r_info['dc'].get('total_volume', 0)) for r_id, r_info in self.main_routes.items()}
+        route_caps = {r_id: float(r_info['dc'].get('max_capacity', 1e9)) for r_id, r_info in self.main_routes.items()}
+        dc_region_map  = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        route_regions = {r_id: dc_region_map.get(r_info['dc'].get('region', ''), -1) for r_id, r_info in self.main_routes.items()}
+
+        for i, store in enumerate(self.remaining_stores):
+            store_idx = self.s2i[store['store_id']]
             best_r    = 'SUPPORT'
             min_cost  = float('inf')
             best_pos  = -1
             for r_id in self.main_routes.keys():
-                cost, pos = self._get_store_insertion_cost_and_pos(
-                    route_manager.routes_info[r_id], store)
+                cost, pos = self._fast_get_store_insertion_cost_and_pos(
+                    r_id, store_idx, route_stores_idx, route_vols, route_caps, route_regions)
                 if pos != -1 and cost < min_cost:
                     min_cost = cost
                     best_r   = r_id
@@ -288,16 +303,43 @@ class StoreAllocationGA:
 
             greedy_chromo.append(best_r)
             if best_r != 'SUPPORT':
-                route_manager.insert_store(store, best_r, best_pos)
+                route_stores_idx[best_r].insert(best_pos, store_idx)
+                route_vols[best_r] += self.np_volume[store_idx]
             else:
-                support_pool.append(store)
+                support_pool_indices.append(i)
 
-        main_cost = self._calculate_total_distance(route_manager.routes_info)
+        paths = NumbaList()
+        for r_id, s_indices in route_stores_idx.items():
+            if not s_indices: continue
+            path = np.empty(len(s_indices) + 2, dtype=np.int64)
+            path[0] = 0
+            for k, idx in enumerate(s_indices):
+                path[k + 1] = idx
+            path[-1] = 0
+            paths.append(path)
+            
+        main_cost = float(_njit_total_distance(paths, self.np_dist))
+        
+        support_pool = [self.remaining_stores[i] for i in support_pool_indices]
         aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
-        aco_cost, support_routes = aco.run()
-        vn = len(support_routes)
+
+        if return_routes:
+            aco_cost, support_routes = aco.run()
+            vn = len(support_routes)
+            total_cost = main_cost + aco_cost
+
+            temp_routes = self._copy_routes_info(self.main_routes)
+            rm = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+            for i, target in enumerate(greedy_chromo):
+                if target != 'SUPPORT':
+                    store = self.remaining_stores[i]
+                    _, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[target], store)
+                    rm.insert_store(store, target, pos)
+            return greedy_chromo, total_cost, rm.routes_info, support_pool, vn
+
+        aco_cost, vn = aco.get_fast_greedy_cost()
         total_cost = main_cost + aco_cost
-        return greedy_chromo, total_cost, route_manager.routes_info, support_pool, vn
+        return greedy_chromo, total_cost, None, None, vn
 
     def _generate_random_individual(self):
         """Probabilistic construction weighted by inverse insertion cost.
@@ -466,37 +508,69 @@ class StoreAllocationGA:
 
         return new_individual
 
-    def _evaluate_individual(self, individual):
+    def _evaluate_individual(self, individual, return_routes=False):
         """Evaluate a chromosome directly. Chromosomes produced by the initialisation,
         BCRC crossover and swap mutation are feasible by construction; any residual
         infeasibility (pos == -1) is handled inline by falling back to SUPPORT."""
-        chromo        = list(individual)  # work on a local copy
-        temp_routes   = self._copy_routes_info(self.main_routes)
-        route_manager = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
-        support_pool  = []
+        chromo = list(individual)
+
+        route_stores_idx = {r_id: [self.s2i[s['store_id']] for s in r_info['stores']] for r_id, r_info in self.main_routes.items()}
+        route_vols = {r_id: float(r_info['dc'].get('total_volume', 0)) for r_id, r_info in self.main_routes.items()}
+        route_caps = {r_id: float(r_info['dc'].get('max_capacity', 1e9)) for r_id, r_info in self.main_routes.items()}
+        dc_region_map  = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        route_regions = {r_id: dc_region_map.get(r_info['dc'].get('region', ''), -1) for r_id, r_info in self.main_routes.items()}
+
+        support_pool_indices = []
 
         for i, target in enumerate(chromo):
             store = self.remaining_stores[i]
             if target == 'SUPPORT':
-                support_pool.append(store)
+                support_pool_indices.append(i)
                 continue
-            cost, pos = self._get_store_insertion_cost_and_pos(
-                route_manager.routes_info[target], store)
+            
+            store_idx = self.s2i[store['store_id']]
+            cost, pos = self._fast_get_store_insertion_cost_and_pos(
+                target, store_idx, route_stores_idx, route_vols, route_caps, route_regions)
+            
             if pos != -1:
-                route_manager.insert_store(store, target, pos)
+                route_stores_idx[target].insert(pos, store_idx)
+                route_vols[target] += self.np_volume[store_idx]
             else:
-                support_pool.append(store)
+                support_pool_indices.append(i)
                 chromo[i] = 'SUPPORT'
 
-        main_cost = self._calculate_total_distance(route_manager.routes_info)
-
+        paths = NumbaList()
+        for r_id, s_indices in route_stores_idx.items():
+            if not s_indices: continue
+            path = np.empty(len(s_indices) + 2, dtype=np.int64)
+            path[0] = 0
+            for k, idx in enumerate(s_indices):
+                path[k + 1] = idx
+            path[-1] = 0
+            paths.append(path)
+            
+        main_cost = float(_njit_total_distance(paths, self.np_dist))
+        
+        support_pool = [self.remaining_stores[i] for i in support_pool_indices]
         aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
-        aco_cost, support_routes = aco.run()
-        vn = len(support_routes)
 
+        if return_routes:
+            aco_cost, support_routes = aco.run()
+            vn = len(support_routes)
+            total_cost = main_cost + aco_cost
+
+            temp_routes = self._copy_routes_info(self.main_routes)
+            rm = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
+            for i, target in enumerate(chromo):
+                if target != 'SUPPORT':
+                    store = self.remaining_stores[i]
+                    _, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[target], store)
+                    rm.insert_store(store, target, pos)
+            return total_cost, rm.routes_info, support_pool, chromo, vn
+
+        aco_cost, vn = aco.get_fast_greedy_cost()
         total_cost = main_cost + aco_cost
-
-        return total_cost, route_manager.routes_info, support_pool, chromo, vn
+        return total_cost, None, None, chromo, vn
 
     def _bcrc_crossover(self, parent1, parent2):
         """Best Cost Route Crossover (BCRC).
@@ -619,8 +693,8 @@ class StoreAllocationGA:
         return individual
 
 
-    def run(self):
-        greedy_chromo, g_cost, g_routes, g_support, g_vn = self._generate_greedy_individual()
+    def run(self, return_routes=True):
+        greedy_chromo, g_cost, g_routes, g_support, g_vn = self._generate_greedy_individual(return_routes=(return_routes and self.generations == 0))
         self.best_cost               = g_cost
         self.best_solution           = g_routes
         self.best_remaining_solution = g_support
@@ -745,6 +819,6 @@ class StoreAllocationGA:
                     population = elites + children_generated
 
         if self.best_individual is not None:
-            _, self.best_solution, self.best_remaining_solution, _, self.best_vn = self._evaluate_individual(self.best_individual)
+            _, self.best_solution, self.best_remaining_solution, _, self.best_vn = self._evaluate_individual(self.best_individual, return_routes=return_routes)
 
         return self.best_cost, self.best_solution, self.best_remaining_solution, self.best_vn
