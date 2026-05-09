@@ -248,12 +248,11 @@ def run_single_macs_seed(args_tuple):
         remaining_stores=remaining_stores,
         distance_matrix=distance_matrix,
         time_matrix=time_matrix,
-        num_ants=5, 
-        iterations=100,
+        num_ants=10, 
+        time_limit=300,
         support_capacity=capacity,
         time_limit_per_route=time_limit,
         is_solomon=True,
-        early_stop_patience=10,
         verbose=True,
         vnd_strategy='best'
     )
