@@ -804,9 +804,9 @@ class SupportLinePlanningMACS:
                         self.gb_routes, self.gb_cost = sol, cost
                         improved = True
             
-            if improved and self.verbose:
+            if self.verbose:
                 c_disp = self.gb_cost[1] if self.is_solomon else self.gb_cost
-                print(f"    [MACS Iter {iter_num}] Improved: {len(self.gb_routes)} vehicles, cost={c_disp:.2f}")
+                print(f"    [MACS Iter {iter_num}] : {len(self.gb_routes)} vehicles, cost={c_disp:.2f}")
 
             if early_stopper.check(self.gb_cost):
                 if self.verbose: print(f"    [MACS Iter {iter_num}] Early stop triggered.")

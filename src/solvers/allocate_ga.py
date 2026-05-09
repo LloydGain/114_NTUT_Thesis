@@ -11,7 +11,7 @@ from numba.typed import List as NumbaList
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-from solvers.support_line_aco import SupportLinePlanningACO
+from solvers.support_line_macs import SupportLinePlanningMACS
 
 @njit(cache=True)
 def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix,
@@ -321,12 +321,12 @@ class StoreAllocationGA:
         main_cost = float(_njit_total_distance(paths, self.np_dist))
         
         support_pool = [self.remaining_stores[i] for i in support_pool_indices]
-        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
 
         if return_routes:
-            aco_cost, support_routes = aco.run()
+            macs_cost, support_routes = macs.run()
             vn = len(support_routes)
-            total_cost = main_cost + aco_cost
+            total_cost = main_cost + macs_cost
 
             temp_routes = self._copy_routes_info(self.main_routes)
             rm = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
@@ -337,8 +337,9 @@ class StoreAllocationGA:
                     rm.insert_store(store, target, pos)
             return greedy_chromo, total_cost, rm.routes_info, support_pool, vn
 
-        aco_cost, vn = aco.get_fast_greedy_cost()
-        total_cost = main_cost + aco_cost
+        macs_cost = macs.gb_cost
+        vn = len(macs.gb_routes)
+        total_cost = main_cost + macs_cost
         return greedy_chromo, total_cost, None, None, vn
 
     def _generate_random_individual(self):
@@ -373,10 +374,10 @@ class StoreAllocationGA:
             route_manager.insert_store(store, chosen_r, chosen_pos)
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
-        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
-        aco_cost, support_routes = aco.run()
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
+        macs_cost, support_routes = macs.run()
         vn = len(support_routes)
-        total_cost = main_cost + aco_cost
+        total_cost = main_cost + macs_cost
         return chromo, total_cost, route_manager.routes_info, support_pool, vn
 
     def _copy_routes_info(self, routes):
@@ -552,12 +553,12 @@ class StoreAllocationGA:
         main_cost = float(_njit_total_distance(paths, self.np_dist))
         
         support_pool = [self.remaining_stores[i] for i in support_pool_indices]
-        aco = SupportLinePlanningACO(support_pool, self.distance_matrix, self.time_matrix, iterations=0)
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
 
         if return_routes:
-            aco_cost, support_routes = aco.run()
+            macs_cost, support_routes = macs.run()
             vn = len(support_routes)
-            total_cost = main_cost + aco_cost
+            total_cost = main_cost + macs_cost
 
             temp_routes = self._copy_routes_info(self.main_routes)
             rm = RouteManager(temp_routes, self.distance_matrix, self.time_matrix)
@@ -568,8 +569,9 @@ class StoreAllocationGA:
                     rm.insert_store(store, target, pos)
             return total_cost, rm.routes_info, support_pool, chromo, vn
 
-        aco_cost, vn = aco.get_fast_greedy_cost()
-        total_cost = main_cost + aco_cost
+        macs_cost = macs.gb_cost
+        vn = len(macs.gb_routes)
+        total_cost = main_cost + macs_cost
         return total_cost, None, None, chromo, vn
 
     def _bcrc_crossover(self, parent1, parent2):

@@ -3,6 +3,8 @@ import random
 import time
 import threading
 import queue
+import numpy as np
+from numba import njit
 from datetime import datetime, timedelta
 
 from config.config import DC_CONFIG
@@ -73,49 +75,55 @@ def solution_to_run_solomon_fmt(routes_internal, nodes_internal):
 # MACS Core Implementation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _eval_route(route, nodes, dist, time_mat, capacity, is_solomon):
-    load = 0.0
-    cur_time = nodes[0]['ready_time']
+@njit(cache=True)
+def _njit_eval_route(route, nodes_arr, dist_mat, time_mat, capacity, is_solomon):
     total_dist = 0.0
+    cur_time = nodes_arr[0, 1] # ready_time
+    load = 0.0
     prev = 0
     for idx in route:
-        nd = nodes[idx]
-        travel_time = time_mat[prev][idx]
-        travel_dist = dist[prev][idx]
-        arrival = cur_time + travel_time
-        if arrival > nd['due_date']:
-            return False, float('inf'), load
-
+        demand = nodes_arr[idx, 0]
+        ready = nodes_arr[idx, 1]
+        due = nodes_arr[idx, 2]
+        service = nodes_arr[idx, 3]
+        
+        arrival = cur_time + time_mat[prev, idx]
+        if arrival > due:
+            return False, 0.0, load
+        
         if is_solomon:
-            start = max(arrival, nd['ready_time'])
+            start = max(arrival, ready)
         else:
-            if arrival < nd['ready_time']:
-                return False, float('inf'), load
+            if arrival < ready:
+                return False, 0.0, load
             start = arrival
-
-        cur_time = start + nd['service_time']
-        total_dist += travel_dist
-        load += nd['demand']
+        
+        cur_time = start + service
+        total_dist += dist_mat[prev, idx]
+        load += demand
         if load > capacity:
-            return False, float('inf'), load
+            return False, 0.0, load
         prev = idx
     
-    total_dist += dist[prev][0]
-    if cur_time + time_mat[prev][0] > nodes[0]['due_date']:
-        return False, float('inf'), load
+    total_dist += dist_mat[prev, 0]
+    if cur_time + time_mat[prev, 0] > nodes_arr[0, 2]: # nodes_arr[0, 2] is depot due_date
+        return False, 0.0, load
     return True, total_dist, load
 
-def _solution_cost(routes, nodes, dist, time_mat, capacity, is_solomon):
+def _eval_route(route, nodes_arr, dist, time_mat, capacity, is_solomon):
+    return _njit_eval_route(np.array(route, dtype=np.int32), nodes_arr, dist, time_mat, capacity, is_solomon)
+
+def _solution_cost(routes, nodes_arr, dist, time_mat, capacity, is_solomon):
     total = 0.0
     feasible = True
-    visited = set()
+    visited_count = 0
     for r in routes:
-        f, d, _ = _eval_route(r, nodes, dist, time_mat, capacity, is_solomon)
+        f, d, _ = _njit_eval_route(np.array(r, dtype=np.int32), nodes_arr, dist, time_mat, capacity, is_solomon)
         if not f:
             feasible = False
         total += d
-        visited.update(r)
-    if len(visited) != len(nodes) - 1:
+        visited_count += len(r)
+    if visited_count != len(nodes_arr) - 1:
         feasible = False
     return feasible, total
 
@@ -174,31 +182,41 @@ def _nearest_neighbor(nodes, dist, time_mat, capacity, is_solomon):
 
     return routes
 
-def _insertion(routes, nodes, dist, time_mat, capacity, is_solomon):
+def _insertion(routes, nodes_arr, dist, time_mat, capacity, is_solomon):
+    visited_count = sum(len(r) for r in routes)
+    if visited_count == len(nodes_arr) - 1:
+        return routes
+        
     visited = set()
     for r in routes:
-        visited.update(r)
+        for idx in r: visited.add(idx)
+        
     unvisited = sorted(
-        [c for c in range(1, len(nodes)) if c not in visited],
-        key=lambda c: -nodes[c]['demand']
+        [c for c in range(1, len(nodes_arr)) if c not in visited],
+        key=lambda c: -nodes_arr[c, 0] # demand
     )
     for cid in unvisited:
         best_cost = float('inf')
-        best_r, best_p = None, None
+        best_r, best_p = -1, -1
+        cid_arr = np.array([cid], dtype=np.int32)
+        
         for ri, route in enumerate(routes):
+            r_arr = np.array(route, dtype=np.int32)
             for pos in range(len(route) + 1):
-                new_r = route[:pos] + [cid] + route[pos:]
-                f, cost, _ = _eval_route(new_r, nodes, dist, time_mat, capacity, is_solomon)
+                # Faster way to build new route for evaluation
+                new_r = np.concatenate((r_arr[:pos], cid_arr, r_arr[pos:]))
+                f, cost, _ = _njit_eval_route(new_r, nodes_arr, dist, time_mat, capacity, is_solomon)
                 if f and cost < best_cost:
                     best_cost = cost
                     best_r, best_p = ri, pos
-        if best_r is not None:
+        if best_r != -1:
             routes[best_r].insert(best_p, cid)
     return routes
 
 class _ACSColony:
-    def __init__(self, nodes, dist, time_mat, capacity, num_ants, beta, rho, q0, tau0, is_solomon, vnd=None, dc_config=None):
+    def __init__(self, nodes, nodes_arr, dist, time_mat, capacity, num_ants, beta, rho, q0, tau0, is_solomon, vnd=None, dc_config=None):
         self.nodes = nodes
+        self.nodes_arr = nodes_arr
         self.dist = dist
         self.time_mat = time_mat
         self.capacity = capacity
@@ -209,7 +227,7 @@ class _ACSColony:
         self.q0 = q0
         self.tau0 = tau0
         self.is_solomon = is_solomon
-        self.ph = [[tau0] * self.n for _ in range(self.n)]
+        self.ph = np.full((self.n, self.n), tau0, dtype=np.float64)
         self.vnd = vnd
         self.dc_config = dc_config
 
@@ -292,12 +310,12 @@ def _apply_vnd(routes, nodes, vnd, dc_config):
         new_routes.append(r)
     return new_routes
 
-def _new_active_ant(colony, num_vehicles, in_vec, use_ls, nodes, dist, capacity):
+def _new_active_ant(colony, num_vehicles, in_vec, use_ls, nodes, nodes_arr, dist, capacity):
     unvisited = set(range(1, len(nodes)))
     routes = []
     cur_route = []
     load = 0.0
-    cur_time = 0.0
+    cur_time = nodes_arr[0, 1] # ready_time
     cur = 0
     depots_left = num_vehicles
 
@@ -352,46 +370,44 @@ def _new_active_ant(colony, num_vehicles, in_vec, use_ls, nodes, dist, capacity)
     if cur_route:
         routes.append(cur_route)
 
-    routes = _insertion(routes, nodes, colony.dist, colony.time_mat, capacity, colony.is_solomon)
-
-    if use_ls:
-        all_f = all(_eval_route(r, nodes, colony.dist, colony.time_mat, capacity, colony.is_solomon)[0] for r in routes)
-        if all_f and hasattr(colony, 'vnd') and colony.vnd is not None:
-            routes = _apply_vnd(routes, nodes, colony.vnd, colony.dc_config)
+    routes = _insertion(routes, nodes_arr, colony.dist, colony.time_mat, capacity, colony.is_solomon)
 
     return routes
 
 class _ACSTime(_ACSColony):
-    def __init__(self, nodes, dist, time_mat, capacity, num_vehicles, **kw):
-        super().__init__(nodes, dist, time_mat, capacity, **kw)
+    def __init__(self, nodes, nodes_arr, dist, time_mat, capacity, num_vehicles, **kw):
+        super().__init__(nodes, nodes_arr, dist, time_mat, capacity, **kw)
         self.num_vehicles = num_vehicles
         self._in = [0.0] * len(nodes)
 
     def cycle(self, gb_routes, gb_cost):
         best_sol, best_cost = None, float('inf')
+        max_visited = 0
         for _ in range(self.num_ants):
             routes = _new_active_ant(self, self.num_vehicles, self._in,
-                                     False, self.nodes, self.dist, self.capacity)
-            routes = _apply_vnd(routes, self.nodes, self.vnd, self.dc_config)
-            f, cost = _solution_cost(routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
+                                     False, self.nodes, self.nodes_arr, self.dist, self.capacity)
+            
+            visited_count = sum(len(r) for r in routes)
+            if visited_count > max_visited:
+                max_visited = visited_count
+                
+            f, cost = _solution_cost(routes, self.nodes_arr, self.dist, self.time_mat, self.capacity, self.is_solomon)
             if f and cost < best_cost:
                 best_cost = cost
                 best_sol = [r[:] for r in routes]
-                
-        # if best_sol is not None and hasattr(self, 'vnd') and self.vnd is not None:
-        #     opt_routes = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
-        #     f_opt, cost_opt = _solution_cost(opt_routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
-        #     if f_opt and cost_opt < best_cost:
-        #         best_cost = cost_opt
-        #         best_sol = [r[:] for r in opt_routes]
+        
+        # Apply VND only to the best candidate of this cycle (Massive speedup)
+        if best_sol is not None and self.vnd is not None:
+            best_sol = _apply_vnd(best_sol, self.nodes, self.vnd, self.dc_config)
+            _, best_cost = _solution_cost(best_sol, self.nodes_arr, self.dist, self.time_mat, self.capacity, self.is_solomon)
                 
         if gb_routes:
             self._global_upd(gb_routes, gb_cost)
-        return best_sol, best_cost
+        return best_sol, best_cost, max_visited
 
 class _ACSVei(_ACSColony):
-    def __init__(self, nodes, dist, time_mat, capacity, num_vehicles, **kw):
-        super().__init__(nodes, dist, time_mat, capacity, **kw)
+    def __init__(self, nodes, nodes_arr, dist, time_mat, capacity, num_vehicles, **kw):
+        super().__init__(nodes, nodes_arr, dist, time_mat, capacity, **kw)
         self.num_vehicles = num_vehicles
         self._in = [0.0] * len(nodes)
         self._best_visited = 0
@@ -402,22 +418,29 @@ class _ACSVei(_ACSColony):
         new_feasible = None
         for _ in range(self.num_ants):
             routes = _new_active_ant(self, self.num_vehicles, self._in,
-                                     False, self.nodes, self.dist, self.capacity)
-            visited = set()
-            for r in routes:
-                visited.update(r)
-            nv = len(visited)
+                                     False, self.nodes, self.nodes_arr, self.dist, self.capacity)
+            nv = sum(len(r) for r in routes)
 
             for cid in range(1, self.n):
-                if cid not in visited:
+                # Approximate tracking of unvisited
+                is_visited = any(cid in r for r in routes)
+                if not is_visited:
                     self._in[cid] += 1.0
 
             if nv > self._best_visited:
                 self._best_visited = nv
-                f, cost = _solution_cost(routes, self.nodes, self.dist, self.time_mat, self.capacity, self.is_solomon)
+                f, cost = _solution_cost(routes, self.nodes_arr, self.dist, self.time_mat, self.capacity, self.is_solomon)
                 self._best_routes = [r[:] for r in routes]
                 self._best_cost = cost if f else float('inf')
                 self._in = [0.0] * self.n
+                
+                # Apply VND only when we find a new record in visited nodes
+                if self.vnd is not None:
+                    self._best_routes = _apply_vnd(self._best_routes, self.nodes, self.vnd, self.dc_config)
+                    f_opt, cost_opt = _solution_cost(self._best_routes, self.nodes_arr, self.dist, self.time_mat, self.capacity, self.is_solomon)
+                    self._best_cost = cost_opt if f_opt else float('inf')
+                    if f_opt: f = True
+                
                 if f:
                     new_feasible = (self._best_routes, self._best_cost)
 
@@ -432,35 +455,88 @@ class _ACSVei(_ACSColony):
 # Multiprocessing Workers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _acs_time_worker(nodes, dist, time_mat, capacity, num_vehicles,
-                     colony_kw, gb_routes, gb_cost, iterations, result_queue):
-    acs = _ACSTime(nodes=nodes, dist=dist, time_mat=time_mat,
+def _acs_time_worker(nodes, nodes_arr, dist, time_mat, capacity, num_vehicles,
+                     colony_kw, gb_routes, gb_cost, stop_event, result_queue,
+                     print_lock, turn_control):
+    acs = _ACSTime(nodes=nodes, nodes_arr=nodes_arr, dist=dist, time_mat=time_mat,
                    capacity=capacity, num_vehicles=num_vehicles, **colony_kw)
-    for iter_num in range(iterations):
-        sol, cost = acs.cycle(gb_routes, gb_cost)
-        if sol is not None and len(sol) <= num_vehicles and cost < gb_cost:
-            gb_routes, gb_cost = sol, cost
-            print(f"    [ACS-TIME] iter {iter_num}, vehicle={len(sol)}, dist={cost:.2f}")
-            result_queue.put(('TIME_IMPROVED', [r[:] for r in sol], cost))
+    iter_num = 0
+    while not stop_event.is_set():
+        sol, cost, max_v = acs.cycle(gb_routes, gb_cost)
+        is_improve = False
+        if sol is not None:
+            nv_new = len(sol)
+            nv_best = len(gb_routes)
+            # Better if fewer vehicles, or same vehicles with less distance
+            if nv_new < nv_best or (nv_new == nv_best and cost < gb_cost):
+                gb_routes, gb_cost = sol, cost
+                is_improve = True
+                result_queue.put(('TIME_IMPROVED', [r[:] for r in sol], cost))
+        
+        # Wait for turn to print
+        while turn_control[0] != 1 and not stop_event.is_set():
+            time.sleep(0.01)
+        if stop_event.is_set(): break
+        
+        with print_lock:
+            if is_improve:
+                print(f"    [ACS-DIST] iter {iter_num}, vehicle={len(sol)}, dist={cost:.2f} (Improve!)")
+            elif cost < float('inf'):
+                nv_curr = len(sol) if sol else num_vehicles
+                print(f"    [ACS-DIST] iter {iter_num}, vehicle={nv_curr}, dist={cost:.2f}")
+            else:
+                print(f"    [ACS-DIST] iter {iter_num}, nodes={max_v}/{len(nodes)-1}")
+            turn_control[0] = 0
+            
+        iter_num += 1
 
 
-def _acs_vei_worker(nodes, dist, time_mat, capacity, num_vehicles_minus1,
-                    colony_kw, gb_routes, gb_cost, iterations, result_queue):
-    acs = _ACSVei(nodes=nodes, dist=dist, time_mat=time_mat,
+def _acs_vei_worker(nodes, nodes_arr, dist, time_mat, capacity, num_vehicles_minus1,
+                    colony_kw, gb_routes, gb_cost, stop_event, result_queue,
+                    print_lock, turn_control):
+    acs = _ACSVei(nodes=nodes, nodes_arr=nodes_arr, dist=dist, time_mat=time_mat,
                   capacity=capacity, num_vehicles=num_vehicles_minus1, **colony_kw)
-    for iter_num in range(iterations):
+    iter_num = 0
+    while not stop_event.is_set():
         res = acs.cycle(gb_routes, gb_cost)
-        if res is not None:
+        is_feasible = (res is not None)
+        is_improve = False
+        nv_new = num_vehicles_minus1 + 1
+        cost_new = gb_cost
+        
+        if is_feasible:
             r, c = res
             nv_new = len(r)
-            if nv_new < num_vehicles_minus1 + 1:
-                print(f"    [ACS-VEI] iter {iter_num}, vehicle={len(r)}, dist={c:.2f}")
-                result_queue.put(('VEI_FEASIBLE', [ri[:] for ri in r], c))
-                break
-            elif nv_new == num_vehicles_minus1 + 1 and c < gb_cost:
+            nv_best = len(gb_routes)
+            cost_new = c
+            
+            # Check if this feasible solution is better than our local best
+            if nv_new < nv_best or (nv_new == nv_best and c < gb_cost):
                 gb_routes, gb_cost = r, c
-                print(f"    [ACS-VEI] iter {iter_num}, vehicle={len(r)}, dist={c:.2f}")
-                result_queue.put(('VEI_IMPROVED', [ri[:] for ri in r], c))
+                is_improve = True
+        
+        # Wait for turn to print
+        while turn_control[0] != 0 and not stop_event.is_set():
+            time.sleep(0.01)
+        if stop_event.is_set(): break
+        
+        with print_lock:
+            if is_feasible:
+                if nv_new < num_vehicles_minus1 + 1:
+                    print(f"    [ACS-VEI]  iter {iter_num}, vehicle={nv_new}, dist={cost_new:.2f} (FEASIBLE!)")
+                    result_queue.put(('VEI_FEASIBLE', [ri[:] for ri in r], c))
+                elif is_improve:
+                    print(f"    [ACS-VEI]  iter {iter_num}, vehicle={nv_new}, dist={cost_new:.2f} (Improve!)")
+                    result_queue.put(('VEI_IMPROVED', [ri[:] for ri in r], c))
+                else:
+                    print(f"    [ACS-VEI]  iter {iter_num}, nodes={acs._best_visited}/{len(nodes)-1} (FEASIBLE)")
+            else:
+                print(f"    [ACS-VEI]  iter {iter_num}, nodes={acs._best_visited}/{len(nodes)-1}")
+            turn_control[0] = 1
+            
+        if is_feasible and nv_new < num_vehicles_minus1 + 1:
+            break
+        iter_num += 1
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MACSSolver 
@@ -468,17 +544,17 @@ def _acs_vei_worker(nodes, dist, time_mat, capacity, num_vehicles_minus1,
 
 class MACSSolver:
     def __init__(self, remaining_stores, distance_matrix, time_matrix,
-                 num_ants=10, iterations=100,
+                 num_ants=10, time_limit=60,
                  support_capacity=200,
-                 time_limit_per_route=1236.0,
+                 time_limit_per_route=100000.0,
                  is_solomon=False,
-                 beta=1.0, rho=0.5, q0=0.8, early_stop_patience=10,
+                 beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
                  verbose=True, vnd_strategy='best'):
 
         self.remaining_stores = remaining_stores
         self.distance_matrix  = distance_matrix
         self.verbose          = verbose
-        self.iterations       = iterations
+        self.time_limit       = time_limit
         self.is_solomon       = is_solomon
         self.early_stop_patience = early_stop_patience
         self.vnd_strategy = vnd_strategy
@@ -509,11 +585,21 @@ class MACSSolver:
 
     def run(self):
         t_start = time.time()
-        nodes, dist, cap = self.nodes, self.dist, self.capacity
+        nodes, dist, cap = self.nodes, np.array(self.dist), self.capacity
+        time_mat = np.array(self.time_mat)
+        
+        # Convert nodes to array for Numba
+        # 0: demand, 1: ready_time, 2: due_date, 3: service_time
+        nodes_arr = np.zeros((len(nodes), 4), dtype=np.float64)
+        for i, n in enumerate(nodes):
+            nodes_arr[i, 0] = n['demand']
+            nodes_arr[i, 1] = n['ready_time']
+            nodes_arr[i, 2] = n['due_date']
+            nodes_arr[i, 3] = n['service_time']
 
-        gb_routes = _nearest_neighbor(nodes, dist, self.time_mat, cap, self.is_solomon)
-        gb_routes = _insertion(gb_routes, nodes, dist, self.time_mat, cap, self.is_solomon)
-        gb_f, gb_cost = _solution_cost(gb_routes, nodes, dist, self.time_mat, cap, self.is_solomon)
+        gb_routes = _nearest_neighbor(nodes, dist, time_mat, cap, self.is_solomon)
+        gb_routes = _insertion(gb_routes, nodes_arr, dist, time_mat, cap, self.is_solomon)
+        gb_f, gb_cost = _solution_cost(gb_routes, nodes_arr, dist, time_mat, cap, self.is_solomon)
         gb_nv = len(gb_routes)
 
         self.tau0 = 1.0 / (len(nodes) * len(gb_routes))
@@ -530,54 +616,83 @@ class MACSSolver:
                          is_solomon=self.is_solomon,
                          vnd=self.vnd, dc_config=self.dc_config)
 
-        vei_inner_iters = 5
-        time_inner_iters = 20
-
-        for iter_num in range(self.iterations):
-            print(f"    [MACS] iter {iter_num}, vehicle={gb_nv}, dist={gb_cost:.2f}, feasible={gb_f}")
+        iter_num = 0
+        while (time.time() - t_start) < self.time_limit:
+            if self.verbose:
+                print(f"    [MACS] iter {iter_num}, elapsed={time.time()-t_start:.1f}s, vehicle={gb_nv}, DIST={gb_cost:.2f}")
+            
             v = gb_nv
             result_queue = queue.Queue()
+            stop_event = threading.Event()
+            print_lock = threading.Lock()
+            turn_control = [0] # 0: VEI's turn, 1: DIST's turn
 
             t_time = threading.Thread(
                 target=_acs_time_worker,
-                args=(nodes, dist, self.time_mat, cap, v,
+                args=(nodes, nodes_arr, dist, time_mat, cap, v,
                       colony_kw,
                       [r[:] for r in gb_routes], gb_cost,
-                      time_inner_iters, result_queue))
+                      stop_event, result_queue,
+                      print_lock, turn_control))
             t_vei = threading.Thread(
                 target=_acs_vei_worker,
-                args=(nodes, dist, self.time_mat, cap, max(1, v - 1),
+                args=(nodes, nodes_arr, dist, time_mat, cap, max(1, v - 1),
                       colony_kw,
                       [r[:] for r in gb_routes], gb_cost,
-                      vei_inner_iters, result_queue))
-
+                      stop_event, result_queue,
+                      print_lock, turn_control))
+            
             t_time.start()
             t_vei.start()
 
+            # Monitoring loop
+            while t_time.is_alive() or t_vei.is_alive():
+                if (time.time() - t_start) >= self.time_limit:
+                    stop_event.set()
+                    break
+                
+                try:
+                    msg = result_queue.get(timeout=0.1)
+                    source, sol, cost = msg
+
+                    if source == 'VEI_FEASIBLE':
+                        nv_new = len(sol)
+                        if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
+                            gb_routes, gb_cost, gb_nv = sol, cost, nv_new
+                            if self.verbose:
+                                print(f"    [MACS Iter {iter_num}] VEI ✓ vehicles={gb_nv}, DIST={gb_cost:.2f}")
+                            stop_event.set() # Rebuild colonies immediately
+                            break
+                    elif source == 'VEI_IMPROVED':
+                        nv_new = len(sol)
+                        if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
+                            old_nv = gb_nv
+                            gb_routes, gb_cost = sol, cost
+                            gb_nv = nv_new
+                            if gb_nv < old_nv:
+                                if self.verbose:
+                                    print(f"    [MACS Iter {iter_num}] VEI reduced vehicles! vehicles={gb_nv}")
+                                stop_event.set()
+                                break
+                    elif source == 'TIME_IMPROVED':
+                        nv_new = len(sol)
+                        if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
+                            old_nv = gb_nv
+                            gb_routes, gb_cost = sol, cost
+                            gb_nv = nv_new
+                            if self.verbose:
+                                print(f"    [MACS Iter {iter_num}] DIST ✓ DIST={gb_cost:.2f}")
+                            if gb_nv < old_nv:
+                                if self.verbose:
+                                    print(f"    [MACS Iter {iter_num}] DIST reduced vehicles! vehicles={gb_nv}")
+                                stop_event.set()
+                                break
+                except queue.Empty:
+                    continue
+            
+            stop_event.set()
             t_time.join()
             t_vei.join()
-
-            while not result_queue.empty():
-                msg = result_queue.get_nowait()
-                source, sol, cost = msg
-
-                if source == 'VEI_FEASIBLE':
-                    nv_new = len(sol)
-                    if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
-                        gb_routes, gb_cost, gb_nv = sol, cost, nv_new
-                        if self.verbose:
-                            print(f"    [MACS Iter {iter_num}] VEI ✓ vehicles={gb_nv}, dist={gb_cost:.2f}")
-
-                elif source == 'VEI_IMPROVED':
-                    if len(sol) == gb_nv and cost < gb_cost:
-                        gb_routes, gb_cost = sol, cost
-
-                elif source == 'TIME_IMPROVED':
-                    if len(sol) <= gb_nv and cost < gb_cost:
-                        gb_routes, gb_cost = sol, cost
-                        gb_nv = len(gb_routes)
-                        if self.verbose:
-                            print(f"    [MACS Iter {iter_num}] TIME ✓ dist={gb_cost:.2f}")
 
             if early_stopper.check((gb_nv, gb_cost)):
                 print(f"    [MACS] Early stop triggered at iteration {iter_num}.")

@@ -13,14 +13,44 @@ from utils.early_stopper import EarlyStopper
 from solvers.allocate_ga import StoreAllocationGA
 
 @njit(cache=True)
-def _njit_weights(ids_array, dist_matrix, volumes):
-    w = np.zeros(len(ids_array) - 2)
+def _njit_weights(ids_array, dist_matrix, volumes, vehicle_cost):
+    n = len(ids_array) - 2
+    w = np.zeros(n)
+    if n == 0:
+        return w
+        
+    q_min = np.min(volumes)
+    q_max = np.max(volumes)
+    
+    # theta step = (q_max - q_min) / 3
+    if q_max == q_min:
+        step = 1.0
+    else:
+        step = (q_max - q_min) / 3.0
+    
+    fixed_part = vehicle_cost / n
+    depot_id = ids_array[0]
+    
     for i in range(1, len(ids_array) - 1):
-        d = (dist_matrix[ids_array[i-1], ids_array[i]]
-             + dist_matrix[ids_array[i], ids_array[i+1]]
-             - dist_matrix[ids_array[i-1], ids_array[i+1]])
-        w[i-1] = max(d, 1e-6) * volumes[i-1]
-    return w / np.sum(w)
+        q_i = volumes[i-1]
+        
+        # Determine demand coefficient theta_i
+        if q_i <= q_min + step:
+            theta_i = 1.0
+        elif q_i <= q_min + 2.0 * step:
+            theta_i = 1.5
+        else:
+            theta_i = 2.0
+            
+        c0i = dist_matrix[depot_id, ids_array[i]]
+        # Formula: e_i = f_bar/n + theta_i * c0i
+        w[i-1] = fixed_part + theta_i * c0i
+        
+    sum_w = np.sum(w)
+    if sum_w > 0:
+        return w / sum_w
+    else:
+        return np.ones(n) / n
 
 # ── Worker globals ──────────────────────────────────────────────────────────
 ROUTES = None
@@ -77,7 +107,8 @@ class StoreExtractionGA:
 
     def __init__(self, main_routes, distance_matrix, time_matrix,
                  population_size=10, elite_rate=0.1, generations=50,
-                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100,
+                 vehicle_cost=2000):
         self.dc                  = config.DC_CONFIG
         self.distance_matrix     = distance_matrix
         self.time_matrix         = time_matrix
@@ -88,6 +119,7 @@ class StoreExtractionGA:
         self.cross_rate          = cross_rate
         self.mutation_rate       = mutation_rate
         self.early_stop_patience = early_stop_patience
+        self.vehicle_cost        = vehicle_cost
         self.overloaded_routes   = self._get_overloaded()
         # Fixed store order per route (index → store dict)
         self.route_stores        = {r: list(info['stores'])
@@ -137,7 +169,7 @@ class StoreExtractionGA:
         depot_id = self.s2i[self.dc['store_id']]
         ids_array = np.array([depot_id] + [self.s2i[s['store_id']] for s in stores] + [depot_id], dtype=np.int64)
         volumes = np.array([s['volume'] for s in stores], dtype=np.float64)
-        return _njit_weights(ids_array, self.np_dist, volumes)
+        return _njit_weights(ids_array, self.np_dist, volumes, self.vehicle_cost)
 
     # ── Feasibility repair (binary) ───────────────────────────────────────────
 
@@ -146,16 +178,25 @@ class StoreExtractionGA:
         Ensure the binary vector yields a capacity-feasible remaining route.
         Uses heuristic weights (detour cost × volume) to select which stores
         to extract (flip 0 → 1) until the route is no longer overloaded.
+        Also ensures at least one store remains in the route.
         """
         bits       = list(bits)
         all_stores = self.route_stores[route_id]
         capacity   = self.main_routes[route_id]['dc']['max_capacity']
 
+        # Ensure at least one store remains initially
+        if sum(bits) == len(bits):
+            bits[np.random.randint(len(bits))] = 0
+
         while True:
             rem  = [all_stores[j] for j, b in enumerate(bits) if b == 0]
+            if len(rem) <= 1:
+                break
+                
             load = sum(s['volume'] for s in rem)
             if load <= capacity:
                 break
+                
             probs  = self._weights(rem)
             chosen = np.random.choice(len(rem), p=probs)
             global_j = next(j for j, s in enumerate(all_stores)
@@ -341,7 +382,7 @@ class StoreExtractionGA:
                 res = local_cache.get(ctx_key, {'cost': fb, 'vn': 0})
                 vn = res['vn']
                 print(f'Store Extraction: iteration{gen_idx + 1} -> '
-                      f'vn = {vn}, cost = {fb - vn * 2000:.2f}, fitness = {fb:.2f}')
+                      f'vn = {vn}, cost = {fb - vn * self.vehicle_cost:.2f}, fitness = {fb:.2f}')
 
                 self.log.append({
                     'generation': gen_idx + 1,
