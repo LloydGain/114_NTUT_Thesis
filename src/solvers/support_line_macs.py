@@ -178,15 +178,39 @@ def _njit_nearest_neighbor(n_nodes, np_dist, np_time, np_volume, np_dwell, np_ea
                 
     return routes_flat, routes_len, v_idx
 
-def _vei_worker(self, vei_max_vehicles, result_queue, inner_iters):
-    ph_vei = self.ph_vei.copy()
-    in_vei = self.np_in_vei.copy()
-    best_visited = self.best_visited_vei
-    best_routes = None
-    best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+@njit(cache=True)
+def _njit_solution_cost(routes_flat, routes_len, v_count, dc_idx, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, capacity, time_limit, is_solomon, dc_departure_time):
+    total_dist = 0.0
+    feasible = True
+    ptr = 0
+    total_visited = 0
+    for v in range(v_count):
+        l = routes_len[v]
+        if l == 0: continue
+        total_visited += l
+        route = routes_flat[ptr:ptr+l]
+        ptr += l
+        f, d, _ = _njit_eval_route(route, np.zeros(0), dc_idx, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, capacity, time_limit, is_solomon, dc_departure_time)
+        if not f:
+            feasible = False
+        total_dist += d
+    
+    # Check if all nodes visited (assuming n_nodes-1 stores)
+    # This check is usually handled by the caller or specialized logic in MACS
+    return feasible, total_dist
 
-    for _ in range(inner_iters):
+def _vei_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, turn_control):
+    ph_vei = self.ph_vei # Use shared array
+    in_vei = self.np_in_vei
+    iter_num = 0
+    
+    while not stop_event.is_set():
+        best_visited = self.best_visited_vei
+        best_routes = None
+        best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        
         for _ in range(self.num_ants):
+            if stop_event.is_set(): break
             r_vals_q = np.random.rand(self.store_count * 2)
             r_vals_r = np.random.rand(self.store_count * 2)
             
@@ -214,6 +238,7 @@ def _vei_worker(self, vei_max_vehicles, result_queue, inner_iters):
             nv = len(visited)
             if nv > best_visited:
                 best_visited = nv
+                self.best_visited_vei = nv
                 in_vei.fill(0.0)
                 cost = self._calc_cost(routes)
                 best_routes, best_cost = routes, cost
@@ -224,25 +249,47 @@ def _vei_worker(self, vei_max_vehicles, result_queue, inner_iters):
                 if self.is_solomon:
                     if cost[0] < best_cost[0] or (cost[0] == best_cost[0] and cost[1] < best_cost[1]):
                         best_routes, best_cost = routes, cost
-                        result_queue.put(('VEI_IMPROVED', routes, cost))
                 else:
                     if cost < best_cost:
                         best_routes, best_cost = routes, cost
-                        result_queue.put(('VEI_IMPROVED', routes, cost))
         
+        # Apply VND only to the best candidate of this cycle
+        if best_routes and nv == self.store_count:
+            best_routes = self._apply_vnd(best_routes)
+            best_cost = self._calc_cost(best_routes)
+            result_queue.put(('VEI_IMPROVED', best_routes, best_cost))
+
         if best_routes:
             _flat = np.array([n for r in best_routes for n in r], dtype=np.int64)
             _len = np.array([len(r) for r in best_routes], dtype=np.int64)
             c_val = best_cost[0] * self.vehicle_cost + best_cost[1] if self.is_solomon else best_cost
             _njit_global_update(ph_vei, _flat, _len, len(best_routes), c_val, self.rho)
+            
+        # Turn control print
+        while turn_control[0] != 0 and not stop_event.is_set():
+            time.sleep(0.01)
+        if stop_event.is_set(): break
+        
+        with print_lock:
+            if best_routes is not None and best_visited == self.store_count:
+                c_disp = best_cost[1] if self.is_solomon else best_cost
+                print(f"    [ACS-VEI]  iter {iter_num}, vehicle={len(best_routes)}, cost={c_disp:.2f} (FEASIBLE)")
+            else:
+                print(f"    [ACS-VEI]  iter {iter_num}, nodes={best_visited}/{self.store_count}")
+            turn_control[0] = 1
+        iter_num += 1
 
-def _time_worker(self, result_queue, inner_iters):
-    ph_time = self.ph_time.copy()
-    best_routes = None
-    best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+def _time_worker(self, result_queue, stop_event, print_lock, turn_control):
+    ph_time = self.ph_time
+    iter_num = 0
+    
+    while not stop_event.is_set():
+        best_routes = None
+        best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        max_v = 0
 
-    for _ in range(inner_iters):
         for _ in range(self.num_ants):
+            if stop_event.is_set(): break
             r_vals_q = np.random.rand(self.store_count * 2)
             r_vals_r = np.random.rand(self.store_count * 2)
             
@@ -256,37 +303,50 @@ def _time_worker(self, result_queue, inner_iters):
             )
             
             routes = []
+            visited_cnt = 0
             p = 0
             for i in range(v_cnt):
-                if r_len[i] > 0: routes.append(list(r_flat[p:p+r_len[i]]))
+                if r_len[i] > 0: 
+                    routes.append(list(r_flat[p:p+r_len[i]]))
+                    visited_cnt += r_len[i]
                 p += r_len[i]
             
-            cost = self._calc_cost(routes)
-            if self.is_solomon:
-                if cost[0] < best_cost[0] or (cost[0] == best_cost[0] and cost[1] < best_cost[1]):
-                    best_routes, best_cost = routes, cost
-                    result_queue.put(('TIME_IMPROVED', routes, cost))
-            else:
-                if cost < best_cost:
-                    best_routes, best_cost = routes, cost
-                    result_queue.put(('TIME_IMPROVED', routes, cost))
+            if visited_cnt > max_v: max_v = visited_cnt
+            
+            if visited_cnt == self.store_count:
+                cost = self._calc_cost(routes)
+                if self.is_solomon:
+                    if cost[0] < best_cost[0] or (cost[0] == best_cost[0] and cost[1] < best_cost[1]):
+                        best_routes, best_cost = routes, cost
+                else:
+                    if cost < best_cost:
+                        best_routes, best_cost = routes, cost
+        
+        # Apply VND only once per cycle
+        if best_routes:
+            best_routes = self._apply_vnd(best_routes)
+            best_cost = self._calc_cost(best_routes)
+            result_queue.put(('TIME_IMPROVED', best_routes, best_cost))
         
         if best_routes:
-            opt_routes = self._apply_vnd(best_routes)
-            opt_cost = self._calc_cost(opt_routes)
-            if self.is_solomon:
-                if opt_cost[0] < best_cost[0] or (opt_cost[0] == best_cost[0] and opt_cost[1] < best_cost[1]):
-                    best_routes, best_cost = opt_routes, opt_cost
-                    result_queue.put(('TIME_IMPROVED', opt_routes, opt_cost))
-            else:
-                if opt_cost < best_cost:
-                    best_routes, best_cost = opt_routes, opt_cost
-                    result_queue.put(('TIME_IMPROVED', opt_routes, opt_cost))
-            
             _flat = np.array([n for r in best_routes for n in r], dtype=np.int64)
             _len = np.array([len(r) for r in best_routes], dtype=np.int64)
             c_val = best_cost[0] * self.vehicle_cost + best_cost[1] if self.is_solomon else best_cost
             _njit_global_update(ph_time, _flat, _len, len(best_routes), c_val, self.rho)
+            
+        # Turn control print
+        while turn_control[0] != 1 and not stop_event.is_set():
+            time.sleep(0.01)
+        if stop_event.is_set(): break
+        
+        with print_lock:
+            if best_routes is not None:
+                c_disp = best_cost[1] if self.is_solomon else best_cost
+                print(f"    [ACS-DIST] iter {iter_num}, vehicle={len(best_routes)}, cost={c_disp:.2f}")
+            else:
+                print(f"    [ACS-DIST] iter {iter_num}, nodes={max_v}/{self.store_count}")
+            turn_control[0] = 0
+        iter_num += 1
 
 @njit(cache=True)
 def _njit_transition_value(current_idx, next_idx, in_next, cur_time, np_dist, np_time, np_earliest, np_latest, is_solomon, ph, alpha, beta):
@@ -548,7 +608,7 @@ def _njit_global_update(ph, routes_flat, routes_len, v_count, cost, rho):
 
 class SupportLinePlanningMACS:
     def __init__(self, remaining_stores, distance_matrix, time_matrix,
-                 num_ants=10, iterations=100, support_capacity=7.2,
+                 num_ants=10, time_limit=60, support_capacity=7.2,
                  time_limit_per_route=5 * 60 * 60, vehicle_cost=2000, is_solomon=False,
                  alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
                  verbose=True, vnd_strategy='best'):
@@ -557,7 +617,7 @@ class SupportLinePlanningMACS:
         self.orig_distance_matrix = distance_matrix
         self.orig_time_matrix = time_matrix
         self.verbose = verbose
-        self.iterations = iterations
+        self.time_limit = time_limit
         self.is_solomon = is_solomon
         self.early_stop_patience = early_stop_patience
         self.vnd_strategy = vnd_strategy
@@ -780,41 +840,83 @@ class SupportLinePlanningMACS:
     def run(self):
         t_start = time.time()
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
+        global_iter = 0
         
-        inner_iters = 20
-        for iter_num in range(self.iterations):
+        while (time.time() - t_start) < self.time_limit:
             v = len(self.gb_routes)
-            res_q = queue.Queue()
-            
-            t_vei = threading.Thread(target=_vei_worker, args=(self, max(1, v - 1), res_q, inner_iters))
-            t_time = threading.Thread(target=_time_worker, args=(self, res_q, inner_iters))
-            
-            t_vei.start(); t_time.start()
-            t_vei.join(); t_time.join()
-            
-            improved = False
-            while not res_q.empty():
-                src, sol, cost = res_q.get()
-                if self.is_solomon:
-                    if cost[0] < self.gb_cost[0] or (cost[0] == self.gb_cost[0] and cost[1] < self.gb_cost[1]):
-                        self.gb_routes, self.gb_cost = sol, cost
-                        improved = True
-                else:
-                    if cost < self.gb_cost:
-                        self.gb_routes, self.gb_cost = sol, cost
-                        improved = True
-            
             if self.verbose:
                 c_disp = self.gb_cost[1] if self.is_solomon else self.gb_cost
-                print(f"    [MACS Iter {iter_num}] : {len(self.gb_routes)} vehicles, cost={c_disp:.2f}")
-
+                print(f"    [MACS] iteration {global_iter}: vehicle={v}, cost={c_disp:.2f}, elapsed={time.time()-t_start:.1f}s")
+            
+            # Initial log for each outer iteration
+            self.log.append({
+                'iteration': global_iter,
+                'vehicle_count': v,
+                'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                'best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                'elapsed_time': time.time() - t_start
+            })
+            
+            res_q = queue.Queue()
+            stop_event = threading.Event()
+            print_lock = threading.Lock()
+            turn_control = [0] # 0: VEI, 1: DIST
+            
+            t_vei = threading.Thread(target=_vei_worker, args=(self, max(1, v - 1), res_q, stop_event, print_lock, turn_control))
+            t_time = threading.Thread(target=_time_worker, args=(self, res_q, stop_event, print_lock, turn_control))
+            
+            t_vei.start(); t_time.start()
+            
+            # Monitoring loop
+            while t_vei.is_alive() or t_time.is_alive():
+                if (time.time() - t_start) >= self.time_limit:
+                    stop_event.set()
+                    break
+                try:
+                    msg = res_q.get(timeout=0.1)
+                    src, sol, cost = msg
+                    
+                    improved = False
+                    if self.is_solomon:
+                        if cost[0] < self.gb_cost[0] or (cost[0] == self.gb_cost[0] and cost[1] < self.gb_cost[1]):
+                            old_nv = self.gb_cost[0]
+                            self.gb_routes, self.gb_cost = sol, cost
+                            improved = True
+                            if cost[0] < old_nv:
+                                if self.verbose: print(f"    [MACS] VEI reduced vehicles! {cost[0]}")
+                                stop_event.set(); break
+                    else:
+                        if cost < self.gb_cost:
+                            old_nv = len(self.gb_routes)
+                            self.gb_routes, self.gb_cost = sol, cost
+                            improved = True
+                            if len(sol) < old_nv:
+                                if self.verbose: print(f"    [MACS] VEI reduced vehicles! {len(sol)}")
+                                stop_event.set(); break
+                    
+                    if improved:
+                        self.log.append({
+                            'iteration': global_iter,
+                            'vehicle_count': self.gb_cost[0] if self.is_solomon else len(self.gb_routes),
+                            'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                            'best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                            'elapsed_time': time.time() - t_start
+                        })
+                except queue.Empty:
+                    continue
+            
+            stop_event.set()
+            t_vei.join(); t_time.join()
+            global_iter += 1
+            
             if early_stopper.check(self.gb_cost):
-                if self.verbose: print(f"    [MACS Iter {iter_num}] Early stop triggered.")
+                if self.verbose: print(f"    [MACS] Early stop triggered.")
                 break
-
+                
         elapsed = time.time() - t_start
         if self.verbose:
             c_disp = self.gb_cost[1] if self.is_solomon else self.gb_cost
-            print(f"    [MACS] Done in {elapsed:.1f}s. Best Vehicles: {len(self.gb_routes)}, Cost: {c_disp:.2f}")
+            nv = self.gb_cost[0] if self.is_solomon else len(self.gb_routes)
+            print(f"    [MACS] Done in {elapsed:.1f}s → {nv} vehicles, cost={c_disp:.2f}")
             
         return self.gb_cost, self._format_solution(self.gb_routes)

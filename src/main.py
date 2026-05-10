@@ -97,7 +97,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'generations': 200,
             'cross_rate': 0.9,
             'mutation_rate': 0.05,
-            'early_stop_patience': 10
+            'early_stop_patience': 20
         },
         'store_allocation_ga': {
             'population_size': 100,
@@ -108,14 +108,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 50
         },
         'support_line_aco': {
-            'iterations': 200,
-            'num_ants': 10,
+            'time_limit': 100,
+            'num_ants': 25,
             # 'alpha': 1,
             'beta': 1,
-            'rho': 0.5,
+            'rho': 0.1,
             # 'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 5,
+            'early_stop_patience': 20,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
             'vnd_strategy': 'best'
@@ -144,16 +144,17 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 1
         },
         'support_line_aco': {
-            'iterations': 10,
+            'time_limit': 10,
+            'num_ants': 25,
             # 'alpha': 1,
             'beta': 1,
-            'rho': 0.5,
+            'rho': 0.1,
             # 'q': 1,
             'q0': 0.9,
-            'early_stop_patience': 50,
+            'early_stop_patience': 10,
             'support_capacity': 7.2,
-            # 'vehicle_cost': 2000,
-            'vnd_strategy': 'first'
+            'vehicle_cost': 2000,
+            'vnd_strategy': 'best'
         },
         'Test': True,
         'comment': comment

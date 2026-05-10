@@ -321,7 +321,7 @@ class StoreAllocationGA:
         main_cost = float(_njit_total_distance(paths, self.np_dist))
         
         support_pool = [self.remaining_stores[i] for i in support_pool_indices]
-        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, time_limit=0, verbose=False)
 
         if return_routes:
             macs_cost, support_routes = macs.run()
@@ -374,7 +374,7 @@ class StoreAllocationGA:
             route_manager.insert_store(store, chosen_r, chosen_pos)
 
         main_cost = self._calculate_total_distance(route_manager.routes_info)
-        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, time_limit=0, verbose=False)
         macs_cost, support_routes = macs.run()
         vn = len(support_routes)
         total_cost = main_cost + macs_cost
@@ -553,7 +553,7 @@ class StoreAllocationGA:
         main_cost = float(_njit_total_distance(paths, self.np_dist))
         
         support_pool = [self.remaining_stores[i] for i in support_pool_indices]
-        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, iterations=0, verbose=False)
+        macs = SupportLinePlanningMACS(support_pool, self.distance_matrix, self.time_matrix, time_limit=0, verbose=False)
 
         if return_routes:
             macs_cost, support_routes = macs.run()

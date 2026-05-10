@@ -119,7 +119,6 @@ from models.route_manager import RouteManager
 from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.support_line_ga import SupportLinePlanningGA
 from solvers.macs import MACSSolver
-from solvers.support_line_macs import SupportLinePlanningMACS
 
 def parse_solomon_file(filepath):
     with open(filepath, 'r') as f:
@@ -181,7 +180,7 @@ def build_matrices(nodes):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--solver", type=str, choices=["aco", "ga", "macs", "support_line_macs"], default=None, help="Choose solver to run (aco, ga, macs, or support_line_macs). If not specified, runs all.")
+    parser.add_argument("--solver", type=str, choices=["aco", "ga", "macs"], default=None, help="Choose solver to run (aco, ga, or macs). If not specified, runs all.")
     parser.add_argument("--dataset", type=str, default=None, help="Specific dataset to run, e.g., 'c101.txt'.")
     parser.add_argument("--run-mode", type=str, choices=["only", "onward"], default="only", help="If --dataset is provided, 'only' runs just that dataset, 'onward' runs from that dataset to the end.")
     parser.add_argument("--seed", type=int, default=None, help="Specific seed to run.")
@@ -243,7 +242,6 @@ def run_single_macs_seed(args_tuple):
     random.seed(seed_val)
     np.random.seed(seed_val)
     
-    # 建立一個靜默(verbose=False)的求解器實例，避免平行運算時輸出混亂
     support = MACSSolver(
         remaining_stores=remaining_stores,
         distance_matrix=distance_matrix,
@@ -274,48 +272,6 @@ def run_single_macs_seed(args_tuple):
     except Exception as e:
         raise e
 
-def run_single_support_line_macs_seed(args_tuple):
-    run_idx, remaining_stores, distance_matrix, time_matrix, capacity, time_limit = args_tuple
-    import random
-    import numpy as np
-    import time
-    from solvers.support_line_macs import SupportLinePlanningMACS
-    import run_solomon
-    
-    seed_val = run_idx
-    random.seed(seed_val)
-    np.random.seed(seed_val)
-    run_solomon.set_numba_seed(seed_val)
-    
-    support = SupportLinePlanningMACS(
-        remaining_stores=remaining_stores,
-        distance_matrix=distance_matrix,
-        time_matrix=time_matrix,
-        num_ants=len(remaining_stores), 
-        iterations=500,
-        support_capacity=capacity,
-        time_limit_per_route=time_limit,
-        is_solomon=True,
-        early_stop_patience=30,
-        verbose=True
-    )
-    
-    try:
-        start_time = time.time()
-        best_cost, best_solution = support.run()
-        duration = time.time() - start_time
-        num_routes = len(best_solution) if best_solution else 0
-        
-        if isinstance(best_cost, tuple):
-            distance = best_cost[1]
-            best_cost_scalar = num_routes * 2000 + distance
-        else:
-            distance = best_cost - num_routes * 2000
-            best_cost_scalar = best_cost
-            
-        return run_idx, seed_val, best_cost_scalar, distance, num_routes, duration, best_cost, best_solution
-    except Exception as e:
-        raise e
 
 def main():
     args = parse_args()
@@ -593,50 +549,6 @@ def main():
                                     dataset_csv_writer.writerow(row_data)
                                     dataset_csv_file.flush()
 
-                elif solver_name == "support_line_macs":
-                    import concurrent.futures
-                    max_workers = max(1, os.cpu_count() - 2) if os.cpu_count() else 4
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-                        future_to_run_idx = {}
-                        for run_idx in runs_to_execute:
-                            args_tuple = (run_idx, remaining_stores, distance_matrix, time_matrix, capacity, time_limit)
-                            fut = executor.submit(run_single_support_line_macs_seed, args_tuple)
-                            future_to_run_idx[fut] = run_idx
-                            
-                        for future in concurrent.futures.as_completed(future_to_run_idx):
-                            run_idx = future_to_run_idx[future]
-                            seed_val = run_idx
-                            try:
-                                run_idx_res, seed_val_res, best_cost_scalar, distance, num_routes, duration, best_cost, best_solution = future.result()
-                                
-                                print(f"  Run {run_idx+1}/{NUM_RUNS} (Seed {seed_val}): Cost: {best_cost_scalar:.2f}, Distance: {distance:.2f}, Routes: {num_routes}, Time: {duration:.2f}s")
-                                
-                                row_data = [filename, len(remaining_stores), capacity, run_idx+1, seed_val, round(best_cost_scalar, 2), num_routes, round(distance, 2), round(duration, 2)]
-                                instance_results[filename].append(row_data)
-                                
-                                if dataset_csv_writer is not None:
-                                    dataset_csv_writer.writerow(row_data)
-                                    dataset_csv_file.flush()
-                                
-                                if best_cost < overall_best_cost:
-                                    overall_best_cost = best_cost
-                                    overall_best_sol = best_solution
-                                    overall_best_dist = distance
-                                    overall_best_routes = num_routes
-                                    
-                                run_costs.append(best_cost_scalar)
-                                run_distances.append(distance)
-                                run_routes.append(num_routes)
-                                run_times.append(duration)
-                                successful_runs += 1
-                                
-                            except Exception as e:
-                                print(f"  Run {run_idx+1}/{NUM_RUNS} ERROR (SUPPORT_LINE_MACS): {e}")
-                                row_data = [filename, len(remaining_stores), capacity, run_idx+1, seed_val, "ERROR", "ERROR", "ERROR", "ERROR"]
-                                instance_results[filename].append(row_data)
-                                if dataset_csv_writer is not None:
-                                    dataset_csv_writer.writerow(row_data)
-                                    dataset_csv_file.flush()
 
 
                 if successful_runs > 0:
