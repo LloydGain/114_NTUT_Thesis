@@ -279,8 +279,8 @@ def _vei_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, tu
             turn_control[0] = 1
         iter_num += 1
 
-def _time_worker(self, result_queue, stop_event, print_lock, turn_control):
-    ph_time = self.ph_time
+def _dist_worker(self, result_queue, stop_event, print_lock, turn_control):
+    ph_dist = self.ph_dist
     iter_num = 0
     
     while not stop_event.is_set():
@@ -294,7 +294,7 @@ def _time_worker(self, result_queue, stop_event, print_lock, turn_control):
             r_vals_r = np.random.rand(self.store_count * 2)
             
             r_flat, r_len, v_cnt = _njit_build_ant(
-                self.store_count + 1, ph_time, np.zeros(self.store_count + 1, dtype=np.float64), self.np_dist, self.np_time, 
+                self.store_count + 1, ph_dist, np.zeros(self.store_count + 1, dtype=np.float64), self.np_dist, self.np_time, 
                 self.np_volume, self.np_dwell, self.np_earliest, self.np_latest, self.np_sched, 
                 self.np_group, self.np_region, self.dc_departure_time, 
                 self.support_capacity, self.time_limit_per_route, 
@@ -332,7 +332,7 @@ def _time_worker(self, result_queue, stop_event, print_lock, turn_control):
             _flat = np.array([n for r in best_routes for n in r], dtype=np.int64)
             _len = np.array([len(r) for r in best_routes], dtype=np.int64)
             c_val = best_cost[0] * self.vehicle_cost + best_cost[1] if self.is_solomon else best_cost
-            _njit_global_update(ph_time, _flat, _len, len(best_routes), c_val, self.rho)
+            _njit_global_update(ph_dist, _flat, _len, len(best_routes), c_val, self.rho)
             
         # Turn control print
         while turn_control[0] != 1 and not stop_event.is_set():
@@ -642,10 +642,10 @@ class SupportLinePlanningMACS:
         self.tau0 = 1.0 / (self.store_count * gb_cost) if self.store_count > 0 else 0.001
         
         self.ph_vei = np.full((self.store_count + 1, self.store_count + 1), self.tau0, dtype=np.float64)
-        self.ph_time = np.full((self.store_count + 1, self.store_count + 1), self.tau0, dtype=np.float64)
+        self.ph_dist = np.full((self.store_count + 1, self.store_count + 1), self.tau0, dtype=np.float64)
         for i in range(self.store_count + 1):
             self.ph_vei[i, i] = 0.0
-            self.ph_time[i, i] = 0.0
+            self.ph_dist[i, i] = 0.0
             
         self.log = []
         self.vnd = VND(distance_matrix, time_matrix, vehicle_cost=0, is_solomon=is_solomon, 
@@ -863,12 +863,12 @@ class SupportLinePlanningMACS:
             turn_control = [0] # 0: VEI, 1: DIST
             
             t_vei = threading.Thread(target=_vei_worker, args=(self, max(1, v - 1), res_q, stop_event, print_lock, turn_control))
-            t_time = threading.Thread(target=_time_worker, args=(self, res_q, stop_event, print_lock, turn_control))
+            t_dist = threading.Thread(target=_dist_worker, args=(self, res_q, stop_event, print_lock, turn_control))
             
-            t_vei.start(); t_time.start()
+            t_vei.start(); t_dist.start()
             
             # Monitoring loop
-            while t_vei.is_alive() or t_time.is_alive():
+            while t_vei.is_alive() or t_dist.is_alive():
                 if (time.time() - t_start) >= self.time_limit:
                     stop_event.set()
                     break
@@ -906,7 +906,7 @@ class SupportLinePlanningMACS:
                     continue
             
             stop_event.set()
-            t_vei.join(); t_time.join()
+            t_vei.join(); t_dist.join()
             global_iter += 1
             
             if early_stopper.check(self.gb_cost):

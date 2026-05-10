@@ -374,7 +374,7 @@ def _new_active_ant(colony, num_vehicles, in_vec, use_ls, nodes, nodes_arr, dist
 
     return routes
 
-class _ACSTime(_ACSColony):
+class _ACSDist(_ACSColony):
     def __init__(self, nodes, nodes_arr, dist, time_mat, capacity, num_vehicles, **kw):
         super().__init__(nodes, nodes_arr, dist, time_mat, capacity, **kw)
         self.num_vehicles = num_vehicles
@@ -386,7 +386,7 @@ class _ACSTime(_ACSColony):
         for _ in range(self.num_ants):
             routes = _new_active_ant(self, self.num_vehicles, self._in,
                                      False, self.nodes, self.nodes_arr, self.dist, self.capacity)
-            
+                
             visited_count = sum(len(r) for r in routes)
             if visited_count > max_visited:
                 max_visited = visited_count
@@ -455,10 +455,10 @@ class _ACSVei(_ACSColony):
 # Multiprocessing Workers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _acs_time_worker(nodes, nodes_arr, dist, time_mat, capacity, num_vehicles,
+def _acs_dist_worker(nodes, nodes_arr, dist, time_mat, capacity, num_vehicles,
                      colony_kw, gb_routes, gb_cost, stop_event, result_queue,
                      print_lock, turn_control):
-    acs = _ACSTime(nodes=nodes, nodes_arr=nodes_arr, dist=dist, time_mat=time_mat,
+    acs = _ACSDist(nodes=nodes, nodes_arr=nodes_arr, dist=dist, time_mat=time_mat,
                    capacity=capacity, num_vehicles=num_vehicles, **colony_kw)
     iter_num = 0
     while not stop_event.is_set():
@@ -471,7 +471,7 @@ def _acs_time_worker(nodes, nodes_arr, dist, time_mat, capacity, num_vehicles,
             if nv_new < nv_best or (nv_new == nv_best and cost < gb_cost):
                 gb_routes, gb_cost = sol, cost
                 is_improve = True
-                result_queue.put(('TIME_IMPROVED', [r[:] for r in sol], cost))
+                result_queue.put(('DIST_IMPROVED', [r[:] for r in sol], cost))
         
         # Wait for turn to print
         while turn_control[0] != 1 and not stop_event.is_set():
@@ -627,8 +627,8 @@ class MACSSolver:
             print_lock = threading.Lock()
             turn_control = [0] # 0: VEI's turn, 1: DIST's turn
 
-            t_time = threading.Thread(
-                target=_acs_time_worker,
+            t_dist = threading.Thread(
+                target=_acs_dist_worker,
                 args=(nodes, nodes_arr, dist, time_mat, cap, v,
                       colony_kw,
                       [r[:] for r in gb_routes], gb_cost,
@@ -642,11 +642,11 @@ class MACSSolver:
                       stop_event, result_queue,
                       print_lock, turn_control))
             
-            t_time.start()
+            t_dist.start()
             t_vei.start()
 
             # Monitoring loop
-            while t_time.is_alive() or t_vei.is_alive():
+            while t_dist.is_alive() or t_vei.is_alive():
                 if (time.time() - t_start) >= self.time_limit:
                     stop_event.set()
                     break
@@ -674,7 +674,7 @@ class MACSSolver:
                                     print(f"    [MACS Iter {iter_num}] VEI reduced vehicles! vehicles={gb_nv}")
                                 stop_event.set()
                                 break
-                    elif source == 'TIME_IMPROVED':
+                    elif source == 'DIST_IMPROVED':
                         nv_new = len(sol)
                         if nv_new < gb_nv or (nv_new == gb_nv and cost < gb_cost):
                             old_nv = gb_nv
@@ -691,7 +691,7 @@ class MACSSolver:
                     continue
             
             stop_event.set()
-            t_time.join()
+            t_dist.join()
             t_vei.join()
 
             if early_stopper.check((gb_nv, gb_cost)):
