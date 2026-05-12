@@ -279,7 +279,7 @@ def _vei_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, tu
             turn_control[0] = 1
         iter_num += 1
 
-def _dist_worker(self, result_queue, stop_event, print_lock, turn_control):
+def _dist_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, turn_control):
     ph_dist = self.ph_dist
     iter_num = 0
     
@@ -299,7 +299,7 @@ def _dist_worker(self, result_queue, stop_event, print_lock, turn_control):
                 self.np_group, self.np_region, self.dc_departure_time, 
                 self.support_capacity, self.time_limit_per_route, 
                 self.alpha, self.beta, self.rho, self.q0, self.tau0, 
-                self.is_solomon, 9999, r_vals_q, r_vals_r
+                self.is_solomon, vei_max_vehicles, r_vals_q, r_vals_r
             )
             
             routes = []
@@ -838,6 +838,9 @@ class SupportLinePlanningMACS:
         return new_routes
 
     def run(self):
+        if self.store_count == 0:
+            return self.gb_cost, self._format_solution(self.gb_routes)
+        
         t_start = time.time()
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         global_iter = 0
@@ -863,7 +866,7 @@ class SupportLinePlanningMACS:
             turn_control = [0] # 0: VEI, 1: DIST
             
             t_vei = threading.Thread(target=_vei_worker, args=(self, max(1, v - 1), res_q, stop_event, print_lock, turn_control))
-            t_dist = threading.Thread(target=_dist_worker, args=(self, res_q, stop_event, print_lock, turn_control))
+            t_dist = threading.Thread(target=_dist_worker, args=(self, max(1, v),res_q, stop_event, print_lock, turn_control))
             
             t_vei.start(); t_dist.start()
             
