@@ -392,12 +392,42 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         end_time = time.time()
         print(f"路線視覺化執行時間: {end_time - start_time:.2f} 秒")
 
-    optimized_distance = sum(route['dc']['distance'] for route in optimized_routes.values())
-    vehicle_cost = 2000
-    support_vehicle_count = sum(1 for route in optimized_routes.values() if route['dc']['route_id'].isdigit())
-    optimized_cost = optimized_distance + (support_vehicle_count * vehicle_cost)
+# -----------------------------------------------------------------------------------
 
-    return optimized_cost
+    total_vehicles   = len(optimized_routes)
+    vehicle_cost     = 2000
+    support_vehicles = sum(1 for r in optimized_routes.values() if r['dc']['route_id'].isdigit())
+    total_distance   = sum(r['dc']['distance'] for r in optimized_routes.values())
+    total_duration   = sum(r['dc']['duration'] for r in optimized_routes.values()) / 3600
+    total_stores     = sum(len(r['stores']) for r in optimized_routes.values())
+    avg_distance     = total_distance / total_vehicles if total_vehicles else 0
+    avg_duration     = total_duration / total_vehicles if total_vehicles else 0
+    avg_load_rate    = (
+        sum(r['dc']['load_rate'] for r in optimized_routes.values()) / total_vehicles
+        if total_vehicles else 0
+    )
+
+    on_time = sum(
+        1
+        for r in optimized_routes.values()
+        for s in r['stores']
+        if s['earliest_time'] <= s['pred_time'] <= s['latest_time']
+    )
+    on_time_rate = on_time / total_stores if total_stores else 0
+
+    optimized_cost = total_distance + (support_vehicles * vehicle_cost)
+
+    return {
+        "cost":            optimized_cost,
+        "vehicle_num":     total_vehicles,
+        "total_store_num": total_stores,
+        "total_dist(km)":  round(total_distance,  4),
+        "total_time(hr)":  round(total_duration,  4),
+        "avg_dist(km)":    round(avg_distance,    4),
+        "avg_time(hr)":    round(avg_duration,    4),
+        "avg_load_rate":   round(avg_load_rate,   4),
+        "on_time_rate":    round(on_time_rate,    4),
+    }
 
 # ---------------------------------------------------------------------------
 

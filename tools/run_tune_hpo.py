@@ -85,11 +85,12 @@ def objective(trial, data_name, seed):
         "rho": rho, "alpha": alpha, "beta": beta,
     }
 
-    return main(
+    result = main(
         file_date=data_name,
         random_seed=seed,
         hyper_params=params
     )
+    return result["cost"]
 
 
 def save_results(study, output_dir, data_name, seed):
