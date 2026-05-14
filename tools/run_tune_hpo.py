@@ -99,10 +99,13 @@ def save_results(study, output_dir, data_name, seed):
         if t.value is None:
             continue
 
-        row = t.params.copy()
+        row = {"trial": t.number}
+        row.update(t.params)
         row["value"] = t.value
-        row["trial"] = t.number
         records.append(row)
+
+    if not records:
+        return
 
     df = pd.DataFrame(records)
 
@@ -134,13 +137,29 @@ def run(data_name, seed=0):
         direction="minimize",
         study_name=f"taguchi_l32_{data_name}_{seed}",
         storage=f"sqlite:///{db_path}",
-        load_if_exists=False
+        load_if_exists=True
     )
 
-    for i in range(len(L32)):
-        study.enqueue_trial(decode(L32[i]))
+    existing_trials = [
+        t.params for t in study.trials
+        if t.state == optuna.trial.TrialState.COMPLETE
+    ]
 
-    study.optimize(lambda t: objective(t, data_name, seed), n_trials=32)
+    for row in L32:
+        params = decode(row)
+
+        if params not in existing_trials:
+            study.enqueue_trial(params)
+
+    remaining = 32 - len(existing_trials)
+
+    study.optimize(
+        lambda t: objective(t, data_name, seed),
+        n_trials=remaining,
+        gc_after_trial=True,
+        callbacks=[lambda study, trial: save_results(study, trial_dir, data_name, seed)]
+    )
+
 
     print("Best value:", study.best_value)
     print("Best params:", study.best_params)
