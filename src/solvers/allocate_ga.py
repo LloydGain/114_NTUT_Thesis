@@ -92,6 +92,58 @@ def _njit_get_store_insertion_cost_pos(store_idx, route_stores, dc_idx, dc_regio
     return min_cost, best_pos
 
 @njit(cache=True)
+def _njit_get_store_insertion_cost_pos_ranged(store_idx, route_stores, dc_idx, dc_region, route_vol, route_cap,
+                                              store_region, store_vol, dist_matrix, time_matrix,
+                                              dwell_arr, earliest_arr, latest_arr, sched_arr, time_limit,
+                                              pos_low, pos_high):
+    """Same as _njit_get_store_insertion_cost_pos but only considers positions in [pos_low, pos_high)."""
+    if dc_region == 0 and store_region == 1: return -1.0, -1
+    if dc_region == 1 and store_region == 0: return -1.0, -1
+    if dc_region == 2 and store_region == 3: return -1.0, -1
+    if dc_region == 3 and store_region == 2: return -1.0, -1
+
+    if route_vol + store_vol > route_cap:
+        return -1.0, -1
+
+    L = len(route_stores)
+    best_pos = -1
+    min_cost = 1e12
+
+    full_route = np.zeros(L + 2, dtype=np.int64)
+    full_route[0]     = dc_idx
+    full_route[L + 1] = dc_idx
+    for i in range(L):
+        full_route[i + 1] = route_stores[i]
+
+    test_route = np.zeros(L + 3, dtype=np.int64)
+
+    # Clamp to valid range
+    start = pos_low  if pos_low  >= 1            else 1
+    end   = pos_high if pos_high <= len(full_route) else len(full_route)
+
+    for pos in range(start, end):
+        prev_idx = full_route[pos - 1]
+        next_idx = full_route[pos]
+        insert_cost = (dist_matrix[prev_idx, store_idx]
+                       + dist_matrix[store_idx, next_idx]
+                       - dist_matrix[prev_idx, next_idx])
+
+        if 0 < insert_cost < min_cost:
+            for i in range(pos):
+                test_route[i] = full_route[i]
+            test_route[pos] = store_idx
+            for i in range(pos, len(full_route)):
+                test_route[i + 1] = full_route[i]
+
+            if _njit_check_time_constraint(test_route, dc_idx, dist_matrix, time_matrix,
+                                           dwell_arr, earliest_arr, latest_arr,
+                                           sched_arr, time_limit):
+                best_pos = pos - 1
+                min_cost = insert_cost
+
+    return min_cost, best_pos
+
+@njit(cache=True)
 def _njit_total_distance(route_paths, dist_matrix):
     total = 0.0
     for k in range(len(route_paths)):
@@ -110,6 +162,12 @@ try:
         0, np.array([0], dtype=np.int64), 0, 0, 0.0, 10.0, 0, 0.0,
         np.zeros((1, 1)), np.zeros((1, 1)),
         np.array([0.0]), np.array([0.0]), np.array([0.0]), np.array([0.0]), 10.0
+    )
+    _njit_get_store_insertion_cost_pos_ranged(
+        0, np.array([0], dtype=np.int64), 0, 0, 0.0, 10.0, 0, 0.0,
+        np.zeros((1, 1)), np.zeros((1, 1)),
+        np.array([0.0]), np.array([0.0]), np.array([0.0]), np.array([0.0]), 10.0,
+        1, 2
     )
     _dummy = NumbaList()
     _dummy.append(np.array([0, 0], dtype=np.int64))
@@ -231,23 +289,83 @@ class StoreAllocationGA:
             self.np_latest, self.np_region, self.np_sched
         )
 
+    def _compute_route_code_position_range(self, route_id, store_idx, route_stores_idx):
+        store = self.i2s[store_idx]
+        store_rc = store.get('route_code', '')
+        
+        # If the store doesn't have a route_code or doesn't belong to this route, 
+        # it can be inserted anywhere.
+        if not store_rc or not store_rc.startswith(route_id):
+            return 1, len(route_stores_idx) + 2
+
+        try:
+            store_seq = int(store_rc[2:])
+        except ValueError:
+            return 1, len(route_stores_idx) + 2
+
+        pos_low = 1
+        pos_high = len(route_stores_idx) + 2
+
+        for i, curr_idx in enumerate(route_stores_idx):
+            curr_store = self.i2s[curr_idx]
+            curr_rc = curr_store.get('route_code', '')
+            
+            if curr_rc and curr_rc.startswith(route_id):
+                try:
+                    curr_seq = int(curr_rc[2:])
+                    if curr_seq < store_seq:
+                        pos_low = max(pos_low, i + 2)
+                    elif curr_seq > store_seq:
+                        pos_high = min(pos_high, i + 2)
+                except ValueError:
+                    pass
+
+        return pos_low, pos_high
+
     def _get_store_insertion_cost_and_pos(self, route_info, store):
         dc      = route_info['dc']
         stores  = route_info['stores']
         store_idx    = self.s2i[store['store_id']]
-        route_stores = np.array([self.s2i[s['store_id']] for s in stores], dtype=np.int64)
+        route_stores_idx = [self.s2i[s['store_id']] for s in stores]
+        route_stores = np.array(route_stores_idx, dtype=np.int64)
 
         dc_region_map  = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
         dc_region_int  = dc_region_map.get(dc.get('region', ''), -1)
         store_region_int = self.np_region[store_idx]
 
-        cost, pos = _njit_get_store_insertion_cost_pos(
+        # Use the route_id to compute valid range. We can guess route_id from the first store if available
+        # or we might need to change the method signature to pass route_id.
+        # However, route_info doesn't store route_id natively here.
+        # Let's find it. Wait, the caller passes r_id to _fast_get... but here we only have route_info.
+        # Let's try to deduce route_id.
+        route_id = ""
+        for r_id, r_info in self.main_routes.items():
+            if r_info['dc']['store_id'] == dc['store_id']: # Not enough, could be multiple routes from same DC
+                # Check stores? The exact match is not guaranteed if route_info is mutated.
+                # Since we only use this method when r_id is known or we can deduce it from route_code of existing stores.
+                pass
+        
+        # Actually, let's just find the most common route_code prefix (first 2 chars) in the route's stores
+        prefix_counts = {}
+        for s in stores:
+            rc = s.get('route_code', '')
+            if rc and len(rc) >= 2:
+                prefix = rc[:2]
+                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+        
+        if prefix_counts:
+            route_id = max(prefix_counts, key=prefix_counts.get)
+
+        pos_low, pos_high = self._compute_route_code_position_range(route_id, store_idx, route_stores_idx)
+
+        cost, pos = _njit_get_store_insertion_cost_pos_ranged(
             store_idx, route_stores, 0, dc_region_int,
             float(dc.get('total_volume', 0)), float(dc.get('max_capacity', 1e9)),
             store_region_int, float(store.get('volume', 0)),
             self.np_dist, self.np_time, self.np_dwell,
             self.np_earliest, self.np_latest,
-            self.np_sched, float(self.time_limit_per_route)
+            self.np_sched, float(self.time_limit_per_route),
+            pos_low, pos_high
         )
 
         if cost < 0:
@@ -255,13 +373,16 @@ class StoreAllocationGA:
         return cost, pos
 
     def _fast_get_store_insertion_cost_and_pos(self, r_id, store_idx, route_stores_idx, route_vols, route_caps, route_regions):
-        cost, pos = _njit_get_store_insertion_cost_pos(
+        pos_low, pos_high = self._compute_route_code_position_range(r_id, store_idx, route_stores_idx[r_id])
+        
+        cost, pos = _njit_get_store_insertion_cost_pos_ranged(
             store_idx, np.array(route_stores_idx[r_id], dtype=np.int64), 0, route_regions[r_id],
             route_vols[r_id], route_caps[r_id],
             self.np_region[store_idx], self.np_volume[store_idx],
             self.np_dist, self.np_time, self.np_dwell,
             self.np_earliest, self.np_latest,
-            self.np_sched, float(self.time_limit_per_route)
+            self.np_sched, float(self.time_limit_per_route),
+            pos_low, pos_high
         )
         if cost < 0:
             return float('inf'), -1
