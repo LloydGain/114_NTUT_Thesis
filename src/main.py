@@ -52,6 +52,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     manual_routes_file = f'../output/{file_date}/manual_routes_info.json'
     program_routes_file = f'../output/{file_date}/program_routes_info.json'
     optimized_routes_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.json'
+    optimized_routes_excel_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.xlsx'
     route_comparison_file = f'../output/{file_date}/{dt_folder}/routes_comparison.xlsx'
     route_comparison_simple_file = f'../output/{file_date}/{dt_folder}/routes_comparison_simple.xlsx'
 
@@ -92,18 +93,18 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 30,
+            'population_size': 20,
             'elite_rate': 0.1,
             'generations': 200,
-            'cross_rate': 0.9,
-            'mutation_rate': 0.05,
+            'cross_rate': 0.7,
+            'mutation_rate': 0.1,
             'early_stop_patience': 20
         },
         'store_allocation_ga': {
-            'population_size': 100,
+            'population_size': 50,
             'elite_rate': 0.1,
-            'generations': 1000,
-            'cross_rate': 0.9,
+            'generations': 200,
+            'cross_rate': 0.8,
             'mutation_rate': 0.05,
             'early_stop_patience': 50
         },
@@ -111,8 +112,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'time_limit': 100,
             'num_ants': 25,
             # 'alpha': 1,
-            'beta': 1,
-            'rho': 0.1,
+            'beta': 7,
+            'rho': 0.5,
             # 'q': 1,
             'q0': 0.9,
             'early_stop_patience': 20,
@@ -281,6 +282,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     if google:
         route_manager.update_all_routes_distance_and_duration_with_google_api()
     route_manager.export_routes_info(optimized_routes_file)
+    route_manager.export_excel_file(optimized_routes_excel_file)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)

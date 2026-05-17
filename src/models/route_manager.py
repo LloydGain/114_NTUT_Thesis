@@ -553,6 +553,189 @@ class RouteManager:
             self._update_predicted_times(stores, durations)
 
 
+    def export_excel_file(self, dest_file):
+        """
+        Notes:
+            Export routes info to Excel file directly without converting to original routes.
+
+        Args:
+            dest_file (str): Path to the Excel file.
+
+        Returns:
+            None.
+        """
+        import pandas as pd
+        import numpy as np
+        from openpyxl import load_workbook
+        from openpyxl.utils import get_column_letter
+
+        data = []
+        for route_id in self.routes_info:
+            dc = self.routes_info[route_id]['dc']
+            stores = self.routes_info[route_id]['stores']
+            data.append({
+                "車次": dc["route_code"],
+                "ID": "",
+                "店名": '林口DC',
+                "表定時間": "",
+                "最早抵達時間": "",
+                "預定時間": "",
+                "最晚抵達時間": "",
+                "貨量": dc["total_volume"],
+                "裝載率": dc["load_rate"],
+                "時間(hr)": round(dc.get("duration", 0) / 3600, 4),
+                "距離(km)": round(dc.get("distance", 0), 4)
+            })
+            for s in stores:
+                data.append({
+                    "車次": s["route_code"],
+                    "ID": s["store_id"],
+                    "店名": s["store_name"],
+                    "表定時間": s.get("sched_time", ""),
+                    "最早抵達時間": s.get("earliest_time", ""),
+                    "預定時間": s.get("pred_time", ""),
+                    "最晚抵達時間": s.get("latest_time", ""),
+                    "貨量": s.get("volume", 0),
+                    "裝載率": "",
+                    "時間(hr)": "",
+                    "距離(km)": ""
+                })
+            data.append({
+                "車次": f'{dc["route_code"]}DC',
+                "ID": "",
+                "店名": '林口DC',
+                "表定時間": "",
+                "最早抵達時間": "",
+                "預定時間": "",
+                "最晚抵達時間": "",
+                "貨量": 0,
+                "裝載率": "",
+                "時間(hr)": "",
+                "距離(km)": ""
+            })
+
+        main_routes = [r for r in self.routes_info.values() if not r['dc']['route_id'].isdigit()]
+        support_routes = [r for r in self.routes_info.values() if r['dc']['route_id'].isdigit()]
+
+        def calc_stats(routes):
+            if not routes:
+                return [0, 0, 0, 0, 0, 0, 0, 0]
+            vehicles = len(routes)
+            stores = sum(len(r['stores']) for r in routes)
+            dist = sum(r['dc'].get('distance', 0) for r in routes)
+            time_hr = sum(r['dc'].get('duration', 0) for r in routes) / 3600
+            load_rate = sum(r['dc'].get('load_rate', 0) for r in routes) / vehicles if vehicles else 0
+            
+            on_time = sum(
+                1
+                for r in routes
+                for s in r['stores']
+                if s.get('earliest_time') and s.get('pred_time') and s.get('latest_time') and s.get('earliest_time') <= s.get('pred_time') <= s.get('latest_time')
+            )
+            on_time_rate = on_time / stores if stores else 0
+            
+            return [
+                vehicles,
+                stores,
+                round(dist, 4),
+                round(time_hr, 4),
+                round(dist / vehicles if vehicles else 0, 4),
+                round(time_hr / vehicles if vehicles else 0, 4),
+                round(load_rate, 4),
+                round(on_time_rate, 4)
+            ]
+
+        main_stats = calc_stats(main_routes)
+        support_stats = calc_stats(support_routes)
+
+        stat_keys = [
+            "vehicle_num",
+            "total_store_num",
+            "total_dist(km)",
+            "total_time(hr)",
+            "avg_dist(km)",
+            "avg_time(hr)",
+            "avg_load_rate",
+            "on_time_rate"
+        ]
+
+        for i, key in enumerate(stat_keys):
+            if i < len(data):
+                data[i][""] = ""
+                data[i]["指標"] = key
+                data[i]["主線"] = main_stats[i]
+                data[i]["支援線"] = support_stats[i]
+            else:
+                data.append({
+                    "車次": "",
+                    "ID": "",
+                    "店名": "",
+                    "表定時間": "",
+                    "最早抵達時間": "",
+                    "預定時間": "",
+                    "最晚抵達時間": "",
+                    "貨量": "",
+                    "裝載率": "",
+                    "時間(hr)": "",
+                    "距離(km)": "",
+                    "": "",
+                    "指標": key,
+                    "主線": main_stats[i],
+                    "支援線": support_stats[i]
+                })
+
+        columns = [
+            "車次",
+            "ID",
+            "店名",
+            "表定時間",
+            "最早抵達時間",
+            "預定時間",
+            "最晚抵達時間",
+            "貨量",
+            "裝載率",
+            "時間(hr)",
+            "距離(km)",
+            "",
+            "指標",
+            "主線",
+            "支援線"
+        ]
+        col_widths = [8, 12, 15, 20, 20, 20, 20, 10, 10, 10, 10, 5, 20, 15, 15]
+
+        output_dir = os.path.dirname(dest_file)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        df = pd.DataFrame(data, columns=columns)
+        df.replace(np.nan, "", inplace=True)
+
+        with pd.ExcelWriter(dest_file, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Sheet1", index=False, startrow=3)
+
+        wb = load_workbook(dest_file)
+        ws = wb['Sheet1']
+        for i, width in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+        from openpyxl.styles import PatternFill
+        yellow_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+
+        for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
+            earliest_val = row[4].value
+            pred_val = row[5].value
+            latest_val = row[6].value
+
+            if not earliest_val or not pred_val or not latest_val:
+                continue
+
+            if str(pred_val) < str(earliest_val) or str(pred_val) > str(latest_val):
+                for i in range(11):
+                    row[i].fill = yellow_fill
+
+        wb.save(dest_file)
+
+
     def export_routes_info(self, json_file='optimized_routes_info.json'):
         """
         Notes:
