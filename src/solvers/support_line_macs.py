@@ -611,8 +611,9 @@ class SupportLinePlanningMACS:
                  num_ants=10, time_limit=60, support_capacity=7.2,
                  time_limit_per_route=5 * 60 * 60, vehicle_cost=2000, is_solomon=False,
                  alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
-                 verbose=True, vnd_strategy='best'):
+                 verbose=True, vnd_strategy='best', mode='macs'):
 
+        self.mode = mode
         self.remaining_stores = remaining_stores
         self.orig_distance_matrix = distance_matrix
         self.orig_time_matrix = time_matrix
@@ -839,6 +840,9 @@ class SupportLinePlanningMACS:
 
     def run(self):
         if self.store_count == 0:
+            return self.gb_cost, self._format_solution(self.gb_routes)
+        
+        if self.mode == 'greedy':
             return self.gb_cost, self._format_solution(self.gb_routes)
         
         t_start = time.time()

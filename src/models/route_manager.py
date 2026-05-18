@@ -720,16 +720,47 @@ class RouteManager:
 
         from openpyxl.styles import PatternFill
         yellow_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+        purple_fill = PatternFill(start_color="E6E6FA", end_color="E6E6FA", fill_type="solid")
+        red_fill = PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid")
 
+        current_route_id = None
         for row in ws.iter_rows(min_row=5, max_row=ws.max_row):
+            route_code_val = row[0].value
+            store_id_val = row[1].value
+
+            # Update current route if it's a DC row (start of route)
+            if not store_id_val and route_code_val and not str(route_code_val).endswith('DC'):
+                current_route_id = str(route_code_val)
+                continue
+
+            is_cross_route = False
+            # Highlight logic for stores
+            if store_id_val and current_route_id:
+                is_main_route = not current_route_id.isdigit()
+                original_route_prefix = str(route_code_val)[:2] if route_code_val else ""
+                current_prefix = current_route_id[:2]
+
+                if is_main_route and original_route_prefix != current_prefix:
+                    is_cross_route = True
+
+            # Time window logic (yellow fill)
+            is_time_violation = False
             earliest_val = row[4].value
             pred_val = row[5].value
             latest_val = row[6].value
 
-            if not earliest_val or not pred_val or not latest_val:
-                continue
+            if earliest_val and pred_val and latest_val:
+                if str(pred_val) < str(earliest_val) or str(pred_val) > str(latest_val):
+                    is_time_violation = True
 
-            if str(pred_val) < str(earliest_val) or str(pred_val) > str(latest_val):
+            # Apply fills
+            if is_cross_route and is_time_violation:
+                for i in range(11):
+                    row[i].fill = red_fill
+            elif is_cross_route:
+                for i in range(11):
+                    row[i].fill = purple_fill
+            elif is_time_violation:
                 for i in range(11):
                     row[i].fill = yellow_fill
 

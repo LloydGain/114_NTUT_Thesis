@@ -31,10 +31,14 @@ def parse_args():
     parser.add_argument("--test", action="store_true", help="Run in test mode with reduced parameters")
     parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
     parser.add_argument("--comment", type=str, default=None, help="Comment for the run (optional)")
+    parser.add_argument("--skip_compare", action="store_true", help="Skip comparison with manual and program routes")
+    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support', 'vnd'], default=[], help="Ablation options: extract, allocate, support, vnd")
     return parser.parse_args()
 
 
-def main(file_date, random_seed=None, test_mode=False, google=False, comment=None, hyper_params=None):
+def main(file_date, random_seed=None, test_mode=False, google=False, comment=None, skip_compare=False, hyper_params=None, alb=None):
+    if alb is None:
+        alb = []
     """
     Notes:
         Main function for running the program.
@@ -93,8 +97,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 20,
-            'elite_rate': 0.1,
+            'population_size': 40,
+            'elite_rate': 0.03,
             'generations': 200,
             'cross_rate': 0.7,
             'mutation_rate': 0.1,
@@ -185,6 +189,9 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             if key in hyper_params:
                 params['support_line_aco'][key] = hyper_params[key]
 
+    if 'vnd' in alb:
+        params['support_line_aco']['vnd_strategy'] = 'none'
+
 # -----------------------------------------------------------------------------------
 
     start_time = time.time()
@@ -219,9 +226,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    print("Starting Store Extraction using GA...")
+    mode_extract = 'greedy' if 'extract' in alb else 'ccga'
+    print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
     ga_params = params['store_extraction_ga']
-    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, **ga_params)
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)
     main_routes, extracted_stores = store_extract.run()
     store_extract_log_data = store_extract.log
 
@@ -235,9 +243,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    print("Starting Store Allocation using GA...")
+    mode_allocate = 'greedy' if 'allocate' in alb else 'gga'
+    print(f"Starting Store Allocation using GA (Mode: {mode_allocate})...")
     allocate_params = params['store_allocation_ga']
-    store_allocate = StoreAllocationGA(main_routes, extracted_stores, distance_matrix, time_matrix, **allocate_params)
+    store_allocate = StoreAllocationGA(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
     _, main_routes, remaining_stores, _ = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 
@@ -251,11 +260,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    # print("Starting Support Line Planning using ACO...")
-    print("Starting Support Line Planning using MACS...")
+    mode_support = 'greedy' if 'support' in alb else 'macs'
+    print(f"Starting Support Line Planning using MACS (Mode: {mode_support})...")
     support_params = params['support_line_aco']
-    # support = SupportLinePlanningACO(remaining_stores, distance_matrix, time_matrix, **support_params)
-    support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, **support_params)
+    support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, mode=mode_support, **support_params)
     _, support_routes = support.run()
     support_line_log_data = support.log
 
@@ -292,54 +300,56 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
 # -----------------------------------------------------------------------------------
 
-    start_time = time.time()
-
-    print("Loading manual route data...")
-    m_data = MDataManager([manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
-    if google:
-        m_route_manager = RouteManager(m_data.routes_info, distance_matrix, time_matrix)
-        m_route_manager.update_all_routes_distance_and_duration_with_google_api()
-    m_data.save_routes_to_json(manual_routes_file)
-
-    end_time = time.time()
-    time_consume = round(end_time - start_time, 2)
-    print(f"手動編排資料讀取執行時間: {time_consume} 秒")
-
-    times['Loading manual route data...'] = time_consume
-
-# -----------------------------------------------------------------------------------
-
-    if os.path.exists(program_file):
+    m_data = None
+    if not skip_compare:
         start_time = time.time()
 
-        print("Loading program route data...")
-        p_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
+        print("Loading manual route data...")
+        m_data = MDataManager([manual_file, route_network_file, store_info_file], distance_matrix, time_matrix)
         if google:
-            p_route_manager = RouteManager(p_data.routes_info, distance_matrix, time_matrix)
-            p_route_manager.update_all_routes_distance_and_duration_with_google_api()
-        p_data.save_routes_to_json(program_routes_file)
+            m_route_manager = RouteManager(m_data.routes_info, distance_matrix, time_matrix)
+            m_route_manager.update_all_routes_distance_and_duration_with_google_api()
+        m_data.save_routes_to_json(manual_routes_file)
 
         end_time = time.time()
         time_consume = round(end_time - start_time, 2)
-        print(f"學長編排資料讀取執行時間: {time_consume} 秒")
+        print(f"手動編排資料讀取執行時間: {time_consume} 秒")
 
-        times['Loading program route data...'] = time_consume
+        times['Loading manual route data...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
-    start_time = time.time()
+        if os.path.exists(program_file):
+            start_time = time.time()
 
-    print("Evaluating and comparing routes...")
-    # eval = EvalRoutes(manual_routes_file, optimized_routes_file, program_routes_file) # 1203
-    eval_routes = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
-    eval_routes.export_to_excel(route_comparison_file)
-    eval_routes.export_to_excel(route_comparison_simple_file, simple=True)
+            print("Loading program route data...")
+            p_data = PDataManager([program_file, route_network_file, store_info_file], distance_matrix, time_matrix)
+            if google:
+                p_route_manager = RouteManager(p_data.routes_info, distance_matrix, time_matrix)
+                p_route_manager.update_all_routes_distance_and_duration_with_google_api()
+            p_data.save_routes_to_json(program_routes_file)
 
-    end_time = time.time()
-    time_consume = round(end_time - start_time, 2)
-    print(f"最佳化路線與手動編排路線比較執行時間: {time_consume} 秒")
+            end_time = time.time()
+            time_consume = round(end_time - start_time, 2)
+            print(f"學長編排資料讀取執行時間: {time_consume} 秒")
 
-    times['Evaluating and comparing routes...'] = time_consume
+            times['Loading program route data...'] = time_consume
+
+# -----------------------------------------------------------------------------------
+
+        start_time = time.time()
+
+        print("Evaluating and comparing routes...")
+        # eval = EvalRoutes(manual_routes_file, optimized_routes_file, program_routes_file) # 1203
+        eval_routes = EvalRoutes(manual_routes_file, optimized_routes_file) # 1205 # 1207
+        eval_routes.export_to_excel(route_comparison_file)
+        eval_routes.export_to_excel(route_comparison_simple_file, simple=True)
+
+        end_time = time.time()
+        time_consume = round(end_time - start_time, 2)
+        print(f"最佳化路線與手動編排路線比較執行時間: {time_consume} 秒")
+
+        times['Evaluating and comparing routes...'] = time_consume
 
 # -----------------------------------------------------------------------------------
 
@@ -349,7 +359,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     logger = Log(log_dir, params, times)
     logger.log_parameters()
     logger.log_times()
-    logger.log_route(store_count_log_file, o_data.routes_info, m_data.routes_info, optimized_routes)
+    m_routes_info = m_data.routes_info if m_data else {}
+    logger.log_route(store_count_log_file, o_data.routes_info, m_routes_info, optimized_routes)
     logger.log_execution(store_extract_log_file, store_extract_log_data)
     logger.log_execution(store_allocate_log_file, store_allocate_log_data)
     logger.log_execution(support_line_log_file, support_line_log_data)
@@ -370,20 +381,21 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             original_routes.plot_routes_html_in_osrm(original_routes_osrm_html)
             original_routes.plot_routes_html(original_routes_html)
 
-        if not os.path.exists(manual_routes_img) or not os.path.exists(manual_routes_html):
-            manual_routes = DisplayRoutes(manual_routes_file)
-            manual_routes.make_dir(manual_routes_dir)
-            # manual_routes.plot_routes_png(manual_routes_img)
-            manual_routes.plot_routes_html_in_osrm(manual_routes_osrm_html)
-            manual_routes.plot_routes_html(manual_routes_html)
+        if not skip_compare:
+            if not os.path.exists(manual_routes_img) or not os.path.exists(manual_routes_html):
+                manual_routes = DisplayRoutes(manual_routes_file)
+                manual_routes.make_dir(manual_routes_dir)
+                # manual_routes.plot_routes_png(manual_routes_img)
+                manual_routes.plot_routes_html_in_osrm(manual_routes_osrm_html)
+                manual_routes.plot_routes_html(manual_routes_html)
 
-        if os.path.exists(program_routes_file):
-            if not os.path.exists(program_routes_img) or not os.path.exists(program_route_html):
-                prog_routes = DisplayRoutes(program_routes_file)
-                prog_routes.make_dir(program_routes_dir)
-                # prog_routes.plot_routes_png(program_routes_img)
-                prog_routes.plot_routes_html_in_osrm(program_route_osrm_html)
-                prog_routes.plot_routes_html(program_route_html)
+            if os.path.exists(program_routes_file):
+                if not os.path.exists(program_routes_img) or not os.path.exists(program_route_html):
+                    prog_routes = DisplayRoutes(program_routes_file)
+                    prog_routes.make_dir(program_routes_dir)
+                    # prog_routes.plot_routes_png(program_routes_img)
+                    prog_routes.plot_routes_html_in_osrm(program_route_osrm_html)
+                    prog_routes.plot_routes_html(program_route_html)
 
         opt_routes = DisplayRoutes(optimized_routes_file)
         opt_routes.make_dir(optimized_routes_dir)
@@ -436,7 +448,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 if __name__ == "__main__":
     try:
         args = parse_args()
-        main(args.file_date, args.seed, args.test, args.google, args.comment)
+        main(args.file_date, args.seed, args.test, args.google, args.comment, args.skip_compare, alb=args.alb)
     except KeyboardInterrupt:
         print("Execution interrupted by user.")
         exit(1)

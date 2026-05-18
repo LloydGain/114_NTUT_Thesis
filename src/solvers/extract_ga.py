@@ -108,7 +108,8 @@ class StoreExtractionGA:
     def __init__(self, main_routes, distance_matrix, time_matrix,
                  population_size=10, elite_rate=0.1, generations=50,
                  cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100,
-                 vehicle_cost=2000):
+                 vehicle_cost=2000, mode='ga'):
+        self.mode                = mode
         self.dc                  = config.DC_CONFIG
         self.distance_matrix     = distance_matrix
         self.time_matrix         = time_matrix
@@ -271,6 +272,42 @@ class StoreExtractionGA:
                 for s in self._decode(r_id, bits)]
 
     def run(self):
+        if self.mode == 'greedy':
+            context = {r: [] for r in self.overloaded_routes}
+            for r_id, info in self.overloaded_routes.items():
+                stores = list(info['stores'])
+                capacity = info['dc']['max_capacity']
+                
+                # Sort stores by volume descending
+                sorted_stores = sorted(stores, key=lambda x: x.get('volume', 0), reverse=True)
+                
+                current_vol = sum(s.get('volume', 0) for s in stores)
+                extracted = []
+                
+                # Extract until current_vol <= capacity
+                # Also ensure at least one store remains
+                for s in sorted_stores:
+                    if current_vol <= capacity:
+                        break
+                    if len(extracted) == len(stores) - 1:
+                        break # leave at least one store
+                    
+                    extracted.append(s)
+                    current_vol -= s.get('volume', 0)
+                    
+                # Build binary individual
+                bits = [0] * len(stores)
+                ext_ids = {s['store_id'] for s in extracted}
+                for i, orig_s in enumerate(self.route_stores[r_id]):
+                    if orig_s['store_id'] in ext_ids:
+                        bits[i] = 1
+                context[r_id] = bits
+                
+            self.best_individual = context
+            print("[INFO] Completed Greedy Volume Extraction.")
+            return (self._best_main_routes(self.best_individual),
+                    self._individual_to_list(self.best_individual))
+
         route_ids = list(self.overloaded_routes.keys())
         N = self.population_size
 

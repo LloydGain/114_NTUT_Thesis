@@ -202,7 +202,8 @@ class StoreAllocationGA:
 
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix,
                  population_size=50, elite_rate=0.1, generations=50,
-                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100):
+                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100, mode='ga'):
+        self.mode             = mode
         self.main_routes      = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix  = distance_matrix
@@ -649,11 +650,11 @@ class StoreAllocationGA:
             if target == 'SUPPORT':
                 support_pool_indices.append(i)
                 continue
-            
+
             store_idx = self.s2i[store['store_id']]
             cost, pos = self._fast_get_store_insertion_cost_and_pos(
                 target, store_idx, route_stores_idx, route_vols, route_caps, route_regions)
-            
+
             if pos != -1:
                 route_stores_idx[target].insert(pos, store_idx)
                 route_vols[target] += self.np_volume[store_idx]
@@ -817,14 +818,14 @@ class StoreAllocationGA:
 
 
     def run(self, return_routes=True):
-        greedy_chromo, g_cost, g_routes, g_support, g_vn = self._generate_greedy_individual(return_routes=(return_routes and self.generations == 0))
+        greedy_chromo, g_cost, g_routes, g_support, g_vn = self._generate_greedy_individual(return_routes=(return_routes and (self.generations == 0 or self.mode == 'greedy')))
         self.best_cost               = g_cost
         self.best_solution           = g_routes
         self.best_remaining_solution = g_support
         self.best_individual         = greedy_chromo
         self.best_vn                 = g_vn
 
-        if self.generations == 0:
+        if self.generations == 0 or self.mode == 'greedy':
             return self.best_cost, self.best_solution, self.best_remaining_solution, self.best_vn
 
         self.log.append({
@@ -882,7 +883,8 @@ class StoreAllocationGA:
                     for i, chromo in enumerate(population):
                         key = individual_keys[i]
                         res = shared_cache[key]
-                        evaluated_pop.append({'individual': chromo, 'cost': res['cost'], 'vn': res['vn']})
+                        # FIX: Store the repaired individual so elites and crossover use valid chromosomes
+                        evaluated_pop.append({'individual': res['repaired'], 'cost': res['cost'], 'vn': res['vn']})
                         fitnesses.append(res['cost'])
 
                     evaluated_pop.sort(key=lambda x: x['cost'])
@@ -890,7 +892,8 @@ class StoreAllocationGA:
 
                     if current_best['cost'] < self.best_cost:
                         self.best_cost       = current_best['cost']
-                        self.best_individual = copy.deepcopy(shared_cache[individual_keys[0]]['repaired'])
+                        # FIX: Correctly store the best individual found in this generation
+                        self.best_individual = copy.deepcopy(current_best['individual'])
 
                     # Update population with repaired individuals
                     for i in range(len(population)):
@@ -920,7 +923,8 @@ class StoreAllocationGA:
                         c1 = self._mutate(list(c1))
                         c2 = self._mutate(list(c2))
                         children_generated.append(c1)
-                        children_generated.append(c2)
+                        if len(children_generated) < (self.population_size - self.elite_size):
+                            children_generated.append(c2)
 
                     task_candidates = []
                     for c in children_generated:
