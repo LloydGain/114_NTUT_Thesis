@@ -15,9 +15,9 @@ from main import main
 # Best hyperparameters determined from HPO across all datasets
 # ---------------------------------------------------------------------------
 BEST_PARAMS = {
-    "ex_pop": 20,
+    "ex_pop": 40,
     "ex_cx":  0.7,
-    "ex_mut": 0.1,
+    "ex_mut": 0.03,
     "al_pop": 50,
     "al_cx":  0.8,
     "al_mut": 0.05,
@@ -32,21 +32,16 @@ OUTPUT_DIR = ROOT / "output" / "exp"
 # Metric columns to report (returned by main())
 METRIC_COLS = [
     "vehicle_num",
-    "total_store_num",
     "total_dist(km)",
-    "total_time(hr)",
-    "avg_dist(km)",
-    "avg_time(hr)",
     "avg_load_rate",
     "on_time_rate",
+    "running_time(s)",
 ]
-
 
 # Column order for Raw Results sheet
 RAW_COLS = [
     "seed",
     *METRIC_COLS,
-    "elapsed",
     "status",
     "error",
 ]
@@ -55,14 +50,14 @@ RAW_COLS = [
 # ---------------------------------------------------------------------------
 # Run a single seed
 # ---------------------------------------------------------------------------
-def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: bool = False) -> dict:
+def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: bool = False, alb: list = None) -> dict:
     """Run main() with the given seed and return a result dict."""
+    if alb is None: alb = []
     random.seed(seed)
     np.random.seed(seed)
 
     result = {
         "seed":    seed,
-        "elapsed": None,
         "status":  "ok",
         "error":   "",
         **{col: None for col in METRIC_COLS},
@@ -76,12 +71,16 @@ def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: 
             hyper_params=BEST_PARAMS,
             test_mode=test_mode,
             google=google,
+            skip_compare=True,
+            alb=alb,
         )
         elapsed = time.time() - t0
 
-        result["elapsed"] = round(elapsed, 2)
         for col in METRIC_COLS:
-            result[col] = metrics.get(col)
+            if col == "running_time(s)":
+                result[col] = round(elapsed, 2)
+            else:
+                result[col] = metrics.get(col)
 
     except Exception as e:
         result["status"] = "error"
@@ -135,7 +134,7 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path):
         dist_data = ok_df["total_dist(km)"].astype(float)
         print(f"  total_dist(km) ->  mean={dist_data.mean():.4f}, std={dist_data.std(ddof=1) if len(ok_df)>1 else 0:.4f}, "
               f"min={dist_data.min():.4f}, max={dist_data.max():.4f}")
-        print(f"  Time  ->  mean={ok_df['elapsed'].astype(float).mean():.2f}s")
+        print(f"  Time  ->  mean={ok_df['running_time(s)'].astype(float).mean():.2f}s")
 
         # Build per-metric summary rows: metric | min | max | mean | median | std
         for col in METRIC_COLS:
@@ -143,11 +142,11 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path):
             n = len(ok_df)
             summary_rows.append({
                 "metric": col,
-                "min":    round(col_data.min(),                            4),
-                "max":    round(col_data.max(),                            4),
-                "mean":   round(col_data.mean(),                           4),
-                "median": round(col_data.median(),                         4),
-                "std":    round(col_data.std(ddof=1) if n > 1 else 0.0,   4),
+                "min":    round(col_data.min(),                            2),
+                "max":    round(col_data.max(),                            2),
+                "mean":   round(col_data.mean(),                           2),
+                "median": round(col_data.median(),                         2),
+                "std":    round(col_data.std(ddof=1) if n > 1 else 0.0,   2),
             })
 
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
@@ -172,30 +171,39 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path):
 # ---------------------------------------------------------------------------
 # Main experiment loop
 # ---------------------------------------------------------------------------
-def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False):
+def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False, alb: list = None):
     """Run multiple seeds and save results incrementally after each seed."""
+    if alb is None: alb = []
+    
     print(f"\n{'='*60}")
     print(f"  Dataset   : {data_name}")
     print(f"  Seeds     : {seed_list}")
     print(f"  Test mode : {test_mode}")
     print(f"  Google    : {google}")
+    print(f"  Ablation  : {alb}")
     print(f"  Params    : {BEST_PARAMS}")
     print(f"  Output    : {OUTPUT_DIR}")
     print(f"{'='*60}\n")
 
     total = len(seed_list)
 
+    current_out_dir = OUTPUT_DIR
+    if alb:
+        current_out_dir = OUTPUT_DIR / f"alb_{'_'.join(alb)}"
+    
+    current_out_dir.mkdir(parents=True, exist_ok=True)
+
     for i, seed in enumerate(seed_list, 1):
         print(f"[{i}/{total}] Running seed={seed} ...")
-        result = run_single_seed(data_name, seed, test_mode=test_mode, google=google)
+        result = run_single_seed(data_name, seed, test_mode=test_mode, google=google, alb=alb)
 
         if result["status"] == "ok":
-            print(f"  [OK]  seed={seed}: total_dist={result['total_dist(km)']:.4f}km, time={result['elapsed']:.2f}s")
+            print(f"  [OK]  seed={seed}: total_dist={result['total_dist(km)']:.4f}km, time={result['running_time(s)']:.2f}s")
         else:
             print(f"  [ERR] seed={seed}: {result['error']}")
 
         # Save immediately after each seed (merge with existing file)
-        summarize_and_save([result], data_name, OUTPUT_DIR)
+        summarize_and_save([result], data_name, current_out_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +231,10 @@ def parse_args():
     parser.add_argument("--google", action="store_true",
                         help="Update routes via Google Maps API after optimization")
 
+    # Ablation options
+    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support', 'vnd'], default=[], 
+                        help="Ablation options: extract, allocate, support, vnd")
+
     return parser.parse_args()
 
 
@@ -248,4 +260,5 @@ if __name__ == "__main__":
         seed_list=seed_list,
         test_mode=args.test,
         google=args.google,
+        alb=args.alb,
     )

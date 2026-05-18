@@ -7,3 +7,5 @@ matplotlib==3.7.5
 folium==0.20.0
 polyline==2.0.3
 pylint==4.0.4
+numba==0.61.2
+optuna==4.6.0
