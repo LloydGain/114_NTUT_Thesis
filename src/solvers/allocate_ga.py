@@ -215,7 +215,7 @@ class StoreAllocationGA:
         self.cross_rate       = cross_rate
         self.mutation_rate    = mutation_rate
         self.early_stop_patience = early_stop_patience
-        self.route_choices    = list(self.main_routes.keys()) + ['SUPPORT']
+        self.route_choices    = list(self.main_routes.keys())
         self.time_limit_per_route = 5 * 60 * 60
         self.best_cost        = float('inf')
         self.best_solution    = None

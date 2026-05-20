@@ -423,8 +423,11 @@ class StoreExtractionGA:
 
                 self.log.append({
                     'generation': gen_idx + 1,
+                    'iter_worst_cost': float(np.max(Oi_costs)) if len(Oi_costs) > 0 else fb,
                     'iter_best_cost': fb,
-                    'best_cost': fb,
+                    'iter_avg_cost': float(np.mean(Oi_costs)) if len(Oi_costs) > 0 else fb,
+                    'std_cost': float(np.std(Oi_costs)) if len(Oi_costs) > 0 else 0.0,
+                    'best_cost': self.best_cost,
                 })
 
                 if early_stopper.check(fb):

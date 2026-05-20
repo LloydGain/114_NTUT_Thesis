@@ -545,6 +545,34 @@ class SupportLinePlanningGA:
                 
         return new_chromo
 
+    def _local_search_vnd(self, chromosome):
+        """
+        Apply Variable Neighborhood Descent (VND) to the given chromosome.
+        """
+        c_cost, c_routes = self._evaluate_individual(chromosome)
+        vnd_solver = VND(self.orig_distance_matrix, self.orig_time_matrix, 
+                         vehicle_cost=self.vehicle_cost, is_solomon=self.is_solomon)
+        opt_routes, opt_cost = vnd_solver.optimize(c_routes)
+        
+        is_improved = False
+        if self.is_solomon:
+            if opt_cost < c_cost:
+                is_improved = True
+        else:
+            if opt_cost < c_cost:
+                is_improved = True
+                
+        if is_improved:
+            new_chromo = []
+            # Sort keys to maintain a deterministic order (e.g., '101', '102' ...)
+            sorted_route_ids = sorted(opt_routes.keys(), key=lambda x: int(x) if x.isdigit() else x)
+            for r_id in sorted_route_ids:
+                for store in opt_routes[r_id]['stores']:
+                    new_chromo.append(self.s2i[store['store_id']])
+            return new_chromo
+            
+        return chromosome
+
     def run(self):
         if not self.remaining_stores:
             return 0, {}
@@ -693,7 +721,10 @@ class SupportLinePlanningGA:
                     # --- D. 突變與進展 (區域搜尋) ---
                     for i in range(len(childrens)):
                         if random.random() < 0.1:
-                            childrens[i] = self._local_search_sih(childrens[i])
+                            # 仙註解掉原本的 sih 局部搜尋
+                            # childrens[i] = self._local_search_sih(childrens[i])
+                            # 改用 VND 試試看
+                            childrens[i] = self._local_search_vnd(childrens[i])
 
                     population = elites + childrens[:(self.population_size - self.elite_size)]
 

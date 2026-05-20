@@ -39,7 +39,7 @@ def _njit_eval_route(route, nodes_idx, dc_idx, np_dist, np_time, np_volume, np_d
         else:
             arrival = cur_time + travel_time + prev_dwell
             
-        if arrival > np_latest[idx]:
+        if arrival > np_latest[idx] + 1e-4:
             return False, 1e12, load
             
         if is_solomon:
@@ -48,6 +48,8 @@ def _njit_eval_route(route, nodes_idx, dc_idx, np_dist, np_time, np_volume, np_d
             cur_to_dc = np_time[idx, dc_idx]
             curr_duration = curr_duration + (travel_time + cur_to_dc - pre_to_dc) + (start - arrival) + np_dwell[idx]
         else:
+            if arrival < np_earliest[idx] - 1e-4:
+                return False, 1e12, load
             start = arrival
             if prev == dc_idx:
                 curr_duration = np_time[dc_idx, idx] + np_dwell[idx] + np_time[idx, dc_idx]
@@ -56,7 +58,7 @@ def _njit_eval_route(route, nodes_idx, dc_idx, np_dist, np_time, np_volume, np_d
                 cur_to_dc = np_time[idx, dc_idx]
                 curr_duration = curr_duration + (travel_time + cur_to_dc - pre_to_dc) + np_dwell[idx]
                 
-        if curr_duration > time_limit:
+        if curr_duration > time_limit + 1e-4:
             return False, 1e12, load
             
         cur_time = start + np_dwell[idx]
@@ -115,18 +117,18 @@ def _njit_nearest_neighbor(n_nodes, np_dist, np_time, np_volume, np_dwell, np_ea
                 else: arrival_time = prev_pred_time_epoch + pre_to_cur + prev_dwell
                 
                 if is_solomon:
-                    if arrival_time > np_latest[cid]: continue
+                    if arrival_time > np_latest[cid] + 1e-4: continue
                     start_time = max(arrival_time, np_earliest[cid])
                     pre_to_dc, cur_to_dc = np_time[cur, 0], np_time[cid, 0]
                     new_dur = cur_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + (start_time - arrival_time) + np_dwell[cid]
                 else:
-                    if arrival_time < np_earliest[cid] or arrival_time > np_latest[cid]: continue
+                    if arrival_time < np_earliest[cid] - 1e-4 or arrival_time > np_latest[cid] + 1e-4: continue
                     if cur == 0: new_dur = np_time[0, cid] + np_dwell[cid] + np_time[cid, 0]
                     else:
                         pre_to_dc, cur_to_dc = np_time[cur, 0], np_time[cid, 0]
                         new_dur = cur_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + np_dwell[cid]
                 
-                if new_dur > time_limit: continue
+                if new_dur > time_limit + 1e-4: continue
                 
                 if np_dist[cur, cid] < best_dist:
                     best_dist = np_dist[cur, cid]
@@ -451,7 +453,7 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
             arrival_time = prev_pred_time_epoch + pre_to_cur + prev_dwell
         
         if is_solomon:
-            if arrival_time > latest_time[store_idx]:
+            if arrival_time > latest_time[store_idx] + 1e-4:
                 continue
                 
             start_time = max(arrival_time, earliest_time[store_idx])
@@ -459,9 +461,9 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
             cur_to_dc = time_matrix[store_idx, dc_idx]
             new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + (start_time - arrival_time) + dwell_time[store_idx]
         else:
-            if arrival_time < earliest_time[store_idx]:
+            if arrival_time < earliest_time[store_idx] - 1e-4:
                 continue
-            if arrival_time > latest_time[store_idx]:
+            if arrival_time > latest_time[store_idx] + 1e-4:
                 continue
 
             if last_idx == dc_idx:
@@ -471,7 +473,7 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
                 cur_to_dc = time_matrix[store_idx, dc_idx]
                 new_duration = curr_duration + (pre_to_cur + cur_to_dc - pre_to_dc) + dwell_time[store_idx]
 
-        if new_duration > time_limit:
+        if new_duration > time_limit + 1e-4:
             continue
             
         feasible.append(store_idx)
@@ -538,7 +540,6 @@ def _njit_build_ant(n_nodes, ph, in_vec, np_dist, np_time, np_volume, np_dwell, 
             
             # Local update
             ph[cur, chosen] = (1.0 - rho) * ph[cur, chosen] + rho * tau0
-            ph[chosen, cur] = (1.0 - rho) * ph[chosen, cur] + rho * tau0
             
             # Update route state
             pre_to_cur = np_time[cur, chosen]
@@ -591,16 +592,13 @@ def _njit_global_update(ph, routes_flat, routes_len, v_count, cost, rho):
         
         a, b = 0, route[0]
         ph[a, b] = (1.0 - rho) * ph[a, b] + inc
-        ph[b, a] = (1.0 - rho) * ph[b, a] + inc
         
         for i in range(l - 1):
             a, b = route[i], route[i+1]
             ph[a, b] = (1.0 - rho) * ph[a, b] + inc
-            ph[b, a] = (1.0 - rho) * ph[b, a] + inc
             
         a, b = route[-1], 0
         ph[a, b] = (1.0 - rho) * ph[a, b] + inc
-        ph[b, a] = (1.0 - rho) * ph[b, a] + inc
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Python Class
@@ -840,12 +838,21 @@ class SupportLinePlanningMACS:
 
     def run(self):
         if self.store_count == 0:
+            self.log.append({
+                'time': 0.0,
+                'iter_worst_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                'iter_avg_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+                'std_cost': 0.0,
+                'best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
+            })
             return self.gb_cost, self._format_solution(self.gb_routes)
         
         if self.mode == 'greedy':
             return self.gb_cost, self._format_solution(self.gb_routes)
         
         t_start = time.time()
+        last_log_time = t_start
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         global_iter = 0
         
@@ -855,13 +862,14 @@ class SupportLinePlanningMACS:
                 c_disp = self.gb_cost[1] if self.is_solomon else self.gb_cost
                 print(f"    [MACS] iteration {global_iter}: vehicle={v}, cost={c_disp:.2f}, elapsed={time.time()-t_start:.1f}s")
             
-            # Initial log for each outer iteration
+            cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
             self.log.append({
-                'iteration': global_iter,
-                'vehicle_count': v,
-                'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
-                'best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
-                'elapsed_time': time.time() - t_start
+                'time': time.time() - t_start,
+                'iter_worst_cost': cost_val,
+                'iter_best_cost': cost_val,
+                'iter_avg_cost': cost_val,
+                'std_cost': 0.0,
+                'best_cost': cost_val,
             })
             
             res_q = queue.Queue()
@@ -876,9 +884,23 @@ class SupportLinePlanningMACS:
             
             # Monitoring loop
             while t_vei.is_alive() or t_dist.is_alive():
-                if (time.time() - t_start) >= self.time_limit:
+                curr_time = time.time()
+                if curr_time - t_start >= self.time_limit:
                     stop_event.set()
                     break
+                
+                if curr_time - last_log_time >= 1.0:
+                    cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
+                    self.log.append({
+                        'time': curr_time - t_start,
+                        'iter_worst_cost': cost_val,
+                        'iter_best_cost': cost_val,
+                        'iter_avg_cost': cost_val,
+                        'std_cost': 0.0,
+                        'best_cost': cost_val,
+                    })
+                    last_log_time = curr_time
+                    
                 try:
                     msg = res_q.get(timeout=0.1)
                     src, sol, cost = msg
@@ -901,14 +923,7 @@ class SupportLinePlanningMACS:
                                 if self.verbose: print(f"    [MACS] VEI reduced vehicles! {len(sol)}")
                                 stop_event.set(); break
                     
-                    if improved:
-                        self.log.append({
-                            'iteration': global_iter,
-                            'vehicle_count': self.gb_cost[0] if self.is_solomon else len(self.gb_routes),
-                            'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
-                            'best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
-                            'elapsed_time': time.time() - t_start
-                        })
+                    pass
                 except queue.Empty:
                     continue
             

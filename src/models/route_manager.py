@@ -418,7 +418,8 @@ class RouteManager:
                 pre_id, cur_id = prev['store_id'], curr['store_id']
                 travel_time = self.time_matrix[pre_id][cur_id]
                 pre_dwell = prev['dwell_time']
-                arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=travel_time + pre_dwell)
+                added_seconds = int(round(travel_time + pre_dwell))
+                arrival_time = datetime.fromisoformat(prev['pred_time']) + timedelta(seconds=added_seconds)
                 curr['pred_time'] = arrival_time.isoformat(timespec='seconds')
 
 
