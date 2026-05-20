@@ -13,7 +13,7 @@ from data.program_data import PDataManager
 from utils.logger import Log
 from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
-from solvers.allocate_ga import StoreAllocationGA
+
 from solvers.allocate_aco import StoreAllocationACO
 from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.support_line_macs import SupportLinePlanningMACS
@@ -102,15 +102,17 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'elite_rate': 0.1,
             'generations': 200,
             'cross_rate': 0.7,
-            'mutation_rate': 0.05,
+            'mutation_rate': 0.03,
             'early_stop_patience': 20
         },
         'store_allocation_aco': {
-            'num_ants': 20,
-            'iterations': 100,
-            'early_stop_patience': 20,
+            'num_ants': 25,
+            'iterations': 200,
+            'alpha': 1,
+            'beta': 5,
             'q0': 0.8,
-            'rho': 0.2
+            'rho': 0.2,
+            'early_stop_patience': 20
         },
         'support_line_aco': {
             'time_limit': 100,
@@ -143,9 +145,11 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         'store_allocation_aco': {
             'num_ants': 5,
             'iterations': 5,
-            'early_stop_patience': 3,
+            'alpha': 1,
+            'beta': 5,
             'q0': 0.8,
-            'rho': 0.2
+            'rho': 0.2,
+            'early_stop_patience': 3,
         },
         'support_line_aco': {
             'time_limit': 10,
@@ -177,16 +181,19 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         if 'ex_mut' in hyper_params:
             params['store_extraction_ga']['mutation_rate'] = hyper_params['ex_mut']
 
-        if 'al_pop' in hyper_params:
-            params['store_allocation_ga']['population_size'] = hyper_params['al_pop']
-        if 'al_cx' in hyper_params:
-            params['store_allocation_ga']['cross_rate'] = hyper_params['al_cx']
-        if 'al_mut' in hyper_params:
-            params['store_allocation_ga']['mutation_rate'] = hyper_params['al_mut']
+        if 'al_ants' in hyper_params:
+            params['store_allocation_aco']['num_ants'] = hyper_params['al_ants']
+        if 'al_beta' in hyper_params:
+            params['store_allocation_aco']['beta'] = hyper_params['al_beta']
+        if 'al_rho' in hyper_params:
+            params['store_allocation_aco']['rho'] = hyper_params['al_rho']
 
-        for key in ['alpha', 'beta', 'rho']:
-            if key in hyper_params:
-                params['support_line_aco'][key] = hyper_params[key]
+        if 'beta' in hyper_params:
+            params['support_line_aco']['beta'] = hyper_params['beta']
+        if 'rho' in hyper_params:
+            params['support_line_aco']['rho'] = hyper_params['rho']
+        if 'ants' in hyper_params:
+            params['support_line_aco']['num_ants'] = hyper_params['ants']
 
     if 'vnd' in alb:
         params['support_line_aco']['vnd_strategy'] = 'none'

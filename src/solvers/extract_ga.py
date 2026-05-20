@@ -10,7 +10,7 @@ from numba import njit
 from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
-from solvers.allocate_ga import StoreAllocationGA
+from solvers.allocate_aco import StoreAllocationACO
 
 @njit(cache=True)
 def _njit_weights(ids_array, dist_matrix, volumes, vehicle_cost):
@@ -85,10 +85,10 @@ def fitness_worker(args):
         else:
             copy_routes[r_id] = {"dc": rd["dc"], "stores": rd["stores"]}
 
-    ac_cost, _, _, ac_vn = StoreAllocationGA(
+    ac_cost, _, _, ac_vn = StoreAllocationACO(
         copy_routes, store_list, DIST, TIME,
-        population_size=0, generations=0
-    ).run(return_routes=False)
+        num_ants=0, iterations=0, verbose=False
+    ).run()
 
     result = {'cost': ac_cost, 'vn': ac_vn}
     return cache_key, result

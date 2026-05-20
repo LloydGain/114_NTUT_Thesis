@@ -171,9 +171,10 @@ class StoreAllocationACO:
 
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix,
                  num_ants=5, iterations=100, early_stop_patience=20, 
-                 mode='aco', output_dir=None, **kwargs):
+                 mode='aco', output_dir=None, verbose=True, **kwargs):
         self.mode = mode
         self.output_dir = output_dir
+        self.verbose = verbose
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
         self.distance_matrix = distance_matrix
@@ -658,7 +659,8 @@ class StoreAllocationACO:
         self.best_vn = greedy_vn
         
         greedy_cost_main = greedy_cost - greedy_vn * 2000
-        print(f'Store Allocation ACO: iteration0 -> vn = {greedy_vn}, cost = {greedy_cost_main:.2f}, fitness = {self.best_cost:.2f}')
+        if self.verbose:
+            print(f'Store Allocation ACO: iteration0 -> vn = {greedy_vn}, cost = {greedy_cost_main:.2f}, fitness = {self.best_cost:.2f}')
         
         self.initial_tau = 1.0 / (len(self.remaining_stores) * greedy_cost) if greedy_cost > 0 else 1e-4
         
@@ -675,26 +677,41 @@ class StoreAllocationACO:
                 cost, vn = self._evaluate_solution(ant_solution, ant_routes_info, remaining_pool, proxy=True)
                 
                 # Apply VND to every ant (true cost evaluation + local search)
+                # true_cost, true_vn = self._evaluate_solution(ant_solution, ant_routes_info, remaining_pool, proxy=False)
+                # vnts_solution, vnts_routes, vnts_support, vnts_cost, vnts_vn = self._vnts(
+                #     ant_solution, ant_routes_info, remaining_pool, true_cost
+                # )
+                # iter_results.append({
+                #     'solution': vnts_solution,
+                #     'routes_info': vnts_routes,
+                #     'support_pool': vnts_support,
+                #     'cost': vnts_cost,
+                #     'vn': vnts_vn
+                # })
+
+                # Only evaluate true cost for every ant, no VND here
                 true_cost, true_vn = self._evaluate_solution(ant_solution, ant_routes_info, remaining_pool, proxy=False)
-                vnts_solution, vnts_routes, vnts_support, vnts_cost, vnts_vn = self._vnts(
-                    ant_solution, ant_routes_info, remaining_pool, true_cost
-                )
                 iter_results.append({
-                    'solution': vnts_solution,
-                    'routes_info': vnts_routes,
-                    'support_pool': vnts_support,
-                    'cost': vnts_cost,
-                    'vn': vnts_vn
+                    'solution': ant_solution,
+                    'routes_info': ant_routes_info,
+                    'support_pool': remaining_pool,
+                    'cost': true_cost,
+                    'vn': true_vn
                 })
                 
             iter_best = min(iter_results, key=lambda x: x['cost'])
             
             # iter_best is already VND-optimized; update global best directly
-            vnts_cost = iter_best['cost']
-            vnts_vn = iter_best['vn']
-            vnts_solution = iter_best['solution']
-            vnts_routes = iter_best['routes_info']
-            vnts_support = iter_best['support_pool']
+            # vnts_cost = iter_best['cost']
+            # vnts_vn = iter_best['vn']
+            # vnts_solution = iter_best['solution']
+            # vnts_routes = iter_best['routes_info']
+            # vnts_support = iter_best['support_pool']
+
+            # Apply VND only to iter_best
+            vnts_solution, vnts_routes, vnts_support, vnts_cost, vnts_vn = self._vnts(
+                iter_best['solution'], iter_best['routes_info'], iter_best['support_pool'], iter_best['cost']
+            )
             
             if vnts_cost < self.best_cost:
                 self.best_cost = vnts_cost
@@ -716,7 +733,8 @@ class StoreAllocationACO:
                     )
                 
             best_cost_main = self.best_cost - self.best_vn * 2000
-            print(f'Store Allocation ACO: iteration{i + 1} -> vn = {self.best_vn}, cost = {best_cost_main:.2f}, fitness = {self.best_cost:.2f}')
+            if self.verbose:
+                print(f'Store Allocation ACO: iteration{i + 1} -> vn = {self.best_vn}, cost = {best_cost_main:.2f}, fitness = {self.best_cost:.2f}')
             
             fitnesses = [res['cost'] for res in iter_results]
             self.log.append({
@@ -729,7 +747,8 @@ class StoreAllocationACO:
             })
             
             if early_stopper.check(self.best_cost):
-                print(f"Store Allocation ACO: Early stop triggered at iteration {i + 1}.")
+                if self.verbose:
+                    print(f"Store Allocation ACO: Early stop triggered at iteration {i + 1}.")
                 break
             
         # Update all route details for the final best solution before returning
