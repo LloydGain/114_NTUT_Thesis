@@ -10,12 +10,12 @@ LEVEL = {
     "ex_pop":   [10, 20, 30, 40],
     "ex_cx":    [0.6, 0.7, 0.8, 0.9],
     "ex_mut":   [0.01, 0.03, 0.05, 0.1],
-    "al_pop":   [50, 100, 150, 200],
-    "al_cx":    [0.6, 0.7, 0.8, 0.9],
-    "al_mut":   [0.01, 0.03, 0.05, 0.1],
-    "rho":      [0.1, 0.3, 0.5, 0.7],
-    "alpha":    [0.5, 1, 2, 3],
+    "al_ants":  [5, 10, 25, 50],
+    "al_beta":  [1, 4, 7, 10],
+    "al_rho":   [0.1, 0.3, 0.5, 0.7],
+    "ants":     [5, 10, 25, 50],
     "beta":     [1, 4, 7, 10],
+    "rho":      [0.1, 0.3, 0.5, 0.7],
 }
 
 L32 = [
@@ -59,12 +59,12 @@ def decode(row):
         "ex_pop": LEVEL["ex_pop"][row[0]-1],
         "ex_cx":  LEVEL["ex_cx"][row[1]-1],
         "ex_mut": LEVEL["ex_mut"][row[2]-1],
-        "al_pop": LEVEL["al_pop"][row[3]-1],
-        "al_cx":  LEVEL["al_cx"][row[4]-1],
-        "al_mut": LEVEL["al_mut"][row[5]-1],
-        "rho":    LEVEL["rho"][row[6]-1],
-        "alpha":  LEVEL["alpha"][row[7]-1],
-        "beta":   LEVEL["beta"][row[8]-1],
+        "al_ants": LEVEL["al_ants"][row[3]-1],
+        "al_beta": LEVEL["al_beta"][row[4]-1],
+        "al_rho":  LEVEL["al_rho"][row[5]-1],
+        "ants":    LEVEL["ants"][row[6]-1],
+        "beta":    LEVEL["beta"][row[7]-1],
+        "rho":     LEVEL["rho"][row[8]-1],
     }
 
 
@@ -72,17 +72,17 @@ def objective(trial, data_name, seed):
     ex_pop   = trial.suggest_categorical("ex_pop",  LEVEL["ex_pop"])
     ex_cx    = trial.suggest_categorical("ex_cx",   LEVEL["ex_cx"])
     ex_mut   = trial.suggest_categorical("ex_mut",  LEVEL["ex_mut"])
-    al_pop   = trial.suggest_categorical("al_pop",  LEVEL["al_pop"])
-    al_cx    = trial.suggest_categorical("al_cx",   LEVEL["al_cx"])
-    al_mut   = trial.suggest_categorical("al_mut",  LEVEL["al_mut"])
-    rho      = trial.suggest_categorical("rho",     LEVEL["rho"])
-    alpha    = trial.suggest_categorical("alpha",   LEVEL["alpha"])
-    beta     = trial.suggest_categorical("beta",    LEVEL["beta"])
+    al_ants  = trial.suggest_categorical("al_ants",  LEVEL["al_ants"])
+    al_beta  = trial.suggest_categorical("al_beta",  LEVEL["al_beta"])
+    al_rho   = trial.suggest_categorical("al_rho",   LEVEL["al_rho"])
+    ants     = trial.suggest_categorical("ants",     LEVEL["ants"])
+    beta     = trial.suggest_categorical("beta",     LEVEL["beta"])
+    rho      = trial.suggest_categorical("rho",      LEVEL["rho"])
 
     params = {
         "ex_pop": ex_pop, "ex_cx": ex_cx, "ex_mut": ex_mut,
-        "al_pop": al_pop, "al_cx": al_cx, "al_mut": al_mut,
-        "rho": rho, "alpha": alpha, "beta": beta,
+        "al_ants": al_ants, "al_beta": al_beta, "al_rho": al_rho,
+        "ants": ants, "beta": beta, "rho": rho,
     }
 
     result = main(
