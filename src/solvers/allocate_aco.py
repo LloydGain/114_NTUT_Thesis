@@ -94,10 +94,10 @@ def _njit_greedy_function_attraction(store_idx, route_stores, dc_idx, route_vol,
         if not valid_region:
             continue
         
-        # C2: Distance increase
-        c2 = dist_matrix[prev_idx, store_idx] + dist_matrix[store_idx, next_idx] - dist_matrix[prev_idx, next_idx]
+        # C0: Distance increase
+        c0 = dist_matrix[prev_idx, store_idx] + dist_matrix[store_idx, next_idx] - dist_matrix[prev_idx, next_idx]
         
-        if c2 > 0:
+        if c0 > 0:
             for i in range(pos):
                 test_route[i] = full_route[i]
             test_route[pos] = store_idx
@@ -107,11 +107,11 @@ def _njit_greedy_function_attraction(store_idx, route_stores, dc_idx, route_vol,
             if _njit_check_time_constraint(test_route, dc_idx, dist_matrix, time_matrix,
                                            dwell_arr, earliest_arr, latest_arr,
                                            sched_arr, time_limit):
-                # C4: Vehicle capacity utilization
-                c4 = route_cap - route_vol - store_vol
+                # C1: Vehicle capacity utilization
+                c1 = route_cap - route_vol - store_vol
                 
                 # Normalize values or handle raw (usually needs normalization, but we compute raw heuristic here)
-                attraction = 0.5 * (1.0 / c2) + 0.5 * c4
+                attraction = 1 / (0.5 * c0 + 0.5 * c1)
                 
                 # Desirability must be positive for probability calculation, offset if needed
                 attraction = max(1e-6, attraction)
