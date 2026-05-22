@@ -102,25 +102,24 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'elite_rate': 0.1,
             'generations': 200,
             'cross_rate': 0.7,
-            'mutation_rate': 0.03,
+            'mutation_rate': 0.1,
             'early_stop_patience': 20
         },
         'store_allocation_aco': {
-            'num_ants': 25,
+            'num_ants': 10,
             'iterations': 200,
             'alpha': 1,
-            'beta': 5,
+            'beta': 3,
             'q0': 0.8,
-            'rho': 0.2,
+            'rho': 0.7,
             'early_stop_patience': 20
         },
         'support_line_aco': {
             'time_limit': 100,
-            'num_ants': 25,
-            # 'alpha': 1,
+            'num_ants': 10,
+            'alpha': 1,
             'beta': 7,
-            'rho': 0.5,
-            # 'q': 1,
+            'rho': 0.7,
             'q0': 0.9,
             'early_stop_patience': 20,
             'support_capacity': 7.2,
@@ -174,6 +173,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         params = production_params
 
     if hyper_params:
+        if 'ex_iter' in hyper_params:
+            params['store_extraction_ga']['generations'] = hyper_params['ex_iter']
         if 'ex_pop' in hyper_params:
             params['store_extraction_ga']['population_size'] = hyper_params['ex_pop']
         if 'ex_cx' in hyper_params:
@@ -181,17 +182,25 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         if 'ex_mut' in hyper_params:
             params['store_extraction_ga']['mutation_rate'] = hyper_params['ex_mut']
 
+        if 'al_iters' in hyper_params:
+            params['store_allocation_aco']['iterations'] = hyper_params['al_iters']
         if 'al_ants' in hyper_params:
             params['store_allocation_aco']['num_ants'] = hyper_params['al_ants']
+        if 'al_alpha' in hyper_params:
+            params['store_allocation_aco']['alpha'] = hyper_params['al_alpha']
         if 'al_beta' in hyper_params:
             params['store_allocation_aco']['beta'] = hyper_params['al_beta']
         if 'al_rho' in hyper_params:
             params['store_allocation_aco']['rho'] = hyper_params['al_rho']
 
+        if 'time_limit' in hyper_params:
+            params['support_line_aco']['time_limit'] = hyper_params['time_limit']
         if 'beta' in hyper_params:
             params['support_line_aco']['beta'] = hyper_params['beta']
         if 'rho' in hyper_params:
             params['support_line_aco']['rho'] = hyper_params['rho']
+        if 'q0' in hyper_params:
+            params['support_line_aco']['q0'] = hyper_params['q0']
         if 'ants' in hyper_params:
             params['support_line_aco']['num_ants'] = hyper_params['ants']
 

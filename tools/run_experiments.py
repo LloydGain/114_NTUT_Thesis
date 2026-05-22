@@ -15,15 +15,19 @@ from main import main
 # Best hyperparameters determined from HPO across all datasets
 # ---------------------------------------------------------------------------
 BEST_PARAMS = {
+    "ex_iter": 200,
     "ex_pop": 40,
-    "ex_cx":  0.7,
-    "ex_mut": 0.03,
-    "al_pop": 50,
-    "al_cx":  0.8,
-    "al_mut": 0.05,
-    "rho":    0.1,
-    "alpha":  1,
-    "beta":   7,
+    "ex_cx": 0.7,
+    "ex_mut": 0.1,
+    "al_iters": 200,
+    "al_ants": 10,
+    "al_alpha": 1,
+    "al_beta": 3,
+    "al_rho": 0.7,
+    "time_limit": 100,
+    "ants": 10,
+    "beta": 7,
+    "rho": 0.7,
 }
 
 # Fixed output directory
@@ -33,6 +37,7 @@ OUTPUT_DIR = ROOT / "output" / "exp"
 METRIC_COLS = [
     "vehicle_num",
     "total_dist(km)",
+    "total_time(hr)",
     "avg_load_rate",
     "on_time_rate",
     "running_time(s)",
@@ -50,7 +55,7 @@ RAW_COLS = [
 # ---------------------------------------------------------------------------
 # Run a single seed
 # ---------------------------------------------------------------------------
-def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: bool = False, alb: list = None) -> dict:
+def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: bool = False, alb: list = None, skip_compare: bool = True) -> dict:
     """Run main() with the given seed and return a result dict."""
     if alb is None: alb = []
     random.seed(seed)
@@ -71,7 +76,7 @@ def run_single_seed(data_name: str, seed: int, test_mode: bool = False, google: 
             hyper_params=BEST_PARAMS,
             test_mode=test_mode,
             google=google,
-            skip_compare=True,
+            skip_compare=skip_compare,
             alb=alb,
         )
         elapsed = time.time() - t0
@@ -171,7 +176,7 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path):
 # ---------------------------------------------------------------------------
 # Main experiment loop
 # ---------------------------------------------------------------------------
-def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False, alb: list = None):
+def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False, alb: list = None, skip_compare: bool = True):
     """Run multiple seeds and save results incrementally after each seed."""
     if alb is None: alb = []
     
@@ -185,17 +190,32 @@ def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool =
     print(f"  Output    : {OUTPUT_DIR}")
     print(f"{'='*60}\n")
 
-    total = len(seed_list)
-
     current_out_dir = OUTPUT_DIR
     if alb:
         current_out_dir = OUTPUT_DIR / f"alb_{'_'.join(alb)}"
     
     current_out_dir.mkdir(parents=True, exist_ok=True)
+    
+    excel_path = current_out_dir / f"{data_name}.xlsx"
+    completed_seeds = set()
+    if excel_path.exists():
+        try:
+            prev_df = pd.read_excel(excel_path, sheet_name="Raw Results")
+            completed_seeds = set(prev_df[prev_df["status"] == "ok"]["seed"].tolist())
+            print(f"  [INFO] Found {len(completed_seeds)} completed seed(s) in {excel_path.name}")
+        except Exception:
+            pass
+
+    seed_list = [s for s in seed_list if s not in completed_seeds]
+    if not seed_list:
+        print(f"[INFO] All requested seeds are already completed for {data_name}. Skipping.")
+        return excel_path
+
+    total = len(seed_list)
 
     for i, seed in enumerate(seed_list, 1):
         print(f"[{i}/{total}] Running seed={seed} ...")
-        result = run_single_seed(data_name, seed, test_mode=test_mode, google=google, alb=alb)
+        result = run_single_seed(data_name, seed, test_mode=test_mode, google=google, alb=alb, skip_compare=skip_compare)
 
         if result["status"] == "ok":
             print(f"  [OK]  seed={seed}: total_dist={result['total_dist(km)']:.4f}km, time={result['running_time(s)']:.2f}s")
@@ -235,6 +255,9 @@ def parse_args():
     parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support', 'vnd'], default=[], 
                         help="Ablation options: extract, allocate, support, vnd")
 
+    parser.add_argument("--skip_compare", action="store_true",
+                        help="Skip comparison with manual routes")
+
     return parser.parse_args()
 
 
@@ -261,4 +284,5 @@ if __name__ == "__main__":
         test_mode=args.test,
         google=args.google,
         alb=args.alb,
+        skip_compare=args.skip_compare,
     )
