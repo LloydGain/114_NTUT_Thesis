@@ -48,20 +48,19 @@ def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix
     return True
 
 @njit(cache=True)
-def _njit_greedy_function_attraction(store_idx, route_stores, dc_idx, route_vol, route_cap,
-                                     store_vol, dist_matrix, time_matrix,
-                                     dwell_arr, earliest_arr, latest_arr, sched_arr, region_arr, time_limit):
+def _njit_greedy_function_attractions(store_idx, route_stores, dc_idx, route_vol, route_cap,
+                                      store_vol, dist_matrix, time_matrix,
+                                      dwell_arr, earliest_arr, latest_arr, sched_arr, region_arr, time_limit):
     """
-    Returns the maximum heuristic desirability (GreedyFunction attraction)
-    and the best valid insertion position.
-    Returns (-1.0, -1) if invalid.
+    Returns an array of heuristic desirability (attraction) for each possible insertion position.
+    attractions[pos] = value (if valid), or -1.0 (if invalid).
+    Returns an array of shape (len(route_stores) + 1,).
     """
-    if route_vol + store_vol > route_cap:
-        return -1.0, -1
-
     L = len(route_stores)
-    best_pos = -1
-    max_attraction = -1.0
+    attractions = np.full(L + 1, -1.0, dtype=np.float64)
+
+    if route_vol + store_vol > route_cap:
+        return attractions
 
     full_route = np.zeros(L + 2, dtype=np.int64)
     full_route[0] = dc_idx
@@ -110,17 +109,14 @@ def _njit_greedy_function_attraction(store_idx, route_stores, dc_idx, route_vol,
                 # C1: Vehicle capacity utilization
                 c1 = route_cap - route_vol - store_vol
                 
-                # Normalize values or handle raw (usually needs normalization, but we compute raw heuristic here)
                 attraction = 1 / (0.5 * c0 + 0.5 * c1)
                 
                 # Desirability must be positive for probability calculation, offset if needed
                 attraction = max(1e-6, attraction)
                 
-                if attraction > max_attraction:
-                    max_attraction = attraction
-                    best_pos = pos - 1
+                attractions[pos - 1] = attraction
 
-    return max_attraction, best_pos
+    return attractions
 
 @njit(cache=True)
 def _njit_total_distance(route_paths, dist_matrix):
@@ -320,11 +316,11 @@ class StoreAllocationACO:
         route_vols = {r_id: float(r_info['dc'].get('total_volume', 0)) for r_id, r_info in self.main_routes.items()}
         route_caps = {r_id: float(r_info['dc'].get('max_capacity', 1e9)) for r_id, r_info in self.main_routes.items()}
         
-        
         support_pool = []
         
-        stores_to_assign = list(self.remaining_stores)
-        random.shuffle(stores_to_assign)
+        Cs = list(self.remaining_stores)
+        Vk = list(self.route_choices)
+        random.shuffle(Vk)
         
         # Initialize route_stores_idx and route_stores_np ONCE before loop
         route_stores_idx = {
@@ -336,61 +332,75 @@ class StoreAllocationACO:
             for r_id in self.main_routes.keys()
         }
         
-        for store in stores_to_assign:
-            store_idx = self.s2i[store['store_id']]
-            feasible_routes = []
-            
-            for r_id in self.route_choices:
-                attraction, pos = _njit_greedy_function_attraction(
-                    store_idx, route_stores_np[r_id], 0,
-                    route_vols[r_id], route_caps[r_id],
-                    self.np_volume[store_idx],
-                    self.np_dist, self.np_time, self.np_dwell,
-                    self.np_earliest, self.np_latest, self.np_sched, self.np_region, float(self.time_limit_per_route)
-                )
+        for k in Vk:
+            if not Cs:
+                break
                 
-                if pos != -1:
-                    # Edge pheromone: use τ[prev_node → store] as attractiveness signal
-                    r_stores = route_stores_idx[r_id]
-                    prev_idx = r_stores[pos - 1] if pos > 0 else 0  # depot=0
-                    tau = self.pheromone_matrix[prev_idx, store_idx]
-                    feasible_routes.append({
-                        'route_id': r_id,
-                        'pos': pos,
-                        'attraction': attraction,
-                        'tau': tau,
-                        'prev_idx': prev_idx
-                    })
+            Select_cust = True
             
-            if not feasible_routes:
-                solution[store['store_id']] = 'SUPPORT'
-                support_pool.append(store)
-                continue
+            while Cs and Select_cust:
+                Select_cust = False
+                q = random.random()
                 
-            q = random.random()
-            if q <= self.q0:
-                # Exploitation
-                best_move = max(feasible_routes, key=lambda x: x['tau'] * x['attraction'])
-            else:
-                # Exploration (Roulette Wheel)
-                probs = np.array([x['tau'] * x['attraction'] for x in feasible_routes])
-                if probs.sum() > 0:
-                    probs = probs / probs.sum()
-                    best_move = random.choices(feasible_routes, weights=probs, k=1)[0]
-                else:
-                    best_move = random.choice(feasible_routes)
+                feasible_moves = []
+                
+                for store in Cs:
+                    store_idx = self.s2i[store['store_id']]
+                    attractions = _njit_greedy_function_attractions(
+                        store_idx, route_stores_np[k], 0,
+                        route_vols[k], route_caps[k],
+                        self.np_volume[store_idx],
+                        self.np_dist, self.np_time, self.np_dwell,
+                        self.np_earliest, self.np_latest, self.np_sched, self.np_region, float(self.time_limit_per_route)
+                    )
                     
-            r_id = best_move['route_id']
-            pos = best_move['pos']
-            prev_idx = best_move['prev_idx']
-            
-            solution[store['store_id']] = r_id
-            route_manager.insert_store(store, r_id, pos, fast_update=True)
-            route_vols[r_id] += self.np_volume[store_idx]
-            
-            # Incrementally update index cache and numpy array for the changed route ONLY
-            route_stores_idx[r_id].insert(pos, store_idx)
-            route_stores_np[r_id] = np.array(route_stores_idx[r_id], dtype=np.int64)
+                    for pos in range(len(attractions)):
+                        attraction = attractions[pos]
+                        if attraction > 0:
+                            r_stores = route_stores_idx[k]
+                            prev_idx = r_stores[pos - 1] if pos > 0 else 0
+                            tau = self.pheromone_matrix[prev_idx, store_idx]
+                            feasible_moves.append({
+                                'store': store,
+                                'pos': pos,
+                                'attraction': attraction,
+                                'tau': tau,
+                                'prev_idx': prev_idx
+                            })
+                
+                if feasible_moves:
+                    if q <= self.q0:
+                        # Exploitation
+                        best_move = max(feasible_moves, key=lambda x: x['tau'] * x['attraction'])
+                    else:
+                        # Exploration (Roulette Wheel)
+                        probs = np.array([x['tau'] * x['attraction'] for x in feasible_moves])
+                        if probs.sum() > 0:
+                            probs = probs / probs.sum()
+                            best_move = random.choices(feasible_moves, weights=probs, k=1)[0]
+                        else:
+                            best_move = random.choice(feasible_moves)
+                            
+                    # Insert store
+                    store = best_move['store']
+                    pos = best_move['pos']
+                    store_idx = self.s2i[store['store_id']]
+                    
+                    solution[store['store_id']] = k
+                    Cs.remove(store)
+                    
+                    route_manager.insert_store(store, k, pos, fast_update=True)
+                    route_vols[k] += self.np_volume[store_idx]
+                    
+                    route_stores_idx[k].insert(pos, store_idx)
+                    route_stores_np[k] = np.array(route_stores_idx[k], dtype=np.int64)
+                    
+                    Select_cust = True
+                    
+        # Any stores left in Cs go to support
+        for store in Cs:
+            solution[store['store_id']] = 'SUPPORT'
+            support_pool.append(store)
             
         # Local Pheromone Update (decay traversed edges back toward initial_tau)
         for s_id, r_id in solution.items():

@@ -106,7 +106,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     production_params = {
         'store_extraction_ga': {
-            'population_size': 40,
+            'population_size': 20,
             'elite_rate': 0.1,
             'generations': 200,
             'cross_rate': 0.7,
