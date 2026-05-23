@@ -20,6 +20,7 @@ from solvers.support_line_macs import SupportLinePlanningMACS
 from solvers.vnd import VND
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
+from services.osrm import OSRM
 
 def parse_args():
     """
@@ -44,6 +45,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     Notes:
         Main function for running the program.
     """
+    
+    try:
+        OSRM().check_osrm()
+    except Exception as e:
+        print(f"[ERROR] OSRM service check failed: {e}")
+        return
+
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = f'../output/{file_date}/{dt_folder}/logs'
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
