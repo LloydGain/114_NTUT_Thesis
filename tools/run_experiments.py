@@ -17,17 +17,17 @@ from main import main
 BEST_PARAMS = {
     "ex_iter": 200,
     "ex_pop": 40,
-    "ex_cx": 0.7,
+    "ex_cx": 0.8,
     "ex_mut": 0.1,
     "al_iters": 200,
-    "al_ants": 10,
+    "al_ants": 50,
     "al_alpha": 1,
-    "al_beta": 3,
+    "al_beta": 1,
     "al_rho": 0.7,
     "time_limit": 100,
-    "ants": 10,
+    "ants": 50,
     "beta": 7,
-    "rho": 0.7,
+    "rho": 0.5,
 }
 
 # Fixed output directory

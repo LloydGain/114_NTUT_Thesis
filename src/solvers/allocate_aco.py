@@ -109,7 +109,7 @@ def _njit_greedy_function_attractions(store_idx, route_stores, dc_idx, route_vol
                 # C1: Vehicle capacity utilization
                 c1 = route_cap - route_vol - store_vol
                 
-                attraction = 1 / (0.5 * c0 + 0.5 * c1)
+                attraction = 1 / (0.5 * c0 + 0.5 * c1 + 1e-6)
                 
                 # Desirability must be positive for probability calculation, offset if needed
                 attraction = max(1e-6, attraction)
@@ -600,11 +600,12 @@ class StoreAllocationACO:
         total_cost = main_cost + macs_cost
         return greedy_choices, total_cost, None, None, vn
 
-    def _vnts(self, solution, route_manager_routes, support_pool, best_cost):
+    def _vnd(self, solution, route_manager_routes, support_pool, best_cost):
         """
         Integrates AllocateVND local search.
         Moves stores from SUPPORT to MAIN routes first (greedily),
-        then applies VND optimizing only stores that don't belong to their current main route.
+        then creates temporary support routes from the remaining support pool.
+        VND is then applied across both main routes and support routes.
         """
         current_solution = solution.copy()
         temp_routes = self._copy_routes_info(route_manager_routes)
@@ -626,23 +627,8 @@ class StoreAllocationACO:
         if not movable_stores:
             return current_solution, rm.routes_info, current_support, best_cost, len(current_support)
 
-        # 2. Greedily attempt to insert SUPPORT stores into main routes before VND
-        support_stores = [s for s in current_support if s['store_id'] in movable_stores]
-        for store in support_stores:
-            s_id = store['store_id']
-            best_r_id, best_pos, min_cost = None, -1, float('inf')
-            
-            for r_id in self.route_choices:
-                cost, pos = self._get_store_insertion_cost_and_pos(rm.routes_info[r_id], store)
-                if pos != -1 and cost < min_cost:
-                    min_cost, best_r_id, best_pos = cost, r_id, pos
-                    
-            if best_r_id is not None:
-                current_support = [s for s in current_support if s['store_id'] != s_id]
-                rm.insert_store(store, best_r_id, best_pos, fast_update=True)
-                current_solution[s_id] = best_r_id
-        
-        # 3. Call AllocateVND to optimize the main routes (only on movable stores)
+
+        # 3. Call AllocateVND to optimize the main routes
         vnd_solver = AllocateVND(self.distance_matrix, self.time_matrix, time_limit=self.time_limit_per_route, verbose=False)
         optimized_routes, vnd_cost = vnd_solver.optimize(rm.routes_info, movable_stores=movable_stores)
         
@@ -719,16 +705,16 @@ class StoreAllocationACO:
             # vnts_support = iter_best['support_pool']
 
             # Apply VND only to iter_best
-            vnts_solution, vnts_routes, vnts_support, vnts_cost, vnts_vn = self._vnts(
+            vnd_solution, vnd_routes, vnd_support, vnd_cost, vnd_vn = self._vnd(
                 iter_best['solution'], iter_best['routes_info'], iter_best['support_pool'], iter_best['cost']
             )
             
-            if vnts_cost < self.best_cost:
-                self.best_cost = vnts_cost
-                self.best_solution = vnts_routes
-                self.best_ant_choices = vnts_solution
-                self.best_remaining_solution = vnts_support
-                self.best_vn = vnts_vn
+            if vnd_cost < self.best_cost:
+                self.best_cost = vnd_cost
+                self.best_solution = vnd_routes
+                self.best_ant_choices = vnd_solution
+                self.best_remaining_solution = vnd_support
+                self.best_vn = vnd_vn
                 
             # Global Pheromone Update: reinforce edges in best solution routes
             delta_tau = 1.0 / self.best_cost
@@ -750,7 +736,7 @@ class StoreAllocationACO:
             self.log.append({
                 'iteration': i + 1,
                 'iter_worst_cost': float(np.max(fitnesses)),
-                'iter_best_cost': float(vnts_cost),
+                'iter_best_cost': float(vnd_cost),
                 'iter_avg_cost': float(np.mean(fitnesses)),
                 'std_cost': float(np.std(fitnesses)),
                 'best_cost': self.best_cost,
