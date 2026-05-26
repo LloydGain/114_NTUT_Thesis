@@ -132,7 +132,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 20,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
-            'vnd_strategy': 'best'
         },
         'comment': comment,
         'date': file_date,
@@ -169,7 +168,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'early_stop_patience': 10,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
-            'vnd_strategy': 'best'
         },
         'Test': True,
         'comment': comment
@@ -266,7 +264,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    mode_allocate = 'greedy' if 'allocate' in alb else 'aco'
+    mode_allocate = 'aco' if 'allocate' in alb else 'aco_vnd'
     print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
     heatmap_dir = f'../output/{file_date}/{dt_folder}/heatmaps'
     allocate_params = params['store_allocation_aco']
@@ -284,7 +282,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    mode_support = 'greedy' if 'support' in alb else 'macs'
+    mode_support = 'macs' if 'support' in alb else 'macs_vnd'
     print(f"Starting Support Line Planning using MACS (Mode: {mode_support})...")
     support_params = params['support_line_aco']
     support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, mode=mode_support, **support_params)

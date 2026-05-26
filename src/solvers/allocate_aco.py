@@ -628,16 +628,17 @@ class StoreAllocationACO:
             return current_solution, rm.routes_info, current_support, best_cost, len(current_support)
 
 
-        # 3. Call AllocateVND to optimize the main routes
-        vnd_solver = AllocateVND(self.distance_matrix, self.time_matrix, time_limit=self.time_limit_per_route, verbose=False)
-        optimized_routes, vnd_cost = vnd_solver.optimize(rm.routes_info, movable_stores=movable_stores)
-        
-        # Update current_solution to reflect VND changes
-        for r_id, r_data in optimized_routes.items():
-            for s in r_data['stores']:
-                current_solution[s['store_id']] = r_id
-                
-        rm.routes_info = optimized_routes
+        if self.mode == 'aco_vnd':
+            # 3. Call AllocateVND to optimize the main routes
+            vnd_solver = AllocateVND(self.distance_matrix, self.time_matrix, time_limit=self.time_limit_per_route, verbose=False)
+            optimized_routes, vnd_cost = vnd_solver.optimize(rm.routes_info, movable_stores=movable_stores)
+            
+            # Update current_solution to reflect VND changes
+            for r_id, r_data in optimized_routes.items():
+                for s in r_data['stores']:
+                    current_solution[s['store_id']] = r_id
+                    
+            rm.routes_info = optimized_routes
         
         # After VND, recalculate true MACS cost
         final_cost, vn = self._evaluate_solution(current_solution, rm.routes_info, current_support)
@@ -704,10 +705,15 @@ class StoreAllocationACO:
             # vnts_routes = iter_best['routes_info']
             # vnts_support = iter_best['support_pool']
 
-            # Apply VND only to iter_best
-            vnd_solution, vnd_routes, vnd_support, vnd_cost, vnd_vn = self._vnd(
-                iter_best['solution'], iter_best['routes_info'], iter_best['support_pool'], iter_best['cost']
-            )
+            # Apply VND only to iter_best if mode is 'aco_vnd'
+            if self.mode == 'aco_vnd':
+                vnd_solution, vnd_routes, vnd_support, vnd_cost, vnd_vn = self._vnd(
+                    iter_best['solution'], iter_best['routes_info'], iter_best['support_pool'], iter_best['cost']
+                )
+            else:
+                vnd_solution, vnd_routes, vnd_support, vnd_cost, vnd_vn = (
+                    iter_best['solution'], iter_best['routes_info'], iter_best['support_pool'], iter_best['cost'], iter_best['vn']
+                )
             
             if vnd_cost < self.best_cost:
                 self.best_cost = vnd_cost
