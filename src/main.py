@@ -15,9 +15,7 @@ from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
 
 from solvers.allocate_aco import StoreAllocationACO
-from solvers.support_line_aco import SupportLinePlanningACO
 from solvers.support_line_macs import SupportLinePlanningMACS
-from solvers.vnd import VND
 from eval.eval_routes import EvalRoutes
 from eval.display_routes import DisplayRoutes
 from services.osrm import OSRM
@@ -122,13 +120,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'rho': 0.7,
             'early_stop_patience': 20
         },
-        'support_line_aco': {
+        'support_line_macs': {
             'time_limit': 100,
             'num_ants': 50,
             'alpha': 1,
             'beta': 7,
             'rho': 0.5,
-            'q0': 0.9,
+            'q0': 0.8,
             'early_stop_patience': 20,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
@@ -157,14 +155,14 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'rho': 0.2,
             'early_stop_patience': 3,
         },
-        'support_line_aco': {
-            'time_limit': 10,
+        'support_line_macs': {
+            'time_limit': 30,
             'num_ants': 25,
             # 'alpha': 1,
             'beta': 1,
             'rho': 0.1,
             # 'q': 1,
-            'q0': 0.9,
+            'q0': 0.8,
             'early_stop_patience': 10,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
@@ -200,18 +198,18 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             params['store_allocation_aco']['rho'] = hyper_params['al_rho']
 
         if 'time_limit' in hyper_params:
-            params['support_line_aco']['time_limit'] = hyper_params['time_limit']
+            params['support_line_macs']['time_limit'] = hyper_params['time_limit']
         if 'beta' in hyper_params:
-            params['support_line_aco']['beta'] = hyper_params['beta']
+            params['support_line_macs']['beta'] = hyper_params['beta']
         if 'rho' in hyper_params:
-            params['support_line_aco']['rho'] = hyper_params['rho']
+            params['support_line_macs']['rho'] = hyper_params['rho']
         if 'q0' in hyper_params:
-            params['support_line_aco']['q0'] = hyper_params['q0']
+            params['support_line_macs']['q0'] = hyper_params['q0']
         if 'ants' in hyper_params:
-            params['support_line_aco']['num_ants'] = hyper_params['ants']
+            params['support_line_macs']['num_ants'] = hyper_params['ants']
 
     if 'vnd' in alb:
-        params['support_line_aco']['vnd_strategy'] = 'none'
+        params['support_line_macs']['vnd_strategy'] = 'none'
 
 # -----------------------------------------------------------------------------------
 
@@ -284,7 +282,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     mode_support = 'macs' if 'support' in alb else 'macs_vnd'
     print(f"Starting Support Line Planning using MACS (Mode: {mode_support})...")
-    support_params = params['support_line_aco']
+    support_params = params['support_line_macs']
     support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, mode=mode_support, **support_params)
     _, support_routes = support.run()
     support_line_log_data = support.log

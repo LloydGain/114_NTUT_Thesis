@@ -14,13 +14,13 @@ from utils.early_stopper import EarlyStopper
 # 1. Numba Core
 # ─────────────────────────────────────────────────────────────────────────────
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_dist_heuristic(current_idx, next_idx, distance_matrix):
     if current_idx == next_idx:
         return 0.0
     return 1.0 / (distance_matrix[current_idx, next_idx] + 1e-12)
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_eval_route(route, nodes_idx, dc_idx, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, capacity, time_limit, is_solomon, dc_departure_time):
     load = 0.0
     cur_time = dc_departure_time if not is_solomon else 0.0
@@ -71,7 +71,7 @@ def _njit_eval_route(route, nodes_idx, dc_idx, np_dist, np_time, np_volume, np_d
     total_dist += np_dist[prev, dc_idx]
     return True, total_dist, load
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_nearest_neighbor(n_nodes, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, np_group, np_region, dc_departure_time, capacity, time_limit, is_solomon):
     unvisited = np.ones(n_nodes, dtype=np.bool_)
     unvisited[0] = False
@@ -180,7 +180,7 @@ def _njit_nearest_neighbor(n_nodes, np_dist, np_time, np_volume, np_dwell, np_ea
                 
     return routes_flat, routes_len, v_idx
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_solution_cost(routes_flat, routes_len, v_count, dc_idx, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, capacity, time_limit, is_solomon, dc_departure_time):
     total_dist = 0.0
     feasible = True
@@ -255,19 +255,23 @@ def _vei_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, tu
                     if cost < best_cost:
                         best_routes, best_cost = routes, cost
         
-        # Apply VND only to the best candidate of this cycle
-        if best_routes and nv == self.store_count:
+        if self.mode == 'macs_vnd' and best_routes and best_visited == self.store_count:
             best_routes = self._apply_vnd(best_routes)
             best_cost = self._calc_cost(best_routes)
             result_queue.put(('VEI_IMPROVED', best_routes, best_cost))
 
-        if best_routes:
+        if best_routes and best_visited == self.store_count:
             _flat = np.array([n for r in best_routes for n in r], dtype=np.int64)
             _len = np.array([len(r) for r in best_routes], dtype=np.int64)
             c_val = best_cost[0] * self.vehicle_cost + best_cost[1] if self.is_solomon else best_cost
             _njit_global_update(ph_vei, _flat, _len, len(best_routes), c_val, self.rho)
             
-        # Turn control print
+        if self.gb_routes:
+            _flat = np.array([n for r in self.gb_routes for n in r], dtype=np.int64)
+            _len = np.array([len(r) for r in self.gb_routes], dtype=np.int64)
+            c_val = self.gb_cost[0] * self.vehicle_cost + self.gb_cost[1] if self.is_solomon else self.gb_cost
+            _njit_global_update(ph_vei, _flat, _len, len(self.gb_routes), c_val, self.rho)
+            
         while turn_control[0] != 0 and not stop_event.is_set():
             time.sleep(0.01)
         if stop_event.is_set(): break
@@ -301,7 +305,7 @@ def _dist_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, t
                 self.np_group, self.np_region, self.dc_departure_time, 
                 self.support_capacity, self.time_limit_per_route, 
                 self.alpha, self.beta, self.rho, self.q0, self.tau0, 
-                self.is_solomon, vei_max_vehicles, r_vals_q, r_vals_r
+                self.is_solomon, self.store_count, r_vals_q, r_vals_r
             )
             
             routes = []
@@ -324,18 +328,26 @@ def _dist_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, t
                     if cost < best_cost:
                         best_routes, best_cost = routes, cost
         
-        # Apply VND only once per cycle
-        if best_routes:
+        if self.mode == 'macs_vnd' and best_routes:
             best_routes = self._apply_vnd(best_routes)
             best_cost = self._calc_cost(best_routes)
-            result_queue.put(('TIME_IMPROVED', best_routes, best_cost))
-        
-        if best_routes:
-            _flat = np.array([n for r in best_routes for n in r], dtype=np.int64)
-            _len = np.array([len(r) for r in best_routes], dtype=np.int64)
-            c_val = best_cost[0] * self.vehicle_cost + best_cost[1] if self.is_solomon else best_cost
-            _njit_global_update(ph_dist, _flat, _len, len(best_routes), c_val, self.rho)
             
+            nv_new = len(best_routes)
+            nv_best = vei_max_vehicles
+            
+            if self.is_solomon:
+                if best_cost[0] < self.gb_cost[0] or (best_cost[0] == self.gb_cost[0] and best_cost[1] < self.gb_cost[1]):
+                    result_queue.put(('TIME_IMPROVED', best_routes, best_cost))
+            else:
+                if nv_new < nv_best or (nv_new == nv_best and best_cost < self.gb_cost):
+                    result_queue.put(('TIME_IMPROVED', best_routes, best_cost))
+        
+        # ACS-TIME only reinforces the Global Best solution
+        if self.gb_routes:
+            _flat = np.array([n for r in self.gb_routes for n in r], dtype=np.int64)
+            _len = np.array([len(r) for r in self.gb_routes], dtype=np.int64)
+            c_val = self.gb_cost[0] * self.vehicle_cost + self.gb_cost[1] if self.is_solomon else self.gb_cost
+            _njit_global_update(ph_dist, _flat, _len, len(self.gb_routes), c_val, self.rho)
         # Turn control print
         while turn_control[0] != 1 and not stop_event.is_set():
             time.sleep(0.01)
@@ -350,7 +362,7 @@ def _dist_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, t
             turn_control[0] = 0
         iter_num += 1
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_transition_value(current_idx, next_idx, in_next, cur_time, np_dist, np_time, np_earliest, np_latest, is_solomon, ph, alpha, beta):
     tau = ph[current_idx, next_idx]
     
@@ -369,7 +381,7 @@ def _njit_transition_value(current_idx, next_idx, in_next, cur_time, np_dist, np
     eta = 1.0 / d
     return (tau ** alpha) * (eta ** beta)
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_macs_choose(current_idx, cand_arr, in_vec, cur_time, np_dist, np_time, np_earliest, np_latest, is_solomon, ph, alpha, beta, q0, rand_q, rand_r):
     n_feas = len(cand_arr)
     if n_feas == 0:
@@ -409,7 +421,7 @@ def _njit_macs_choose(current_idx, cand_arr, in_vec, cur_time, np_dist, np_time,
             return cand_arr[i]
     return cand_arr[-1]
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_duration,
                                prev_pred_time_epoch, dc_idx, support_capacity, time_limit,
                                dist_group, region, volume, time_matrix, dwell_time, 
@@ -484,7 +496,7 @@ def _njit_get_feasible_stores(unvisited_indices, last_idx, route_vol, curr_durat
         res[i] = feasible[i]
     return res
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_build_ant(n_nodes, ph, in_vec, np_dist, np_time, np_volume, np_dwell, np_earliest, np_latest, np_sched, 
                     np_group, np_region, dc_departure_time, capacity, time_limit, 
                     alpha, beta, rho, q0, tau0, is_solomon, max_vehicles, rand_vals_q, rand_vals_r):
@@ -579,7 +591,7 @@ def _njit_build_ant(n_nodes, ph, in_vec, np_dist, np_time, np_volume, np_dwell, 
         
     return routes_flat, routes_len, v_idx
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _njit_global_update(ph, routes_flat, routes_len, v_count, cost, rho):
     if cost <= 0 or cost >= 1e10: return
     inc = rho * (1.0 / cost)
@@ -609,7 +621,7 @@ class SupportLinePlanningMACS:
                  num_ants=10, time_limit=60, support_capacity=7.2,
                  time_limit_per_route=5 * 60 * 60, vehicle_cost=2000, is_solomon=False,
                  alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
-                 verbose=True, vnd_strategy='best', mode='macs'):
+                 verbose=True, mode='macs'):
 
         self.mode = mode
         self.remaining_stores = remaining_stores
@@ -619,7 +631,6 @@ class SupportLinePlanningMACS:
         self.time_limit = time_limit
         self.is_solomon = is_solomon
         self.early_stop_patience = early_stop_patience
-        self.vnd_strategy = vnd_strategy
         self.support_capacity = float(support_capacity)
         self.time_limit_per_route = float(time_limit_per_route)
         self.vehicle_cost = float(vehicle_cost)
@@ -648,7 +659,7 @@ class SupportLinePlanningMACS:
             
         self.log = []
         self.vnd = VND(distance_matrix, time_matrix, vehicle_cost=0, is_solomon=is_solomon, 
-                       vnd_strategy=self.vnd_strategy, time_limit=time_limit_per_route)
+                       vnd_strategy='best', time_limit=time_limit_per_route)
         
         # Initial Solution
         if self.store_count > 0:
@@ -839,7 +850,7 @@ class SupportLinePlanningMACS:
     def run(self):
         if self.store_count == 0:
             self.log.append({
-                'time': 0.0,
+                'time': 0,
                 'iter_worst_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
                 'iter_best_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
                 'iter_avg_cost': self.gb_cost[1] if self.is_solomon else self.gb_cost,
@@ -864,7 +875,7 @@ class SupportLinePlanningMACS:
             
             cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
             self.log.append({
-                'time': time.time() - t_start,
+                'time': int(round(time.time() - t_start)),
                 'iter_worst_cost': cost_val,
                 'iter_best_cost': cost_val,
                 'iter_avg_cost': cost_val,
@@ -878,7 +889,7 @@ class SupportLinePlanningMACS:
             turn_control = [0] # 0: VEI, 1: DIST
             
             t_vei = threading.Thread(target=_vei_worker, args=(self, max(1, v - 1), res_q, stop_event, print_lock, turn_control))
-            t_dist = threading.Thread(target=_dist_worker, args=(self, max(1, v),res_q, stop_event, print_lock, turn_control))
+            t_dist = threading.Thread(target=_dist_worker, args=(self, max(1, v), res_q, stop_event, print_lock, turn_control))
             
             t_vei.start(); t_dist.start()
             
@@ -892,14 +903,14 @@ class SupportLinePlanningMACS:
                 if curr_time - last_log_time >= 1.0:
                     cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
                     self.log.append({
-                        'time': curr_time - t_start,
+                        'time': int(round(curr_time - t_start)),
                         'iter_worst_cost': cost_val,
                         'iter_best_cost': cost_val,
                         'iter_avg_cost': cost_val,
                         'std_cost': 0.0,
                         'best_cost': cost_val,
                     })
-                    last_log_time = curr_time
+                    last_log_time += 1.0
                     
                 try:
                     msg = res_q.get(timeout=0.1)
