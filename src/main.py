@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
     parser.add_argument("--comment", type=str, default=None, help="Comment for the run (optional)")
     parser.add_argument("--skip_compare", action="store_true", help="Skip comparison with manual and program routes")
-    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support', 'vnd'], default=[], help="Ablation options: extract, allocate, support, vnd")
+    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support'], default=[], help="Ablation options: extract, allocate, support")
     return parser.parse_args()
 
 
@@ -51,7 +51,13 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         return
 
     dt_folder = datetime.today().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir = f'../output/{file_date}/{dt_folder}/logs'
+    if alb:
+        alb_str = '_'.join(alb)
+        out_base = f'../output/{file_date}/alb/{alb_str}/{dt_folder}'
+    else:
+        out_base = f'../output/{file_date}/{dt_folder}'
+
+    log_dir = f'{out_base}/logs'
     route_file = f'../data/{file_date}/{file_date}route.xlsx'
     manual_file = f'../data/{file_date}/{file_date}manual.xlsx'
     program_file = f'../data/{file_date}/{file_date}program.xlsx'
@@ -62,15 +68,15 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     original_routes_file = f'../output/{file_date}/original_routes_info.json'
     manual_routes_file = f'../output/{file_date}/manual_routes_info.json'
     program_routes_file = f'../output/{file_date}/program_routes_info.json'
-    optimized_routes_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.json'
-    optimized_routes_excel_file = f'../output/{file_date}/{dt_folder}/optimized_routes_info.xlsx'
-    route_comparison_file = f'../output/{file_date}/{dt_folder}/routes_comparison.xlsx'
-    route_comparison_simple_file = f'../output/{file_date}/{dt_folder}/routes_comparison_simple.xlsx'
+    optimized_routes_file = f'{out_base}/optimized_routes_info.json'
+    optimized_routes_excel_file = f'{out_base}/optimized_routes_info.xlsx'
+    route_comparison_file = f'{out_base}/routes_comparison.xlsx'
+    route_comparison_simple_file = f'{out_base}/routes_comparison_simple.xlsx'
 
     original_routes_dir = f'../output/{file_date}/original_routes'
     manual_routes_dir = f'../output/{file_date}/manual_routes'
     program_routes_dir = f'../output/{file_date}/program_routes'
-    optimized_routes_dir = f'../output/{file_date}/{dt_folder}/optimized_routes'
+    optimized_routes_dir = f'{out_base}/optimized_routes'
     original_routes_img = f'{original_routes_dir}/img'
     manual_routes_img = f'{manual_routes_dir}/img'
     program_routes_img = f'{program_routes_dir}/img'
@@ -208,9 +214,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         if 'ants' in hyper_params:
             params['support_line_macs']['num_ants'] = hyper_params['ants']
 
-    if 'vnd' in alb:
-        params['support_line_macs']['vnd_strategy'] = 'none'
-
 # -----------------------------------------------------------------------------------
 
     start_time = time.time()
@@ -264,9 +267,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     mode_allocate = 'aco' if 'allocate' in alb else 'aco_vnd'
     print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
-    heatmap_dir = f'../output/{file_date}/{dt_folder}/heatmaps'
     allocate_params = params['store_allocation_aco']
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, output_dir=heatmap_dir, **allocate_params)
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
     _, main_routes, remaining_stores, _ = store_allocate.run()
     store_allocate_log_data = store_allocate.log
 

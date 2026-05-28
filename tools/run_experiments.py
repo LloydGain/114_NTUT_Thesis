@@ -192,7 +192,7 @@ def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool =
 
     current_out_dir = OUTPUT_DIR
     if alb:
-        current_out_dir = OUTPUT_DIR / f"alb_{'_'.join(alb)}"
+        current_out_dir = OUTPUT_DIR / "alb" / '_'.join(alb)
     
     current_out_dir.mkdir(parents=True, exist_ok=True)
     
@@ -252,8 +252,8 @@ def parse_args():
                         help="Update routes via Google Maps API after optimization")
 
     # Ablation options
-    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support', 'vnd'], default=[], 
-                        help="Ablation options: extract, allocate, support, vnd")
+    parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support'], default=[], 
+                        help="Ablation options: extract, allocate, support")
 
     parser.add_argument("--skip_compare", action="store_true",
                         help="Skip comparison with manual routes")
