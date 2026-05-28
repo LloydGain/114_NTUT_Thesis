@@ -245,7 +245,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     start_time = time.time()
 
-    mode_extract = 'greedy' if 'extract' in alb else 'ccga'
+    mode_extract = 'random' if 'extract' in alb else 'ccga'
     print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
     ga_params = params['store_extraction_ga']
     store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)

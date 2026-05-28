@@ -272,21 +272,22 @@ class StoreExtractionGA:
                 for s in self._decode(r_id, bits)]
 
     def run(self):
-        if self.mode == 'greedy':
+        if self.mode == 'random':
             context = {r: [] for r in self.overloaded_routes}
             for r_id, info in self.overloaded_routes.items():
                 stores = list(info['stores'])
                 capacity = info['dc']['max_capacity']
                 
-                # Sort stores by volume descending
-                sorted_stores = sorted(stores, key=lambda x: x.get('volume', 0), reverse=True)
+                # Randomly shuffle stores
+                shuffled_stores = list(stores)
+                random.shuffle(shuffled_stores)
                 
                 current_vol = sum(s.get('volume', 0) for s in stores)
                 extracted = []
                 
                 # Extract until current_vol <= capacity
                 # Also ensure at least one store remains
-                for s in sorted_stores:
+                for s in shuffled_stores:
                     if current_vol <= capacity:
                         break
                     if len(extracted) == len(stores) - 1:
@@ -304,7 +305,7 @@ class StoreExtractionGA:
                 context[r_id] = bits
                 
             self.best_individual = context
-            print("[INFO] Completed Greedy Volume Extraction.")
+            print("[INFO] Completed Random Volume Extraction.")
             return (self._best_main_routes(self.best_individual),
                     self._individual_to_list(self.best_individual))
 
