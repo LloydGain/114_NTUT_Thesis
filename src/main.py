@@ -254,7 +254,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = f'{cache_dir}/extract_{mode_extract}_seed{random_seed}.pkl'
 
-    if os.path.exists(cache_file) and not test_mode:
+    if os.path.exists(cache_file) and not test_mode and mode_extract != 'random':
         print(f"Loading cached Store Extraction data from {cache_file}...")
         with open(cache_file, 'rb') as f:
             main_routes, extracted_stores, store_extract_log_data = pickle.load(f)
@@ -265,7 +265,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         main_routes, extracted_stores = store_extract.run()
         store_extract_log_data = store_extract.log
         
-        if not test_mode:
+        if not test_mode and mode_extract != 'random':
             with open(cache_file, 'wb') as f:
                 pickle.dump((main_routes, extracted_stores, store_extract_log_data), f)
 
