@@ -8,18 +8,21 @@ set FILE_DATES=20221203 20221205 20221207 20221208 20221209 20221210 20221212 20
 set SEEDS=10
 set GOOGLE_FLAG=--google
 set SKIP_COMPARE_FLAG=--skip_compare
-set ALB_FLAG=--alb extract
+set ALB_FLAG=extract
 
 :: ---[ Run ]--------------------------------------------------
 
 cd /d "%~dp0"
+
+set ALB_ARG=
+if defined ALB_FLAG set ALB_ARG=--alb %ALB_FLAG%
 
 for %%D in (%FILE_DATES%) do (
     echo.
     echo ============================================================
     echo  Running dataset: %%D
     echo ============================================================
-    python "..\tools\run_experiments.py" --file_date %%D --seeds %SEEDS% %GOOGLE_FLAG% %SKIP_COMPARE_FLAG% %ALB_FLAG%
+    python "..\tools\run_experiments.py" --file_date %%D --seeds %SEEDS% %GOOGLE_FLAG% %SKIP_COMPARE_FLAG% %ALB_ARG%
     if errorlevel 1 (
         echo [ERROR] Dataset %%D failed. Continuing to next...
     )
