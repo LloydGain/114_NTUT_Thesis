@@ -13,6 +13,7 @@ from data.program_data import PDataManager
 from utils.logger import Log
 from models.route_manager import RouteManager
 from solvers.extract_ga import StoreExtractionGA
+import pickle
 
 from solvers.allocate_aco import StoreAllocationACO
 from solvers.support_line_macs import SupportLinePlanningMACS
@@ -249,11 +250,24 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     start_time = time.time()
 
     mode_extract = 'random' if 'extract' in alb else 'ccga'
-    print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
-    ga_params = params['store_extraction_ga']
-    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)
-    main_routes, extracted_stores = store_extract.run()
-    store_extract_log_data = store_extract.log
+    cache_dir = f'../output/{file_date}/extraction_cache'
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = f'{cache_dir}/extract_{mode_extract}_seed{random_seed}.pkl'
+
+    if os.path.exists(cache_file) and not test_mode:
+        print(f"Loading cached Store Extraction data from {cache_file}...")
+        with open(cache_file, 'rb') as f:
+            main_routes, extracted_stores, store_extract_log_data = pickle.load(f)
+    else:
+        print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
+        ga_params = params['store_extraction_ga']
+        store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)
+        main_routes, extracted_stores = store_extract.run()
+        store_extract_log_data = store_extract.log
+        
+        if not test_mode:
+            with open(cache_file, 'wb') as f:
+                pickle.dump((main_routes, extracted_stores, store_extract_log_data), f)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
