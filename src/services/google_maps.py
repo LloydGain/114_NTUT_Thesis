@@ -1,3 +1,6 @@
+import os
+import json
+import hashlib
 import requests
 from config import config
 
@@ -13,6 +16,26 @@ class GoogleRoutesAPI:
         self.dc = config.DC_CONFIG
         self.max_elements_per_request = 625
         self.timeout = 10
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.route_cache_file = os.path.join(base_dir, "data", "google", "google_maps_route_cache.json")
+        self.store_cache_file = os.path.join(base_dir, "data", "google", "google_maps_store_cache.json")
+        
+        self.route_cache = self._load_cache(self.route_cache_file)
+        self.store_cache = self._load_cache(self.store_cache_file)
+
+    def _load_cache(self, file_path):
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def _save_cache(self, file_path, data):
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
 
 
     def parse_duration(self, duration_str):
@@ -132,8 +155,38 @@ class GoogleRoutesAPI:
             travel_mode (str): Mode of travel.
 
         Returns:
-            tuple: (distance in km, duration in seconds).
+            tuple: (distance in km, duration in seconds, leg_durations, is_cached).
         """
+        wp_str = "|".join([f"{wp['latitude']},{wp['longitude']},{wp.get('dwell_time', 0)}" for wp in waypoints])
+        key_str = f"{travel_mode}:{wp_str}"
+        cache_key = "route:" + hashlib.md5(key_str.encode()).hexdigest()
+
+        # 1. Check Full Route Cache
+        if cache_key in self.route_cache:
+            c = self.route_cache[cache_key]
+            return c[0], c[1], c[2], True
+
+        # 2. Check Leg-level Cache Fallback
+        coords = [self.dc] + waypoints + [self.dc]
+        all_legs_cached = True
+        leg_results = []
+        for i in range(len(coords) - 1):
+            p1 = coords[i]
+            p2 = coords[i+1]
+            leg_key = f"{travel_mode}:{p1['latitude']},{p1['longitude']}->{p2['latitude']},{p2['longitude']}"
+            if leg_key in self.store_cache:
+                leg_results.append(self.store_cache[leg_key])
+            else:
+                all_legs_cached = False
+                break
+        
+        if all_legs_cached:
+            total_distance = sum(res[0] for res in leg_results)
+            total_duration = sum(res[1] for res in leg_results) + sum(wp.get('dwell_time', 0) for wp in waypoints)
+            durations = [res[1] for res in leg_results[1:-1]]
+            return total_distance, total_duration, durations, True
+
+        # 3. Call API if cache misses
         dc_latlng = { "latitude": self.dc["latitude"], "longitude": self.dc["longitude"]}
 
         body = {
@@ -155,16 +208,30 @@ class GoogleRoutesAPI:
             raise RuntimeError(f"Error in route request: {response.status_code}, {response.text}")
 
         data = response.json()
-        distance, duration = self.distance_meter_to_km(data['routes'][0]['distanceMeters']), self.parse_duration(data['routes'][0]['duration'])
-        duration += sum(wp['dwell_time'] for wp in waypoints)
-
-        # encoded_polyline = data['routes'][0]['polyline']['encodedPolyline']
+        distance = self.distance_meter_to_km(data['routes'][0]['distanceMeters'])
+        duration = self.parse_duration(data['routes'][0]['duration'])
+        duration += sum(wp.get('dwell_time', 0) for wp in waypoints)
 
         durations = []
-        for leg in data['routes'][0]['legs']:
-            leg_static_duration = self.parse_duration(leg['staticDuration'])
-            durations.append(leg_static_duration)
+        legs_data = data['routes'][0]['legs']
+        
+        # Save individual legs to cache
+        for i in range(len(legs_data)):
+            leg = legs_data[i]
+            p1 = coords[i]
+            p2 = coords[i+1]
+            leg_key = f"{travel_mode}:{p1['latitude']},{p1['longitude']}->{p2['latitude']},{p2['longitude']}"
+            
+            leg_dist = self.distance_meter_to_km(leg.get('distanceMeters', 0))
+            leg_time = self.parse_duration(leg.get('staticDuration', '0s'))
+            
+            self.store_cache[leg_key] = (leg_dist, leg_time)
+            
+            if 0 < i < len(legs_data) - 1:
+                durations.append(leg_time)
 
-        durations = durations[1:-1]
-
-        return distance, duration, durations
+        result = (distance, duration, durations)
+        self.route_cache[cache_key] = result
+        self._save_cache(self.route_cache_file, self.route_cache)
+        self._save_cache(self.store_cache_file, self.store_cache)
+        return distance, duration, durations, False

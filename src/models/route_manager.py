@@ -545,9 +545,10 @@ class RouteManager:
         """
         api = GoogleRoutesAPI()
         for route_id, route in self.routes_info.items():
-            print(f'Update Route ID: {route_id}')
             stores = route['stores']
-            distance, duration, durations = api.compute_route(stores)
+            distance, duration, durations, is_cached = api.compute_route(stores)
+            cache_str = "(Cache Hit)" if is_cached else "(API Call)"
+            print(f'Update Route ID: {route_id} {cache_str}')
             route['dc']['distance'] = distance
             route['dc']['duration'] = duration
 
