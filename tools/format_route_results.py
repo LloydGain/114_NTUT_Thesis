@@ -85,10 +85,41 @@ def process_exp_results(input_dir, manual_path, output_path):
     df_program = format_df(df_program)
     df_manual = format_df(df_manual)
 
+    # 建立 gap DataFrame
+    df_gap = pd.DataFrame()
+    if not df_program.empty and not df_manual.empty:
+        common_cols = [c for c in df_program.columns if c in df_manual.columns and c != 'date']
+        prog_tmp = df_program.set_index('date')[common_cols]
+        man_tmp = df_manual.set_index('date')[common_cols]
+        
+        # 只保留兩邊都有的 date
+        common_dates = prog_tmp.index.intersection(man_tmp.index)
+        prog_tmp = prog_tmp.loc[common_dates]
+        man_tmp = man_tmp.loc[common_dates]
+        
+        # 計算 gap: (程式 - 手動) / 手動 * 100
+        gap_tmp = ((prog_tmp - man_tmp) / man_tmp.replace(0, np.nan) * 100).round(2)
+        
+        # 處理 NaN 為空字串以防輸出出現不必要字元
+        gap_tmp = gap_tmp.fillna("")
+        
+        # 重新命名欄位，加上 (%)
+        gap_tmp.columns = [f"{col}(%)" for col in common_cols]
+            
+        df_gap = gap_tmp.reset_index()
+
+        # 為了讓 Average 保持在最後面
+        if 'Average' in df_gap['date'].values:
+            avg_row = df_gap[df_gap['date'] == 'Average']
+            df_gap = df_gap[df_gap['date'] != 'Average']
+            df_gap = pd.concat([df_gap, avg_row], ignore_index=True)
+
     # 輸出到新的 Excel 檔案
     with pd.ExcelWriter(output_path) as writer:
         df_manual.to_excel(writer, sheet_name='手動編排', index=False)
         df_program.to_excel(writer, sheet_name='程式編排', index=False)
+        if not df_gap.empty:
+            df_gap.to_excel(writer, sheet_name='Gap', index=False)
 
     print(f"Success! Organized Excel saved to: {output_path}")
 
