@@ -536,7 +536,7 @@ class VND:
         return best_r1, best_r2, best_improvement
 
 
-    def optimize(self, routes_info, movable_stores=None):
+    def optimize(self, routes_info, movable_stores=None, active_neighborhoods=None):
         """
         Standard VND (Variable Neighborhood Descent):
 
@@ -565,21 +565,26 @@ class VND:
 
         # Each entry: callable(routes, route_manager) → bool
         if use_first:
-            neighborhoods = [
-                self._nb_intra_two_opt_first,
-                self._nb_intra_relocate_first,
-                self._nb_inter_relocate_first,
-                self._nb_inter_swap_first,
-                self._nb_inter_cross_first,
-            ]
+            nb_dict = {
+                'two_opt': self._nb_intra_two_opt_first,
+                'intra_relocate': self._nb_intra_relocate_first,
+                'inter_relocate': self._nb_inter_relocate_first,
+                'inter_swap': self._nb_inter_swap_first,
+                'cross_exchange': self._nb_inter_cross_first,
+            }
         else:
-            neighborhoods = [
-                self._nb_intra_two_opt_best,
-                self._nb_intra_relocate_best,
-                self._nb_inter_relocate_best,
-                self._nb_inter_swap_best,
-                self._nb_inter_cross_best,
-            ]
+            nb_dict = {
+                'two_opt': self._nb_intra_two_opt_best,
+                'intra_relocate': self._nb_intra_relocate_best,
+                'inter_relocate': self._nb_inter_relocate_best,
+                'inter_swap': self._nb_inter_swap_best,
+                'cross_exchange': self._nb_inter_cross_best,
+            }
+
+        if active_neighborhoods:
+            neighborhoods = [nb_dict[name] for name in active_neighborhoods if name in nb_dict]
+        else:
+            neighborhoods = list(nb_dict.values())
 
         k = 0
         while k < len(neighborhoods):
