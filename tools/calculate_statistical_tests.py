@@ -1,0 +1,328 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import wilcoxon, friedmanchisquare
+import os
+import warnings
+
+# 忽略警告
+warnings.filterwarnings("ignore")
+
+def format_pval(pval):
+    if pd.isna(pval):
+        return "NaN"
+    s = f"{pval:.20f}".rstrip('0')
+    if s.endswith('.'):
+        s += '0'
+    return s
+
+def main():
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    excel_path = os.path.join(base_dir, "docs", "路線最佳化比較結果.xlsx")
+    
+    if not os.path.exists(excel_path):
+        print(f"Error: 找不到檔案 {excel_path}")
+        return
+
+    xls = pd.ExcelFile(excel_path)
+    sheet_names = xls.sheet_names
+    
+    # 讀取所有有效資料 (排除 Gap)
+    data_dict = {}
+    for sheet in sheet_names:
+        if sheet.startswith('Gap'):
+            continue
+        df = pd.read_excel(excel_path, sheet_name=sheet)
+        df = df[df['date'] != 'Average'].set_index('date')
+        
+        # 新增階層式目標：主要比車輛數，次要比距離
+        # 因為車輛數和距離都是越小越好，我們可以給車輛數一個極大的權重 (例如 100000)
+        # 這樣就能夠完美在一個數值內反映「先比車輛數，再比距離」的階層邏輯
+        if 'vehicle num' in df.columns and 'total_dist(km)' in df.columns:
+            # 確保數值型態
+            v_num = pd.to_numeric(df['vehicle num'], errors='coerce')
+            dist = pd.to_numeric(df['total_dist(km)'], errors='coerce')
+            df['階層式目標(車+距)'] = v_num * 100000 + dist
+        
+        # 只保留至少有 26 筆資料的 sheet 參與比較
+        if len(df) >= 26:
+            data_dict[sheet] = df
+        else:
+            print(f"警告: '{sheet}' 只有 {len(df)} 筆資料 (未達 26 筆)，將不參與此次比較。")
+
+    if '程式編排' not in data_dict:
+        print("錯誤：找不到 '程式編排' 這個工作表，或是其資料筆數未達 26 筆！")
+        return
+        
+    df_prog = data_dict['程式編排']
+    
+    # 只比較使用者指定的 3 個核心指標
+    metrics = ['階層式目標(車+距)', 'vehicle num', 'total_dist(km)']
+    
+    # ==========================================
+    # 1. Wilcoxon Signed-Rank Test
+    # ==========================================
+    wilcoxon_results = []
+    targets = [s for s in data_dict.keys() if s != '程式編排']
+    
+    print("=" * 60)
+    print("1. Wilcoxon Signed-Rank Test (Pairwise vs 程式編排)")
+    print("=" * 60)
+    
+    metric_name_map = {
+        '階層式目標(車+距)': 'Hierarchical Objective',
+        'vehicle num': 'NV',
+        'total_dist(km)': 'TD',
+        'total_time(hr)': 'Time',
+        'avg_load_rate': 'Load Rate',
+        'on_time_rate': 'On-Time Rate',
+        'avg_running_time': 'Run Time'
+    }
+    
+    for target in targets:
+        df_target = data_dict[target]
+        common_dates = df_prog.index.intersection(df_target.index)
+        if len(common_dates) == 0:
+            continue
+            
+        prog_tmp = df_prog.loc[common_dates]
+        tgt_tmp = df_target.loc[common_dates]
+        
+        print(f"\n【Wilcoxon】程式編排 vs {target} (樣本數: {len(common_dates)})")
+        
+        for col in metrics:
+            if col not in tgt_tmp.columns:
+                continue
+            x = pd.to_numeric(prog_tmp[col], errors='coerce')
+            y = pd.to_numeric(tgt_tmp[col], errors='coerce')
+            
+            valid_mask = ~x.isna() & ~y.isna()
+            x_valid = x[valid_mask]
+            y_valid = y[valid_mask]
+            
+            if len(x_valid) < 2:
+                w_stat, pval = np.nan, np.nan
+            else:
+                diff = x_valid - y_valid
+                if np.all(diff == 0):
+                    w_stat, pval = np.nan, 1.0
+                else:
+                    try:
+                        w_stat, pval = wilcoxon(x_valid, y_valid)
+                    except ValueError:
+                        w_stat, pval = np.nan, np.nan
+                        
+            pval_str = format_pval(pval)
+            w_str = f"{w_stat:.1f}" if pd.notna(w_stat) else "NaN"
+            print(f"  - {col:18s} : W = {w_str:6s} | p-value = {pval_str}")
+            
+            wilcoxon_results.append({
+                'Metric': metric_name_map.get(col, col),
+                'Comparison': f'程式編排 vs {target}',
+                'W': w_stat,
+                'p-value': pval_str
+            })
+        
+    # ==========================================
+    # 2. Friedman Test
+    # ==========================================
+    print("\n" + "=" * 60)
+    print("2. Friedman Test (多組樣本的無母數檢定與平均排名)")
+    print("=" * 60)
+    
+    all_methods = list(data_dict.keys())
+    
+    # 定義每個 metric 越大越好還是越小越好 (用於計算排名)
+    # True = 越大越好 (Descending Rank, 值越大排名數字越小即越靠近第一名)
+    # False = 越小越好 (Ascending Rank, 值越小排名數字越小即越靠近第一名)
+    higher_is_better = {
+        '階層式目標(車+距)': False,
+        'avg_load_rate': True,
+        'on_time_rate': True,
+        'vehicle num': False,
+        'total_dist(km)': False,
+        'total_time(hr)': False,
+        'avg_running_time': False
+    }
+    
+    def run_friedman(method_names, group_name):
+        common_dates_f = data_dict[method_names[0]].index
+        for m in method_names[1:]:
+            common_dates_f = common_dates_f.intersection(data_dict[m].index)
+            
+        print(f"\n【Friedman】{group_name}")
+        print(f"參與比較: {', '.join(method_names)}")
+        print(f"有效樣本數: {len(common_dates_f)}")
+        
+        results_f = []
+        if len(common_dates_f) >= 2:
+            for col in metrics:
+                valid_metric = True
+                for m in method_names:
+                    if col not in data_dict[m].columns:
+                        valid_metric = False
+                        break
+                
+                if not valid_metric:
+                    continue
+                    
+                df_metric = pd.DataFrame({m: data_dict[m].loc[common_dates_f, col] for m in method_names})
+                # 確保數值型態並去除 NaN
+                df_metric = df_metric.apply(pd.to_numeric, errors='coerce').dropna()
+                
+                if len(df_metric) < 2:
+                    continue
+                    
+                # 計算排名
+                is_higher_better = higher_is_better.get(col, False)
+                df_ranks = df_metric.rank(axis=1, ascending=not is_higher_better, method='average')
+                avg_ranks = df_ranks.mean().to_dict()
+                
+                # 計算統計量
+                is_all_same = True
+                for i in range(1, len(method_names)):
+                    if not np.allclose(df_metric[method_names[0]], df_metric[method_names[i]]):
+                        is_all_same = False
+                        break
+                        
+                if is_all_same:
+                    stat, pval = np.nan, 1.0
+                else:
+                    try:
+                        samples = [df_metric[m].values for m in method_names]
+                        stat, pval = friedmanchisquare(*samples)
+                    except Exception:
+                        stat, pval = np.nan, np.nan
+                        
+                row_res = {
+                    'Group': group_name,
+                    'Metric': col,
+                    'N': len(df_metric),
+                    'Friedman Statistic': stat,
+                    'p-value': pval
+                }
+                for m in method_names:
+                    row_res[f'Rank_{m}'] = avg_ranks[m]
+                    
+                results_f.append(row_res)
+                
+                pval_str = format_pval(pval)
+                stat_str = f"{stat:7.2f}" if pd.notna(stat) else "NaN"
+                print(f"  - {col:18s} | Stat: {stat_str} | p-value: {pval_str} | Ranks: ", end="")
+                ranks_str = ", ".join([f"{m}: {avg_ranks[m]:.2f}" for m in method_names])
+                print(ranks_str)
+                
+        else:
+            print("樣本數不足，無法檢定。")
+            
+        return results_f
+
+    friedman_results_all = []
+    
+    # 1) 所有方法 (手動 + 程式 + ALB)
+    f_res1 = run_friedman(all_methods, '所有方法 (包含手動)')
+    friedman_results_all.extend(f_res1)
+    
+    # 2) 僅比較演算法 (程式 + ALB)，排除手動編排
+    algo_methods = [m for m in all_methods if '手動' not in m]
+    if len(algo_methods) > 1:
+        f_res2 = run_friedman(algo_methods, '僅比較所有程式演算法 (排除手動)')
+        friedman_results_all.extend(f_res2)
+
+    # ==========================================
+    # 建立論文常用的 Rank Pivot 表格
+    # ==========================================
+    pivot_sheets = {}
+    
+    # 根據產生過的不同 Group 來分頁
+    for group in pd.DataFrame(friedman_results_all)['Group'].unique():
+        group_rows = [r for r in friedman_results_all if r['Group'] == group]
+        
+        # 取出該群組有參與的方法
+        method_keys = [k for k in group_rows[0].keys() if k.startswith('Rank_')]
+        method_names = [k.replace('Rank_', '') for k in method_keys]
+        
+        pivot_data = []
+        for method in method_names:
+            row = {'Method': method}
+            for grp_row in group_rows:
+                metric_name = grp_row['Metric']
+                # 對應論文想呈現的簡化縮寫
+                if metric_name == 'vehicle num':
+                    col_name = 'NV Rank'
+                elif metric_name == 'total_dist(km)':
+                    col_name = 'TD Rank'
+                elif metric_name == '階層式目標(車+距)':
+                    col_name = 'Object Rank'
+                elif metric_name == 'total_time(hr)':
+                    col_name = 'Time Rank'
+                elif metric_name == 'avg_load_rate':
+                    col_name = 'Load Rank'
+                elif metric_name == 'on_time_rate':
+                    col_name = 'OnTime Rank'
+                elif metric_name == 'avg_running_time':
+                    col_name = 'RunTime Rank'
+                else:
+                    col_name = f"{metric_name} Rank"
+                    
+                row[col_name] = round(grp_row[f'Rank_{method}'], 2)
+            pivot_data.append(row)
+            
+        df_pivot = pd.DataFrame(pivot_data)
+        
+        # 為了論文表格完整性，在最後附上 Stat 與 P-value
+        stat_row = {'Method': 'Friedman Statistic'}
+        pval_row = {'Method': 'p-value'}
+        for grp_row in group_rows:
+            metric_name = grp_row['Metric']
+            if metric_name == 'vehicle num':
+                col_name = 'NV Rank'
+            elif metric_name == 'total_dist(km)':
+                col_name = 'TD Rank'
+            elif metric_name == '階層式目標(車+距)':
+                col_name = 'Object Rank'
+            elif metric_name == 'total_time(hr)':
+                col_name = 'Time Rank'
+            elif metric_name == 'avg_load_rate':
+                col_name = 'Load Rank'
+            elif metric_name == 'on_time_rate':
+                col_name = 'OnTime Rank'
+            elif metric_name == 'avg_running_time':
+                col_name = 'RunTime Rank'
+            else:
+                col_name = f"{metric_name} Rank"
+                
+            if pd.notna(grp_row['Friedman Statistic']):
+                stat_row[col_name] = round(grp_row['Friedman Statistic'], 2)
+            else:
+                stat_row[col_name] = np.nan
+            
+            # P-value 格式化
+            pval_row[col_name] = format_pval(grp_row['p-value'])
+                
+        df_pivot = pd.concat([df_pivot, pd.DataFrame([stat_row, pval_row])], ignore_index=True)
+        
+        if '排除手動' in group:
+            sheet_name = 'Friedman排名表(僅演算法)'
+        else:
+            sheet_name = 'Friedman排名表(含手動)'
+            
+        pivot_sheets[sheet_name] = df_pivot
+
+    # ==========================================
+    # 輸出到 Excel
+    # ==========================================
+    print("\n" + "=" * 60)
+    print("註記：*** p<0.01, ** p<0.05, * p<0.1")
+    
+    out_excel = os.path.join(base_dir, "docs", "統計檢定結果.xlsx")
+    with pd.ExcelWriter(out_excel) as writer:
+        pd.DataFrame(wilcoxon_results).to_excel(writer, sheet_name='Wilcoxon', index=False)
+        
+        # 儲存新建立的轉置排名表
+        for sheet_name, df_p in pivot_sheets.items():
+            df_p.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+    print(f"\n已將包含 Wilcoxon 與 Friedman 檢定(含轉置表格)的結果儲存至:\n-> {out_excel}")
+
+if __name__ == "__main__":
+    main()
