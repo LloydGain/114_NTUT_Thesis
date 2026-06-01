@@ -42,6 +42,11 @@ def main():
             v_num = pd.to_numeric(df['vehicle num'], errors='coerce')
             dist = pd.to_numeric(df['total_dist(km)'], errors='coerce')
             df['階層式目標(車+距)'] = v_num * 100000 + dist
+            
+        # 根據使用者要求，將手動編排的執行時間當作 90 分鐘 (5400 秒)
+        if '手動' in sheet:
+            df['running_time(s)'] = 5400
+            df['avg_running_time'] = 5400
         
         # 只保留至少有 26 筆資料的 sheet 參與比較
         if len(df) >= 26:
@@ -55,8 +60,8 @@ def main():
         
     df_prog = data_dict['程式編排']
     
-    # 只比較使用者指定的 3 個核心指標
-    metrics = ['階層式目標(車+距)', 'vehicle num', 'total_dist(km)']
+    # 比較使用者指定的指標: 階層式目標 及 5 個核心指標
+    metrics = ['階層式目標(車+距)', 'vehicle num', 'vehicle_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate', 'running_time(s)', 'avg_running_time']
     
     # ==========================================
     # 1. Wilcoxon Signed-Rank Test
@@ -71,11 +76,12 @@ def main():
     metric_name_map = {
         '階層式目標(車+距)': 'Hierarchical Objective',
         'vehicle num': 'NV',
+        'vehicle_num': 'NV',
         'total_dist(km)': 'TD',
-        'total_time(hr)': 'Time',
-        'avg_load_rate': 'Load Rate',
-        'on_time_rate': 'On-Time Rate',
-        'avg_running_time': 'Run Time'
+        'avg_load_rate': 'U',
+        'on_time_rate': 'O',
+        'avg_running_time': 'RT',
+        'running_time(s)': 'RT'
     }
     
     for target in targets:
@@ -90,7 +96,7 @@ def main():
         print(f"\n【Wilcoxon】程式編排 vs {target} (樣本數: {len(common_dates)})")
         
         for col in metrics:
-            if col not in tgt_tmp.columns:
+            if col not in tgt_tmp.columns or col not in prog_tmp.columns:
                 continue
             x = pd.to_numeric(prog_tmp[col], errors='coerce')
             y = pd.to_numeric(tgt_tmp[col], errors='coerce')
@@ -139,9 +145,11 @@ def main():
         'avg_load_rate': True,
         'on_time_rate': True,
         'vehicle num': False,
+        'vehicle_num': False,
         'total_dist(km)': False,
         'total_time(hr)': False,
-        'avg_running_time': False
+        'avg_running_time': False,
+        'running_time(s)': False
     }
     
     def run_friedman(method_names, group_name):
@@ -247,20 +255,18 @@ def main():
             for grp_row in group_rows:
                 metric_name = grp_row['Metric']
                 # 對應論文想呈現的簡化縮寫
-                if metric_name == 'vehicle num':
+                if metric_name in ('vehicle num', 'vehicle_num'):
                     col_name = 'NV Rank'
                 elif metric_name == 'total_dist(km)':
                     col_name = 'TD Rank'
                 elif metric_name == '階層式目標(車+距)':
                     col_name = 'Object Rank'
-                elif metric_name == 'total_time(hr)':
-                    col_name = 'Time Rank'
                 elif metric_name == 'avg_load_rate':
-                    col_name = 'Load Rank'
+                    col_name = 'U Rank'
                 elif metric_name == 'on_time_rate':
-                    col_name = 'OnTime Rank'
-                elif metric_name == 'avg_running_time':
-                    col_name = 'RunTime Rank'
+                    col_name = 'O Rank'
+                elif metric_name in ('running_time(s)', 'avg_running_time'):
+                    col_name = 'RT Rank'
                 else:
                     col_name = f"{metric_name} Rank"
                     
@@ -274,20 +280,18 @@ def main():
         pval_row = {'Method': 'p-value'}
         for grp_row in group_rows:
             metric_name = grp_row['Metric']
-            if metric_name == 'vehicle num':
+            if metric_name in ('vehicle num', 'vehicle_num'):
                 col_name = 'NV Rank'
             elif metric_name == 'total_dist(km)':
                 col_name = 'TD Rank'
             elif metric_name == '階層式目標(車+距)':
                 col_name = 'Object Rank'
-            elif metric_name == 'total_time(hr)':
-                col_name = 'Time Rank'
             elif metric_name == 'avg_load_rate':
-                col_name = 'Load Rank'
+                col_name = 'U Rank'
             elif metric_name == 'on_time_rate':
-                col_name = 'OnTime Rank'
-            elif metric_name == 'avg_running_time':
-                col_name = 'RunTime Rank'
+                col_name = 'O Rank'
+            elif metric_name in ('running_time(s)', 'avg_running_time'):
+                col_name = 'RT Rank'
             else:
                 col_name = f"{metric_name} Rank"
                 
