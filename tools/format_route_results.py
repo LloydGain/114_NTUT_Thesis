@@ -23,6 +23,7 @@ def process_exp_results(input_dir, manual_path, output_path):
                 avg_metrics = {
                     'date': str(date),
                     'vehicle num': df['vehicle_num'].mean(),
+                    'support_num': df['support_num'].mean() if 'support_num' in df.columns else np.nan,
                     'total_dist(km)': df['total_dist(km)'].mean(),
                     'total_time(hr)': df['total_time(hr)'].mean(),
                     'avg_load_rate': df['avg_load_rate'].mean(),
@@ -82,19 +83,23 @@ def process_exp_results(input_dir, manual_path, output_path):
             tgt_tmp = df_target.set_index('date')[common_cols]
             base_tmp = df_base.set_index('date')[common_cols]
             
-            common_dates = tgt_tmp.index.intersection(base_tmp.index)
+            common_dates = [d for d in tgt_tmp.index.intersection(base_tmp.index) if str(d) != 'Average']
             tgt_tmp = tgt_tmp.loc[common_dates]
             base_tmp = base_tmp.loc[common_dates]
             
             gap_tmp = ((tgt_tmp - base_tmp) / base_tmp.replace(0, np.nan) * 100).round(2)
+            
+            # 如果兩者都是0，gap設為0
+            mask_zero = (tgt_tmp == 0) & (base_tmp == 0)
+            gap_tmp[mask_zero] = 0.0
+            
+            avg_gap = gap_tmp.mean().round(2)
+            gap_tmp.loc['Average'] = avg_gap
+            
             gap_tmp = gap_tmp.fillna("")
             gap_tmp.columns = [f"{col}(%)" for col in common_cols]
             df_g = gap_tmp.reset_index()
             
-            if 'Average' in df_g['date'].values:
-                avg_row = df_g[df_g['date'] == 'Average']
-                df_g = df_g[df_g['date'] != 'Average']
-                df_g = pd.concat([df_g, avg_row], ignore_index=True)
         return df_g
 
     # 套用格式化
@@ -113,12 +118,62 @@ def process_exp_results(input_dir, manual_path, output_path):
         key=lambda x: desired_order.index(x) if x in desired_order else len(desired_order)
     )
 
+    # 建立比較表 (手動 vs 程式)
+    def create_comparison_df(df_manual, df_program):
+        if df_manual.empty or df_program.empty:
+            return pd.DataFrame()
+            
+        m_tmp = df_manual.copy()
+        p_tmp = df_program.copy()
+        
+        # 統一欄位名稱
+        if 'vehicle num' in m_tmp.columns: m_tmp = m_tmp.rename(columns={'vehicle num': 'vehicle_num'})
+        if 'vehicle num' in p_tmp.columns: p_tmp = p_tmp.rename(columns={'vehicle num': 'vehicle_num'})
+        
+        target_cols = ['vehicle_num', 'support_num', 'total_dist(km)']
+        
+        comp_data = []
+        all_dates = sorted(list(set(m_tmp['date'].tolist() + p_tmp['date'].tolist())))
+        if 'Average' in all_dates:
+            all_dates.remove('Average')
+            all_dates.append('Average')
+            
+        for d in all_dates:
+            row = {'date': d}
+            m_row = m_tmp[m_tmp['date'] == d]
+            p_row = p_tmp[p_tmp['date'] == d]
+            
+            for col in target_cols:
+                m_val = m_row.iloc[0][col] if not m_row.empty and col in m_row.columns else np.nan
+                p_val = p_row.iloc[0][col] if not p_row.empty and col in p_row.columns else np.nan
+                
+                if col == 'vehicle_num':
+                    row['Manual Vehicle Num'] = m_val
+                    row['Program Vehicle Num'] = p_val
+                    row['Vehicle Num Diff'] = p_val - m_val if pd.notna(p_val) and pd.notna(m_val) else np.nan
+                elif col == 'support_num':
+                    row['Manual Support Num'] = m_val
+                    row['Program Support Num'] = p_val
+                    row['Support Num Diff'] = p_val - m_val if pd.notna(p_val) and pd.notna(m_val) else np.nan
+                elif col == 'total_dist(km)':
+                    row['Manual Dist(km)'] = m_val
+                    row['Program Dist(km)'] = p_val
+                    row['Dist Diff(km)'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
+                    
+            comp_data.append(row)
+            
+        return pd.DataFrame(comp_data)
+
     # 輸出到新的 Excel 檔案
     with pd.ExcelWriter(output_path) as writer:
         if not df_manual.empty:
             df_manual.to_excel(writer, sheet_name='手動編排', index=False)
         if not df_program.empty:
             df_program.to_excel(writer, sheet_name='程式編排', index=False)
+            
+        df_comparison = create_comparison_df(df_manual, df_program)
+        if not df_comparison.empty:
+            df_comparison.to_excel(writer, sheet_name='核心指標比較', index=False)
             
         # 先輸出所有的 ALB 程式編排
         for alb_name in sorted_alb_names:
@@ -146,6 +201,6 @@ if __name__ == "__main__":
     
     input_directory = os.path.join(base_dir, "output", "exp")
     manual_excel_path = os.path.join(base_dir, "output", "all_manual_summaries.xlsx")
-    output_excel_path = os.path.join(base_dir, "docs", "路線最佳化比較結果.xlsx")
+    output_excel_path = os.path.join(base_dir, "output", "路線最佳化比較結果.xlsx")
     
     process_exp_results(input_directory, manual_excel_path, output_excel_path)

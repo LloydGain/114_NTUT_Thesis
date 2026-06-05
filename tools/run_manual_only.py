@@ -54,6 +54,7 @@ def process_date(file_date, google, distance_matrix, time_matrix):
     print("Exporting manual results to excel...")
     manual_r_info = m_data.routes_info
     total_vehicles = len(manual_r_info)
+    support_vehicles = sum(1 for r in manual_r_info.values() if str(r['dc']['route_id']).isdigit())
     total_distance = sum(r['dc']['distance'] for r in manual_r_info.values())
     total_duration = sum(r['dc']['duration'] for r in manual_r_info.values()) / 3600
     total_stores = sum(len(r['stores']) for r in manual_r_info.values())
@@ -64,6 +65,7 @@ def process_date(file_date, google, distance_matrix, time_matrix):
     summary_data = {
         "date": file_date,
         "vehicle num": total_vehicles,
+        "support_num": support_vehicles,
         "total_dist(km)": round(total_distance, 2),
         "total_time(hr)": round(total_duration, 2),
         "avg_load_rate": round(avg_load_rate, 2),

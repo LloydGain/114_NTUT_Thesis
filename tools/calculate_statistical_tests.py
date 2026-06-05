@@ -4,7 +4,6 @@ from scipy.stats import wilcoxon, friedmanchisquare
 import os
 import warnings
 
-# 忽略警告
 warnings.filterwarnings("ignore")
 
 def format_pval(pval):
@@ -26,7 +25,6 @@ def main():
     xls = pd.ExcelFile(excel_path)
     sheet_names = xls.sheet_names
     
-    # 讀取所有有效資料 (排除 Gap)
     data_dict = {}
     for sheet in sheet_names:
         if sheet.startswith('Gap'):
@@ -34,21 +32,15 @@ def main():
         df = pd.read_excel(excel_path, sheet_name=sheet)
         df = df[df['date'] != 'Average'].set_index('date')
         
-        # 新增階層式目標：主要比車輛數，次要比距離
-        # 因為車輛數和距離都是越小越好，我們可以給車輛數一個極大的權重 (例如 100000)
-        # 這樣就能夠完美在一個數值內反映「先比車輛數，再比距離」的階層邏輯
         if 'vehicle num' in df.columns and 'total_dist(km)' in df.columns:
-            # 確保數值型態
             v_num = pd.to_numeric(df['vehicle num'], errors='coerce')
             dist = pd.to_numeric(df['total_dist(km)'], errors='coerce')
-            df['階層式目標(車+距)'] = v_num * 100000 + dist
+            df['階層式目標(車+距)'] = v_num * 2000 + dist
             
-        # 根據使用者要求，將手動編排的執行時間當作 90 分鐘 (5400 秒)
         if '手動' in sheet:
             df['running_time(s)'] = 5400
             df['avg_running_time'] = 5400
         
-        # 只保留至少有 26 筆資料的 sheet 參與比較
         if len(df) >= 26:
             data_dict[sheet] = df
         else:
@@ -60,7 +52,6 @@ def main():
         
     df_prog = data_dict['程式編排']
     
-    # 比較使用者指定的指標: 階層式目標 及 5 個核心指標
     metrics = ['階層式目標(車+距)', 'vehicle num', 'vehicle_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate', 'running_time(s)', 'avg_running_time']
     
     # ==========================================
@@ -137,7 +128,6 @@ def main():
     
     all_methods = list(data_dict.keys())
     
-    # 定義每個 metric 越大越好還是越小越好 (用於計算排名)
     # True = 越大越好 (Descending Rank, 值越大排名數字越小即越靠近第一名)
     # False = 越小越好 (Ascending Rank, 值越小排名數字越小即越靠近第一名)
     higher_is_better = {
@@ -174,18 +164,15 @@ def main():
                     continue
                     
                 df_metric = pd.DataFrame({m: data_dict[m].loc[common_dates_f, col] for m in method_names})
-                # 確保數值型態並去除 NaN
                 df_metric = df_metric.apply(pd.to_numeric, errors='coerce').dropna()
                 
                 if len(df_metric) < 2:
                     continue
                     
-                # 計算排名
                 is_higher_better = higher_is_better.get(col, False)
                 df_ranks = df_metric.rank(axis=1, ascending=not is_higher_better, method='average')
                 avg_ranks = df_ranks.mean().to_dict()
                 
-                # 計算統計量
                 is_all_same = True
                 for i in range(1, len(method_names)):
                     if not np.allclose(df_metric[method_names[0]], df_metric[method_names[i]]):
@@ -226,26 +213,19 @@ def main():
 
     friedman_results_all = []
     
-    # 1) 所有方法 (手動 + 程式 + ALB)
     f_res1 = run_friedman(all_methods, '所有方法 (包含手動)')
     friedman_results_all.extend(f_res1)
     
-    # 2) 僅比較演算法 (程式 + ALB)，排除手動編排
     algo_methods = [m for m in all_methods if '手動' not in m]
     if len(algo_methods) > 1:
         f_res2 = run_friedman(algo_methods, '僅比較所有程式演算法 (排除手動)')
         friedman_results_all.extend(f_res2)
 
-    # ==========================================
-    # 建立論文常用的 Rank Pivot 表格
-    # ==========================================
     pivot_sheets = {}
     
-    # 根據產生過的不同 Group 來分頁
     for group in pd.DataFrame(friedman_results_all)['Group'].unique():
         group_rows = [r for r in friedman_results_all if r['Group'] == group]
         
-        # 取出該群組有參與的方法
         method_keys = [k for k in group_rows[0].keys() if k.startswith('Rank_')]
         method_names = [k.replace('Rank_', '') for k in method_keys]
         
@@ -254,7 +234,6 @@ def main():
             row = {'Method': method}
             for grp_row in group_rows:
                 metric_name = grp_row['Metric']
-                # 對應論文想呈現的簡化縮寫
                 if metric_name in ('vehicle num', 'vehicle_num'):
                     col_name = 'NV Rank'
                 elif metric_name == 'total_dist(km)':
@@ -275,7 +254,6 @@ def main():
             
         df_pivot = pd.DataFrame(pivot_data)
         
-        # 為了論文表格完整性，在最後附上 Stat 與 P-value
         stat_row = {'Method': 'Friedman Statistic'}
         pval_row = {'Method': 'p-value'}
         for grp_row in group_rows:
@@ -300,7 +278,6 @@ def main():
             else:
                 stat_row[col_name] = np.nan
             
-            # P-value 格式化
             pval_row[col_name] = format_pval(grp_row['p-value'])
                 
         df_pivot = pd.concat([df_pivot, pd.DataFrame([stat_row, pval_row])], ignore_index=True)
@@ -322,7 +299,6 @@ def main():
     with pd.ExcelWriter(out_excel) as writer:
         pd.DataFrame(wilcoxon_results).to_excel(writer, sheet_name='Wilcoxon', index=False)
         
-        # 儲存新建立的轉置排名表
         for sheet_name, df_p in pivot_sheets.items():
             df_p.to_excel(writer, sheet_name=sheet_name, index=False)
             

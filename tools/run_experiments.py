@@ -36,6 +36,7 @@ OUTPUT_DIR = ROOT / "output" / "exp"
 # Metric columns to report (returned by main())
 METRIC_COLS = [
     "vehicle_num",
+    "support_num",
     "total_dist(km)",
     "total_time(hr)",
     "avg_load_rate",
