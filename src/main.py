@@ -116,7 +116,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'generations': 200,
             'cross_rate': 0.8,
             'mutation_rate': 0.1,
-            'early_stop_patience': 20
+            'early_stop_patience': 50
         },
         'store_allocation_aco': {
             'num_ants': 50,
@@ -125,7 +125,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'beta': 1,
             'q0': 0.8,
             'rho': 0.7,
-            'early_stop_patience': 20
+            'early_stop_patience': 50
         },
         'support_line_macs': {
             'time_limit': 100,
@@ -134,7 +134,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'beta': 7,
             'rho': 0.5,
             'q0': 0.8,
-            'early_stop_patience': 20,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,
         },
@@ -268,6 +267,26 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         if not test_mode and mode_extract != 'random':
             with open(cache_file, 'wb') as f:
                 pickle.dump((main_routes, extracted_stores, store_extract_log_data), f)
+                
+    extract_excel_file = f'{out_base}/extract_routes_info.xlsx'
+    print(f"Exporting extracted routes info to {extract_excel_file}...")
+    import pandas as pd
+    temp_rm = RouteManager(copy.deepcopy(main_routes), distance_matrix, time_matrix)
+    temp_rm.update_all_routes_info()
+    temp_rm.export_excel_file(extract_excel_file)
+    
+    if os.path.exists(extract_excel_file):
+        df_ext = pd.DataFrame(extracted_stores)
+        if not df_ext.empty:
+            cols = ['route_code', 'store_id', 'store_name', 'volume', 'earliest_time', 'latest_time', 'dwell_time']
+            # Only keep columns that exist in df_ext
+            cols = [c for c in cols if c in df_ext.columns]
+            df_ext_filtered = df_ext[cols] if cols else df_ext
+        else:
+            df_ext_filtered = df_ext
+            
+        with pd.ExcelWriter(extract_excel_file, engine='openpyxl', mode='a') as writer:
+            df_ext_filtered.to_excel(writer, sheet_name='Sheet2', index=False)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
@@ -280,11 +299,33 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     start_time = time.time()
 
     mode_allocate = 'aco' if 'allocate' in alb else 'aco_vnd'
-    print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
-    allocate_params = params['store_allocation_aco']
-    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
-    _, main_routes, remaining_stores, _ = store_allocate.run()
-    store_allocate_log_data = store_allocate.log
+    allocate_cache_dir = f'../output/{file_date}/allocation_cache'
+    os.makedirs(allocate_cache_dir, exist_ok=True)
+    allocate_cache_file = f'{allocate_cache_dir}/allocate_{mode_allocate}_google{google}_seed{random_seed}.pkl'
+
+    if os.path.exists(allocate_cache_file) and not test_mode and mode_extract != 'random':
+        print(f"Loading cached Store Allocation data from {allocate_cache_file}...")
+        with open(allocate_cache_file, 'rb') as f:
+            main_routes, remaining_stores, store_allocate_log_data = pickle.load(f)
+    else:
+        print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
+        allocate_params = params['store_allocation_aco']
+        store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
+        _, main_routes, remaining_stores, _ = store_allocate.run()
+        store_allocate_log_data = store_allocate.log
+
+        if google:
+            print("Validating allocated routes with Google Maps API...")
+            temp_rm = RouteManager(copy.deepcopy(main_routes), distance_matrix, time_matrix)
+            newly_extracted = temp_rm.validate_and_extract_violating_stores(target='main')
+            if newly_extracted:
+                print(f"Extracted {len(newly_extracted)} unoriginal stores due to real-world time window violations.")
+                remaining_stores.extend(newly_extracted)
+            main_routes = temp_rm.routes_info
+
+        if not test_mode and mode_extract != 'random':
+            with open(allocate_cache_file, 'wb') as f:
+                pickle.dump((main_routes, remaining_stores, store_allocate_log_data), f)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
@@ -299,9 +340,47 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     mode_support = 'macs' if 'support' in alb else 'macs_vnd'
     print(f"Starting Support Line Planning using MACS (Mode: {mode_support})...")
     support_params = params['support_line_macs']
-    support = SupportLinePlanningMACS(remaining_stores, distance_matrix, time_matrix, mode=mode_support, **support_params)
-    _, support_routes = support.run()
-    support_line_log_data = support.log
+    
+    final_support_routes = {}
+    current_support_stores = remaining_stores
+    support_line_log_data = []
+
+    while current_support_stores:
+        support = SupportLinePlanningMACS(current_support_stores, distance_matrix, time_matrix, mode=mode_support, **support_params)
+        _, current_routes = support.run()
+        support_line_log_data.append(support.log)
+        
+        if google:
+            print("Validating support routes with Google Maps API...")
+            temp_rm = RouteManager(copy.deepcopy(current_routes), distance_matrix, time_matrix)
+            newly_extracted = temp_rm.validate_and_extract_violating_stores(target='support')
+            
+            for _, r_info in temp_rm.routes_info.items():
+                if r_info['stores']: 
+                    new_id = str(101 + len(final_support_routes))
+                    r_info['dc']['route_id'] = new_id
+                    r_info['dc']['route_code'] = new_id
+                    for s in r_info['stores']:
+                        s['route_id'] = new_id
+                    final_support_routes[new_id] = r_info
+                    
+            if newly_extracted:
+                print(f"Extracted {len(newly_extracted)} stores from support routes due to real-world time window violations. Replanning...")
+                current_support_stores = newly_extracted
+            else:
+                break
+        else:
+            for _, r_info in current_routes.items():
+                if r_info['stores']:
+                    new_id = str(101 + len(final_support_routes))
+                    r_info['dc']['route_id'] = new_id
+                    r_info['dc']['route_code'] = new_id
+                    for s in r_info['stores']:
+                        s['route_id'] = new_id
+                    final_support_routes[new_id] = r_info
+            break
+
+    support_routes = final_support_routes
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
@@ -472,6 +551,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     return {
         "cost":            optimized_cost,
         "vehicle_num":     total_vehicles,
+        "support_num":     support_vehicles,
         "total_store_num": total_stores,
         "total_dist(km)":  round(total_distance,  4),
         "total_time(hr)":  round(total_duration,  4),

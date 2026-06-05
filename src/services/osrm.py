@@ -90,7 +90,19 @@ class OSRM:
 
                 for si, s in enumerate(src_batch):
                     for di, d in enumerate(dst_batch):
-                        dist_matrix[s['store_id']][d['store_id']] = distances[si][di] / 1000
-                        time_matrix[s['store_id']][d['store_id']] = durations[si][di] * 1.75
+                        dist_km = round(distances[si][di] / 1000, 2)
+                        dist_matrix[s['store_id']][d['store_id']] = dist_km
+                        
+                        raw_duration = durations[si][di]
+                        if dist_km < 3:
+                            multiplier = 2.15
+                        elif dist_km < 5:
+                            multiplier = 1.90
+                        elif dist_km < 10:
+                            multiplier = 1.75
+                        else:
+                            multiplier = 1.35
+                            
+                        time_matrix[s['store_id']][d['store_id']] = int(round(raw_duration * multiplier))
 
         return dist_matrix, time_matrix

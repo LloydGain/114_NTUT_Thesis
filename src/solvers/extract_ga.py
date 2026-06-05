@@ -88,9 +88,13 @@ def fitness_worker(args):
     ac_cost, _, _, ac_vn = StoreAllocationACO(
         copy_routes, store_list, DIST, TIME,
         num_ants=0, iterations=0, verbose=False
-    ).run()
+    ).run(return_routes=False)
 
-    result = {'cost': ac_cost, 'vn': ac_vn}
+    # Hierarchy of importance: VN > Extracted Stores > Distance
+    extract_penalty = len(store_list) * 100
+    fitness_cost = ac_cost + extract_penalty
+
+    result = {'cost': fitness_cost, 'true_cost': ac_cost, 'vn': ac_vn, 'num_extracted': len(store_list)}
     return cache_key, result
 
 
@@ -107,7 +111,7 @@ class StoreExtractionGA:
 
     def __init__(self, main_routes, distance_matrix, time_matrix,
                  population_size=10, elite_rate=0.1, generations=50,
-                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=100,
+                 cross_rate=0.8, mutation_rate=0.2, early_stop_patience=10,
                  vehicle_cost=2000, mode='ga'):
         self.mode                = mode
         self.dc                  = config.DC_CONFIG
@@ -174,6 +178,24 @@ class StoreExtractionGA:
 
     # ── Feasibility repair (binary) ───────────────────────────────────────────
 
+    def _is_time_feasible(self, rem):
+        """Check if the remaining route satisfies time windows."""
+        from datetime import datetime, timedelta
+        if len(rem) <= 1:
+            return True
+            
+        curr_time = datetime.fromisoformat(rem[0].get('sched_time', rem[0]['pred_time']))
+        for i in range(1, len(rem)):
+            prev = rem[i-1]
+            curr = rem[i]
+            travel_time = self.time_matrix[prev['store_id']][curr['store_id']]
+            added_seconds = int(round(travel_time + prev['dwell_time']))
+            curr_time += timedelta(seconds=added_seconds)
+            
+            if curr_time.isoformat() > curr['latest_time'] or curr_time.isoformat() < curr['earliest_time']:
+                return False
+        return True
+
     def _repair_binary(self, route_id, bits):
         """
         Ensure the binary vector yields a capacity-feasible remaining route.
@@ -185,17 +207,13 @@ class StoreExtractionGA:
         all_stores = self.route_stores[route_id]
         capacity   = self.main_routes[route_id]['dc']['max_capacity']
 
-        # Ensure at least one store remains initially
-        if sum(bits) == len(bits):
-            bits[np.random.randint(len(bits))] = 0
-
         while True:
             rem  = [all_stores[j] for j, b in enumerate(bits) if b == 0]
             if len(rem) <= 1:
                 break
                 
             load = sum(s['volume'] for s in rem)
-            if load <= capacity:
+            if load <= capacity and self._is_time_feasible(rem):
                 break
                 
             probs  = self._weights(rem)
@@ -417,10 +435,13 @@ class StoreExtractionGA:
 
                 # Logging
                 ctx_key = self._encode_ctx(context)
-                res = local_cache.get(ctx_key, {'cost': fb, 'vn': 0})
+                res = local_cache.get(ctx_key, {'cost': fb, 'true_cost': fb, 'vn': 0, 'num_extracted': 0})
                 vn = res['vn']
+                true_cost = res.get('true_cost', fb)
+                num_ext = res.get('num_extracted', sum(sum(b) for b in context.values()))
+                
                 print(f'Store Extraction: iteration{gen_idx + 1} -> '
-                      f'vn = {vn}, cost = {fb - vn * self.vehicle_cost:.2f}, fitness = {fb:.2f}')
+                      f'extracted = {num_ext}, vn = {vn}, true_cost = {true_cost:.2f}, fitness = {fb:.2f}')
 
                 self.log.append({
                     'generation': gen_idx + 1,

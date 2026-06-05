@@ -644,7 +644,12 @@ class StoreAllocationACO:
         final_cost, vn = self._evaluate_solution(current_solution, rm.routes_info, current_support)
         return current_solution, rm.routes_info, current_support, final_cost, vn
         
-    def run(self):
+    def run(self, return_routes=True):
+        if self.iterations == 0 and self.num_ants == 0:
+            if not return_routes:
+                _, greedy_cost, _, _, greedy_vn = self._generate_greedy_solution(return_routes=False)
+                return greedy_cost, None, None, greedy_vn
+                
         # 1. Greedy initialization to find tau0 using the GA greedy heuristic
         greedy_choices, greedy_cost, greedy_routes_info, greedy_pool, greedy_vn = self._generate_greedy_solution(return_routes=True)
         greedy_solution = {self.remaining_stores[idx]['store_id']: r_id for idx, r_id in enumerate(greedy_choices)}

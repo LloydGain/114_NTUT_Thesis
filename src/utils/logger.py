@@ -150,7 +150,8 @@ class Log:
     def log_execution(self, log_file, log_data):
         """
         Notes:
-            Logs execution data to a specified JSON file.
+            Logs execution data to a specified Excel file.
+            If log_data is a list of lists, it saves each list to a separate sheet.
 
         Args:
             log_file (str): The path to the log file.
@@ -160,5 +161,12 @@ class Log:
             None.
         """
         log_dest = f'{self.log_dir}/{log_file}'
-        df = pd.DataFrame(log_data)
-        df.to_excel(log_dest, index=False)
+        
+        if log_data and isinstance(log_data[0], list):
+            with pd.ExcelWriter(log_dest, engine='openpyxl') as writer:
+                for i, data in enumerate(log_data):
+                    df = pd.DataFrame(data)
+                    df.to_excel(writer, sheet_name=f'Loop_{i+1}', index=False)
+        else:
+            df = pd.DataFrame(log_data)
+            df.to_excel(log_dest, index=False)

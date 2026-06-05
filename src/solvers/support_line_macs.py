@@ -620,7 +620,7 @@ class SupportLinePlanningMACS:
     def __init__(self, remaining_stores, distance_matrix, time_matrix,
                  num_ants=10, time_limit=60, support_capacity=7.2,
                  time_limit_per_route=5 * 60 * 60, vehicle_cost=2000, is_solomon=False,
-                 alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=10,
+                 alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=50,
                  verbose=True, mode='macs'):
 
         self.mode = mode
@@ -899,11 +899,18 @@ class SupportLinePlanningMACS:
             t_vei.start(); t_dist.start()
             
             # Monitoring loop
+            last_improve_time = time.time()
             while t_vei.is_alive() or t_dist.is_alive():
                 curr_time = time.time()
                 if curr_time - t_start >= self.time_limit:
                     stop_event.set()
                     break
+                    
+                if self.early_stop_patience is not None:
+                    if curr_time - last_improve_time >= self.early_stop_patience:
+                        if self.verbose: print(f"    [MACS] Early stop triggered ({self.early_stop_patience}s no improvement).")
+                        stop_event.set()
+                        break
                 
                 if curr_time - last_log_time >= 1.0:
                     cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
@@ -920,8 +927,8 @@ class SupportLinePlanningMACS:
                 try:
                     msg = res_q.get(timeout=0.1)
                     src, sol, cost = msg
-                    
                     improved = False
+                    
                     if self.is_solomon:
                         if cost[0] < self.gb_cost[0] or (cost[0] == self.gb_cost[0] and cost[1] < self.gb_cost[1]):
                             old_nv = self.gb_cost[0]
@@ -939,7 +946,9 @@ class SupportLinePlanningMACS:
                                 if self.verbose: print(f"    [MACS] VEI reduced vehicles! {len(sol)}")
                                 stop_event.set(); break
                     
-                    pass
+                    if improved:
+                        last_improve_time = time.time()
+                        
                 except queue.Empty:
                     continue
             

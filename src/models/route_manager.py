@@ -532,19 +532,25 @@ class RouteManager:
             curr_store["pred_time"] = curr_time.isoformat(timespec="seconds")
 
 
-    def update_all_routes_distance_and_duration_with_google_api(self):
+    def update_all_routes_distance_and_duration_with_google_api(self, target='all'):
         """
         Notes:
             Update all routes distance and duration using Google Maps Routes API.
 
         Args:
-            None.
+            target (str): Which routes to update. Options: 'all', 'main', 'support'. Default is 'all'.
 
         Returns:
             None.
         """
         api = GoogleRoutesAPI()
         for route_id, route in self.routes_info.items():
+            is_support = str(route_id).isdigit()
+            if target == 'main' and is_support:
+                continue
+            if target == 'support' and not is_support:
+                continue
+                
             stores = route['stores']
             distance, duration, durations, is_cached = api.compute_route(stores)
             cache_str = "(Cache Hit)" if is_cached else "(API Call)"
@@ -554,6 +560,74 @@ class RouteManager:
 
             self._update_predicted_times(stores, durations)
 
+
+    def validate_and_extract_violating_stores(self, target='all'):
+        """
+        Notes:
+            Validate routes using Google API. If a store violates the time window,
+            extract it. Repeat until no stores violate in the route.
+            For 'main' target, only 'unoriginal' stores are extracted.
+            For 'support' target, any violating store is extracted.
+            
+        Returns:
+            list: A list of extracted store dictionaries.
+        """
+        extracted_stores = []
+        api = GoogleRoutesAPI()
+        
+        for route_id, route in list(self.routes_info.items()):
+            is_support = str(route_id).isdigit()
+            if target == 'main' and is_support:
+                continue
+            if target == 'support' and not is_support:
+                continue
+            
+            route_changed = True
+            while route_changed:
+                route_changed = False
+                
+                stores = route['stores']
+                if not stores:
+                    break
+                    
+                distance, duration, durations, _ = api.compute_route(stores)
+                route['dc']['distance'] = distance
+                route['dc']['duration'] = duration
+                self._update_predicted_times(stores, durations)
+                
+                violation_store = None
+                for i, s in enumerate(stores):
+                    origin_route_id = s.get('route_code', '')[:2]
+                    curr_route_id = str(route_id)[:2]
+                    is_unoriginal = (origin_route_id != curr_route_id)
+                    
+                    pred_time = s.get('pred_time')
+                    earliest = s.get('earliest_time')
+                    latest = s.get('latest_time')
+                    
+                    if not (pred_time and earliest and latest):
+                        continue
+                        
+                    is_violation = (pred_time < earliest or pred_time > latest)
+                    
+                    if is_violation:
+                        if target == 'support' or (target == 'main' and is_unoriginal):
+                            violation_store = s
+                            break
+                        elif target == 'main' and not is_unoriginal:
+                            if i > 0:
+                                prev_s = stores[i - 1]
+                                prev_origin = prev_s.get('route_code', '')[:2]
+                                if prev_origin != curr_route_id:
+                                    violation_store = prev_s
+                                    break
+                
+                if violation_store:
+                    extracted_stores.append(violation_store)
+                    self.remove_store(route_id, violation_store, fast_update=False)
+                    route_changed = True 
+                    
+        return extracted_stores
 
     def export_excel_file(self, dest_file):
         """
@@ -618,6 +692,7 @@ class RouteManager:
 
         main_routes = [r for r in self.routes_info.values() if not r['dc']['route_id'].isdigit()]
         support_routes = [r for r in self.routes_info.values() if r['dc']['route_id'].isdigit()]
+        all_routes = list(self.routes_info.values())
 
         def calc_stats(routes):
             if not routes:
@@ -649,6 +724,7 @@ class RouteManager:
 
         main_stats = calc_stats(main_routes)
         support_stats = calc_stats(support_routes)
+        total_stats = calc_stats(all_routes)
 
         stat_keys = [
             "vehicle_num",
@@ -667,6 +743,7 @@ class RouteManager:
                 data[i]["指標"] = key
                 data[i]["主線"] = main_stats[i]
                 data[i]["支援線"] = support_stats[i]
+                data[i]["整體規劃結果"] = total_stats[i]
             else:
                 data.append({
                     "車次": "",
@@ -683,7 +760,8 @@ class RouteManager:
                     "": "",
                     "指標": key,
                     "主線": main_stats[i],
-                    "支援線": support_stats[i]
+                    "支援線": support_stats[i],
+                    "整體規劃結果": total_stats[i]
                 })
 
         columns = [
@@ -701,9 +779,10 @@ class RouteManager:
             "",
             "指標",
             "主線",
-            "支援線"
+            "支援線",
+            "整體規劃結果"
         ]
-        col_widths = [8, 12, 15, 20, 20, 20, 20, 10, 10, 10, 10, 5, 20, 15, 15]
+        col_widths = [8, 12, 15, 20, 20, 20, 20, 10, 10, 10, 10, 5, 20, 15, 15, 15]
 
         output_dir = os.path.dirname(dest_file)
         if output_dir and not os.path.exists(output_dir):
