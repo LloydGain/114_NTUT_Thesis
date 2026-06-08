@@ -527,8 +527,10 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 
     total_vehicles   = len(optimized_routes)
     vehicle_cost     = 2000
-    support_vehicles = sum(1 for r in optimized_routes.values() if r['dc']['route_id'].isdigit())
+    support_vehicles = sum(1 for r in optimized_routes.values() if str(r['dc']['route_id']).isdigit())
     total_distance   = sum(r['dc']['distance'] for r in optimized_routes.values())
+    main_distance    = sum(r['dc']['distance'] for r in optimized_routes.values() if not str(r['dc']['route_id']).isdigit())
+    sup_distance     = sum(r['dc']['distance'] for r in optimized_routes.values() if str(r['dc']['route_id']).isdigit())
     total_duration   = sum(r['dc']['duration'] for r in optimized_routes.values()) / 3600
     total_stores     = sum(len(r['stores']) for r in optimized_routes.values())
     avg_distance     = total_distance / total_vehicles if total_vehicles else 0
@@ -554,6 +556,8 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
         "support_num":     support_vehicles,
         "total_store_num": total_stores,
         "total_dist(km)":  round(total_distance,  4),
+        "main_dist(km)":   round(main_distance,   4),
+        "sup_dist(km)":    round(sup_distance,    4),
         "total_time(hr)":  round(total_duration,  4),
         "avg_dist(km)":    round(avg_distance,    4),
         "avg_time(hr)":    round(avg_duration,    4),

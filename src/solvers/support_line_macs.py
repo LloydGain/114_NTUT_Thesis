@@ -255,7 +255,7 @@ def _vei_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, tu
                     if cost < best_cost:
                         best_routes, best_cost = routes, cost
         
-        if self.mode in ('macs_vnd', 'macs') and best_routes and best_visited == self.store_count:
+        if self.mode == 'macs_vnd' and best_routes and best_visited == self.store_count:
             best_routes = self._apply_vnd(best_routes)
             best_cost = self._calc_cost(best_routes)
             result_queue.put(('VEI_IMPROVED', best_routes, best_cost))
@@ -328,7 +328,7 @@ def _dist_worker(self, vei_max_vehicles, result_queue, stop_event, print_lock, t
                     if cost < best_cost:
                         best_routes, best_cost = routes, cost
         
-        if self.mode in ('macs_vnd', 'macs') and best_routes:
+        if self.mode == 'macs_vnd' and best_routes:
             best_routes = self._apply_vnd(best_routes)
             best_cost = self._calc_cost(best_routes)
             
@@ -840,11 +840,7 @@ class SupportLinePlanningMACS:
     def _apply_vnd(self, routes):
         routes_info = self._format_solution(routes)
         
-        active_nb = None
-        if self.mode == 'macs':
-            active_nb = ['cross_exchange']
-            
-        opt_routes_info, _ = self.vnd.optimize(routes_info, active_neighborhoods=active_nb)
+        opt_routes_info, _ = self.vnd.optimize(routes_info)
         
         new_routes = []
         for k, v in opt_routes_info.items():

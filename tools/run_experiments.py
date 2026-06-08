@@ -38,6 +38,8 @@ METRIC_COLS = [
     "vehicle_num",
     "support_num",
     "total_dist(km)",
+    "main_dist(km)",
+    "sup_dist(km)",
     "total_time(hr)",
     "avg_load_rate",
     "on_time_rate",
@@ -219,7 +221,7 @@ def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool =
         result = run_single_seed(data_name, seed, test_mode=test_mode, google=google, alb=alb, skip_compare=skip_compare)
 
         if result["status"] == "ok":
-            print(f"  [OK]  seed={seed}: total_dist={result['total_dist(km)']:.4f}km, time={result['running_time(s)']:.2f}s")
+            print(f"  [OK]  seed={seed}: total_dist={result['total_dist(km)']:.4f}km (main={result['main_dist(km)']:.4f}, sup={result['sup_dist(km)']:.4f}), time={result['running_time(s)']:.2f}s")
         else:
             print(f"  [ERR] seed={seed}: {result['error']}")
 
