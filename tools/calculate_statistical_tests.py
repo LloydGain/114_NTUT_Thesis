@@ -16,7 +16,7 @@ def format_pval(pval):
 
 def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    excel_path = os.path.join(base_dir, "docs", "路線最佳化比較結果.xlsx")
+    excel_path = os.path.join(base_dir, "output", "路線最佳化比較結果.xlsx")
     
     if not os.path.exists(excel_path):
         print(f"Error: 找不到檔案 {excel_path}")
@@ -27,7 +27,7 @@ def main():
     
     data_dict = {}
     for sheet in sheet_names:
-        if sheet.startswith('Gap'):
+        if sheet.startswith('Gap') or '比較' in sheet:
             continue
         df = pd.read_excel(excel_path, sheet_name=sheet)
         df = df[df['date'] != 'Average'].set_index('date')
@@ -40,6 +40,9 @@ def main():
         if '手動' in sheet:
             df['running_time(s)'] = 5400
             df['avg_running_time'] = 5400
+            
+        if 'support_num' not in df.columns:
+            df['support_num'] = 0
         
         if len(df) >= 26:
             data_dict[sheet] = df
@@ -52,7 +55,7 @@ def main():
         
     df_prog = data_dict['程式編排']
     
-    metrics = ['階層式目標(車+距)', 'vehicle num', 'vehicle_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate', 'running_time(s)', 'avg_running_time']
+    metrics = ['階層式目標(車+距)', 'vehicle num', 'vehicle_num', 'support_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate', 'running_time(s)', 'avg_running_time']
     
     # ==========================================
     # 1. Wilcoxon Signed-Rank Test
@@ -68,6 +71,7 @@ def main():
         '階層式目標(車+距)': 'Hierarchical Objective',
         'vehicle num': 'NV',
         'vehicle_num': 'NV',
+        'support_num': 'SV',
         'total_dist(km)': 'TD',
         'avg_load_rate': 'U',
         'on_time_rate': 'O',
@@ -136,6 +140,7 @@ def main():
         'on_time_rate': True,
         'vehicle num': False,
         'vehicle_num': False,
+        'support_num': False,
         'total_dist(km)': False,
         'total_time(hr)': False,
         'avg_running_time': False,
@@ -236,6 +241,8 @@ def main():
                 metric_name = grp_row['Metric']
                 if metric_name in ('vehicle num', 'vehicle_num'):
                     col_name = 'NV Rank'
+                elif metric_name == 'support_num':
+                    col_name = 'SV Rank'
                 elif metric_name == 'total_dist(km)':
                     col_name = 'TD Rank'
                 elif metric_name == '階層式目標(車+距)':
@@ -260,6 +267,8 @@ def main():
             metric_name = grp_row['Metric']
             if metric_name in ('vehicle num', 'vehicle_num'):
                 col_name = 'NV Rank'
+            elif metric_name == 'support_num':
+                col_name = 'SV Rank'
             elif metric_name == 'total_dist(km)':
                 col_name = 'TD Rank'
             elif metric_name == '階層式目標(車+距)':
@@ -295,7 +304,7 @@ def main():
     print("\n" + "=" * 60)
     print("註記：*** p<0.01, ** p<0.05, * p<0.1")
     
-    out_excel = os.path.join(base_dir, "docs", "統計檢定結果.xlsx")
+    out_excel = os.path.join(base_dir, "output", "統計檢定結果.xlsx")
     with pd.ExcelWriter(out_excel) as writer:
         pd.DataFrame(wilcoxon_results).to_excel(writer, sheet_name='Wilcoxon', index=False)
         

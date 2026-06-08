@@ -14,6 +14,7 @@ from services.osrm import OSRM
 def parse_args():
     parser = argparse.ArgumentParser(description="Run manual data logic for all dates or specific ones.")
     parser.add_argument("--exclude", nargs='*', default=[], help="List of dates to exclude (e.g. --exclude 20221203 20221205)")
+    parser.add_argument("--include", nargs='*', default=[], help="List of dates to include (e.g. --include 20221203 20221205)")
     parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
     return parser.parse_args()
 
@@ -77,7 +78,7 @@ def process_date(file_date, google, distance_matrix, time_matrix):
     print(f"Manual summary exported to {summary_file}")
     return summary_data
 
-def main(exclude_dates, google=False):
+def main(exclude_dates, include_dates, google=False):
     try:
         OSRM().check_osrm()
     except Exception as e:
@@ -95,10 +96,14 @@ def main(exclude_dates, google=False):
     # Filter dates
     if exclude_dates is None:
         exclude_dates = []
-    dates_to_run = [d for d in all_dates if d not in exclude_dates]
+    
+    if include_dates:
+        dates_to_run = [d for d in all_dates if d in include_dates and d not in exclude_dates]
+    else:
+        dates_to_run = [d for d in all_dates if d not in exclude_dates]
     dates_to_run.sort()
     
-    print(f"Found {len(all_dates)} dates. Excluding: {exclude_dates}. Running {len(dates_to_run)} dates.")
+    print(f"Found {len(all_dates)} dates. Including: {include_dates}. Excluding: {exclude_dates}. Running {len(dates_to_run)} dates.")
 
     if not dates_to_run:
         print("No dates to run.")
@@ -129,4 +134,4 @@ def main(exclude_dates, google=False):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.exclude, args.google)
+    main(args.exclude, args.include, args.google)

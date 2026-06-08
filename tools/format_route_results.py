@@ -130,7 +130,7 @@ def process_exp_results(input_dir, manual_path, output_path):
         if 'vehicle num' in m_tmp.columns: m_tmp = m_tmp.rename(columns={'vehicle num': 'vehicle_num'})
         if 'vehicle num' in p_tmp.columns: p_tmp = p_tmp.rename(columns={'vehicle num': 'vehicle_num'})
         
-        target_cols = ['vehicle_num', 'support_num', 'total_dist(km)']
+        target_cols = ['vehicle_num', 'support_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate']
         
         comp_data = []
         all_dates = sorted(list(set(m_tmp['date'].tolist() + p_tmp['date'].tolist())))
@@ -159,6 +159,14 @@ def process_exp_results(input_dir, manual_path, output_path):
                     row['Manual Dist(km)'] = m_val
                     row['Program Dist(km)'] = p_val
                     row['Dist Diff(km)'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
+                elif col == 'avg_load_rate':
+                    row['Manual Load Rate'] = m_val
+                    row['Program Load Rate'] = p_val
+                    row['Load Rate Diff'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
+                elif col == 'on_time_rate':
+                    row['Manual On Time Rate'] = m_val
+                    row['Program On Time Rate'] = p_val
+                    row['On Time Rate Diff'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
                     
             comp_data.append(row)
             
