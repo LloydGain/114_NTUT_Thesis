@@ -1,6 +1,11 @@
 import pandas as pd
 import numpy as np
-from scipy.stats import wilcoxon, friedmanchisquare
+from scipy.stats import wilcoxon, friedmanchisquare, norm
+try:
+    from baycomp import SignedRankTest
+    HAS_BAYCOMP = True
+except ImportError:
+    HAS_BAYCOMP = False
 import os
 import warnings
 
@@ -57,6 +62,20 @@ def main():
     
     metrics = ['階層式目標(車+距)', 'vehicle num', 'vehicle_num', 'support_num', 'total_dist(km)', 'avg_load_rate', 'on_time_rate', 'running_time(s)', 'avg_running_time']
     
+    # True = 越大越好, False = 越小越好
+    higher_is_better = {
+        '階層式目標(車+距)': False,
+        'avg_load_rate': True,
+        'on_time_rate': True,
+        'vehicle num': False,
+        'vehicle_num': False,
+        'support_num': False,
+        'total_dist(km)': False,
+        'total_time(hr)': False,
+        'avg_running_time': False,
+        'running_time(s)': False
+    }
+    
     # ==========================================
     # 1. Wilcoxon Signed-Rank Test
     # ==========================================
@@ -112,15 +131,55 @@ def main():
                     except ValueError:
                         w_stat, pval = np.nan, np.nan
                         
+            r_effect = np.nan
+            if pd.notna(pval) and pval != 1.0 and len(x_valid) > 0:
+                z_score = norm.ppf(1 - pval/2)
+                r_effect = z_score / np.sqrt(2 * len(x_valid))
+                
+            # Bayesian Probabilities using baycomp.SignedRankTest
+            p_win, p_tie, p_lose = np.nan, np.nan, np.nan
+            if HAS_BAYCOMP and len(x_valid) > 0:
+                # baycomp returns (P(x > y), P(x == y), P(x < y))
+                # Note: rope can be adjusted if you have a specific tolerance
+                p_left, p_rope, p_right = SignedRankTest(x_valid.values, y_valid.values, rope=0.0).probs()
+                
+                is_higher = higher_is_better.get(col, False)
+                if is_higher:
+                    # x > y is a win
+                    p_win, p_tie, p_lose = p_left, p_rope, p_right
+                else:
+                    # x < y is a win (so right > left)
+                    p_win, p_tie, p_lose = p_right, p_rope, p_left
+            else:
+                # Fallback to simple Dirichlet if baycomp is not installed
+                is_higher = higher_is_better.get(col, False)
+                if is_higher:
+                    n_win = np.sum(diff > 0)
+                    n_lose = np.sum(diff < 0)
+                else:
+                    n_win = np.sum(diff < 0)
+                    n_lose = np.sum(diff > 0)
+                n_tie = np.sum(diff == 0)
+                n_total = len(diff)
+                
+                p_win = (1 + n_win) / (3 + n_total)
+                p_tie = (1 + n_tie) / (3 + n_total)
+                p_lose = (1 + n_lose) / (3 + n_total)
+                
             pval_str = format_pval(pval)
             w_str = f"{w_stat:.1f}" if pd.notna(w_stat) else "NaN"
-            print(f"  - {col:18s} : W = {w_str:6s} | p-value = {pval_str}")
+            r_str = f"{r_effect:.3f}" if pd.notna(r_effect) else "NaN"
+            print(f"  - {col:18s} : W = {w_str:6s} | p-value = {pval_str:20s} | r = {r_str} | Win={p_win:.2f}, Tie={p_tie:.2f}, Lose={p_lose:.2f}")
             
             wilcoxon_results.append({
                 'Metric': metric_name_map.get(col, col),
                 'Comparison': f'程式編排 vs {target}',
                 'W': w_stat,
-                'p-value': pval_str
+                'p-value': pval_str,
+                'Effect Size (r)': r_effect,
+                'P(Win)': p_win,
+                'P(Tie)': p_tie,
+                'P(Lose)': p_lose
             })
         
     # ==========================================
@@ -131,21 +190,6 @@ def main():
     print("=" * 60)
     
     all_methods = list(data_dict.keys())
-    
-    # True = 越大越好 (Descending Rank, 值越大排名數字越小即越靠近第一名)
-    # False = 越小越好 (Ascending Rank, 值越小排名數字越小即越靠近第一名)
-    higher_is_better = {
-        '階層式目標(車+距)': False,
-        'avg_load_rate': True,
-        'on_time_rate': True,
-        'vehicle num': False,
-        'vehicle_num': False,
-        'support_num': False,
-        'total_dist(km)': False,
-        'total_time(hr)': False,
-        'avg_running_time': False,
-        'running_time(s)': False
-    }
     
     def run_friedman(method_names, group_name):
         common_dates_f = data_dict[method_names[0]].index
@@ -207,7 +251,7 @@ def main():
                 
                 pval_str = format_pval(pval)
                 stat_str = f"{stat:7.2f}" if pd.notna(stat) else "NaN"
-                print(f"  - {col:18s} | Stat: {stat_str} | p-value: {pval_str} | Ranks: ", end="")
+                print(f"  - {col:18s} | Stat: {stat_str} | p-value: {pval_str:20s} | Ranks: ", end="")
                 ranks_str = ", ".join([f"{m}: {avg_ranks[m]:.2f}" for m in method_names])
                 print(ranks_str)
                 
