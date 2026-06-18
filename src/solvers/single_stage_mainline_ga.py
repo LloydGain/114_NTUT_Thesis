@@ -1,0 +1,593 @@
+import copy
+import random
+import hashlib
+import numpy as np
+from datetime import datetime
+from multiprocessing import cpu_count, Manager
+import concurrent.futures
+
+from config import config
+from models.route_manager import RouteManager
+from utils.early_stopper import EarlyStopper
+from numba import njit
+from solvers.vnd import VND
+
+@njit(cache=True)
+def _njit_evaluate_chromosome_mainline(
+    permutation, 
+    N, M, 
+    np_volume, np_earliest, np_latest, np_dwell, np_time, np_dist, np_region, np_group, np_orig_route, np_sched,
+    main_route_caps,
+    support_capacity, 
+    vehicle_cost,
+    tw_penalty_weight,
+    cap_penalty_weight,
+    cross_penalty_weight,
+    is_solomon
+):
+    total_cost = 0.0
+    valid_vehicles = 0
+    tw_penalty = 0.0
+    cap_penalty = 0.0
+    
+    # 1. Collect stores for each route
+    main_stores = np.full((M, N), -1, dtype=np.int64)
+    main_counts = np.zeros(M, dtype=np.int64)
+    
+    support_stores = np.full(N, -1, dtype=np.int64)
+    support_count = 0
+    
+    curr_route = -1
+    for i in range(len(permutation)):
+        g = permutation[i]
+        if g > N:
+            curr_route = g - N - 1 # 0 to M-1
+        else:
+            if curr_route == -1:
+                support_stores[support_count] = g
+                support_count += 1
+            else:
+                main_stores[curr_route, main_counts[curr_route]] = g
+                main_counts[curr_route] += 1
+                
+    # 2. Evaluate Main Routes
+    for r in range(M):
+        count = main_counts[r]
+        if count == 0:
+            continue
+            
+        valid_vehicles += 1
+        
+        route_vol = 0.0
+        route_dist = 0.0
+        cross_route_penalty = 0.0
+        
+        curr_time = 0.0
+        prev_idx = 0
+        for i in range(count):
+            curr_idx = main_stores[r, i]
+            
+            if np_orig_route[curr_idx] != -1 and np_orig_route[curr_idx] != r:
+                cross_route_penalty += cross_penalty_weight
+                
+            route_vol += np_volume[curr_idx]
+            
+            if prev_idx == 0 and not is_solomon:
+                arrival_time = np_sched[curr_idx]
+            else:
+                travel = np_time[prev_idx, curr_idx]
+                dwell = np_dwell[prev_idx] if prev_idx != 0 else 0
+                arrival_time = curr_time + travel + dwell
+                
+            if arrival_time > np_latest[curr_idx]:
+                tw_penalty += (arrival_time - np_latest[curr_idx])
+            elif arrival_time < np_earliest[curr_idx]:
+                arrival_time = np_earliest[curr_idx]
+                
+            curr_time = arrival_time
+            route_dist += np_dist[prev_idx, curr_idx]
+            prev_idx = curr_idx
+            
+        route_dist += np_dist[prev_idx, 0] # return to DC
+        
+        if route_vol > main_route_caps[r]:
+            cap_penalty += (route_vol - main_route_caps[r])
+            
+        total_cost += route_dist + (tw_penalty * tw_penalty_weight) + (cap_penalty * cap_penalty_weight) + cross_route_penalty
+        
+    # 3. Evaluate Support Routes (Greedy Split)
+    if support_count > 0:
+        curr_vol = 0.0
+        curr_time = 0.0
+        prev_idx = 0
+        curr_region = -1
+        curr_group = -1
+        
+        valid_vehicles += 1
+        
+        for i in range(support_count):
+            curr_idx = support_stores[i]
+            r_reg = np_region[curr_idx]
+            g_grp = np_group[curr_idx]
+            
+            if np_orig_route[curr_idx] != -1:
+                total_cost += (cross_penalty_weight * 0.1)
+                
+            if curr_vol == 0.0:
+                curr_region = r_reg
+                curr_group = g_grp
+                
+            is_feasible = True
+            if curr_vol + np_volume[curr_idx] > support_capacity:
+                is_feasible = False
+            elif not is_solomon:
+                if curr_region != -1 and r_reg != -1 and r_reg != curr_region:
+                    is_feasible = False
+                elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                    is_feasible = False
+                    
+            if not is_feasible:
+                # Close vehicle
+                total_cost += np_dist[prev_idx, 0]
+                
+                # New vehicle
+                valid_vehicles += 1
+                curr_vol = 0.0
+                curr_time = 0.0
+                prev_idx = 0
+                curr_region = r_reg
+                curr_group = g_grp
+                
+            curr_vol += np_volume[curr_idx]
+            
+            if prev_idx == 0 and not is_solomon:
+                arrival_time = np_sched[curr_idx]
+            else:
+                travel = np_time[prev_idx, curr_idx]
+                dwell = np_dwell[prev_idx] if prev_idx != 0 else 0
+                arrival_time = curr_time + travel + dwell
+                
+            if arrival_time > np_latest[curr_idx]:
+                tw_penalty += (arrival_time - np_latest[curr_idx])
+            elif arrival_time < np_earliest[curr_idx]:
+                arrival_time = np_earliest[curr_idx]
+                
+            curr_time = arrival_time
+            total_cost += np_dist[prev_idx, curr_idx]
+            prev_idx = curr_idx
+            
+        # Close last vehicle
+        total_cost += np_dist[prev_idx, 0]
+        
+    total_cost += (tw_penalty * tw_penalty_weight) + (cap_penalty * cap_penalty_weight)
+    
+    if is_solomon:
+        return float(valid_vehicles), total_cost
+    else:
+        return 0.0, total_cost + valid_vehicles * vehicle_cost
+
+
+def init_ga_worker(ga_instance):
+    global ALLOC_GA_INSTANCE
+    ALLOC_GA_INSTANCE = ga_instance
+
+def ga_fitness_worker(args):
+    chromo, key, shared_cache, apply_vnd = args
+
+    if key in shared_cache:
+        return shared_cache[key]
+
+    ga = ALLOC_GA_INSTANCE
+    
+    fast_cost = ga._evaluate_individual_fast(chromo)
+    final_chromo = chromo
+    
+    # We could apply VND here, but VND relies on `RouteManager` structure.
+    # For now, since SingleStageMainLineGA allows soft constraints, VND might fail 
+    # to understand the penalties unless we modify VND. We'll skip VND in this fast path.
+
+    result = {
+        'cost': fast_cost,
+        'routes': None,
+        'optimized_chromo': final_chromo
+    }
+
+    shared_cache[key] = result
+    return result
+
+
+class SingleStageMainLineGA:
+    """
+    Single-Stage GA that maintains Main Lines concept via dividers in the chromosome.
+    Uses soft time windows (and soft capacity on main lines) with penalties.
+    """
+    def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, 
+                 population_size=1000, elite_rate=0.1, generations=1000, 
+                 cross_rate=0.8, mutation_rate=0.1, early_stop_patience=50, 
+                 support_capacity=7.2, vehicle_cost=2000, 
+                 tw_penalty_weight=1000.0, cap_penalty_weight=1000000.0,
+                 cross_penalty_weight=5000.0,
+                 is_solomon=False, target_cost=None):
+        self.dc = config.DC_CONFIG
+        self.main_routes = main_routes
+        self.remaining_stores = remaining_stores
+        self.orig_distance_matrix = distance_matrix
+        self.orig_time_matrix = time_matrix
+        
+        self.population_size = population_size
+        self.elite_size = max(1, int(population_size * elite_rate))
+        self.generations = generations
+        self.cross_rate = cross_rate
+        self.mutation_rate = mutation_rate
+        self.early_stop_patience = early_stop_patience
+        self.support_capacity = float(support_capacity)
+        self.vehicle_cost = float(vehicle_cost)
+        
+        self.tw_penalty_weight = tw_penalty_weight
+        self.cap_penalty_weight = cap_penalty_weight
+        self.cross_penalty_weight = cross_penalty_weight
+        
+        self.is_solomon = is_solomon
+        self.target_cost = target_cost
+        
+        self.log = []
+        self.best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        self.best_solution = None
+
+        self._init_numpy_mappings()
+
+    def _init_numpy_mappings(self):
+        self.s2i = {self.dc['store_id']: 0}
+        self.i2s = {0: self.dc}
+        idx = 1
+        for s in self.remaining_stores:
+            self.s2i[s['store_id']] = idx
+            self.i2s[idx] = s
+            idx += 1
+            
+        self.N = len(self.remaining_stores)
+        self.route_keys = list(self.main_routes.keys())
+        self.M = len(self.route_keys)
+        
+        n = len(self.s2i)
+        self.np_dist = np.zeros((n, n), dtype=np.float64)
+        self.np_time = np.zeros((n, n), dtype=np.float64)
+        self.np_volume = np.zeros(n, dtype=np.float64)
+        self.np_dwell = np.zeros(n, dtype=np.float64)
+        self.np_earliest = np.zeros(n, dtype=np.float64)
+        self.np_latest = np.zeros(n, dtype=np.float64)
+        self.np_sched = np.zeros(n, dtype=np.float64)
+        self.np_group = np.full(n, -1, dtype=np.int64)
+        self.np_region = np.full(n, -1, dtype=np.int64)
+        self.np_orig_route = np.full(n, -1, dtype=np.int64)
+        
+        region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
+        group_map = {'near': 0, 'mid': 1, 'far': 2}
+        
+        for i in range(n):
+            s_i = self.i2s[i]
+            s_i_id = s_i['store_id']
+            if i > 0:
+                self.np_volume[i] = s_i.get('volume', 0.0)
+                self.np_dwell[i] = float(s_i.get('dwell_time', 0))
+                self.np_earliest[i] = float(int(datetime.fromisoformat(s_i['earliest_time']).timestamp()))
+                self.np_latest[i] = float(int(datetime.fromisoformat(s_i['latest_time']).timestamp()))
+                sched_str = s_i.get('sched_time', s_i.get('pred_time', s_i['earliest_time']))
+                self.np_sched[i] = float(int(datetime.fromisoformat(sched_str).timestamp()))
+                self.np_group[i] = group_map.get(s_i.get('dist_group', ''), -1)
+                self.np_region[i] = region_map.get(s_i.get('region', ''), -1)
+                
+                orig_route_code = s_i.get('route_code', '')
+                orig_route_id = orig_route_code[:2] if orig_route_code else ''
+                if orig_route_id in self.route_keys:
+                    self.np_orig_route[i] = self.route_keys.index(orig_route_id)
+                
+            for j in range(n):
+                s_j_id = self.i2s[j]['store_id']
+                if s_i_id in self.orig_distance_matrix and s_j_id in self.orig_distance_matrix[s_i_id]:
+                    self.np_dist[i, j] = self.orig_distance_matrix[s_i_id][s_j_id]
+                if s_i_id in self.orig_time_matrix and s_j_id in self.orig_time_matrix[s_i_id]:
+                    self.np_time[i, j] = self.orig_time_matrix[s_i_id][s_j_id]
+                    
+        self.main_route_caps = np.zeros(self.M, dtype=np.float64)
+        for r in range(self.M):
+            r_id = self.route_keys[r]
+            self.main_route_caps[r] = float(self.main_routes[r_id]['dc'].get('max_capacity', 1e9))
+
+    def _evaluate_individual_fast(self, permutation):
+        perm_arr = np.array(permutation, dtype=np.int64)
+        v, c = _njit_evaluate_chromosome_mainline(
+            perm_arr, self.N, self.M,
+            self.np_volume, self.np_earliest, self.np_latest,
+            self.np_dwell, self.np_time, self.np_dist, self.np_region,
+            self.np_group, self.np_orig_route, self.np_sched,
+            self.main_route_caps, self.support_capacity, self.vehicle_cost,
+            self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight,
+            self.is_solomon
+        )
+        if self.is_solomon:
+            return (int(v), c)
+        return c
+
+    def _decode_to_routes(self, permutation):
+        solution = {}
+        main_stores = [[] for _ in range(self.M)]
+        support_stores = []
+        
+        curr_route = -1
+        for g in permutation:
+            if g > self.N:
+                curr_route = g - self.N - 1
+            else:
+                if curr_route == -1:
+                    support_stores.append(g)
+                else:
+                    main_stores[curr_route].append(g)
+                    
+        # Build Main Routes
+        for r in range(self.M):
+            r_id = self.route_keys[r]
+            dc_info = self.main_routes[r_id]['dc'].copy()
+            dc_info['total_volume'] = 0.0
+            stores = []
+            for g in main_stores[r]:
+                s = self.i2s[g].copy()
+                stores.append(s)
+                dc_info['total_volume'] += s.get('volume', 0.0)
+            dc_info['load_rate'] = dc_info['total_volume'] / float(dc_info.get('max_capacity', 1))
+            if stores:
+                solution[r_id] = {'dc': dc_info, 'stores': stores}
+                
+        # Build Support Routes
+        vehicle_num = 101
+        if support_stores:
+            curr_vol = 0.0
+            curr_region = -1
+            curr_group = -1
+            curr_veh_stores = []
+            
+            for g in support_stores:
+                s = self.i2s[g].copy()
+                r_reg = self.np_region[g]
+                g_grp = self.np_group[g]
+                vol = s.get('volume', 0.0)
+                
+                if curr_vol == 0.0:
+                    curr_region = r_reg
+                    curr_group = g_grp
+                    
+                is_feasible = True
+                if curr_vol + vol > self.support_capacity:
+                    is_feasible = False
+                elif not self.is_solomon:
+                    if curr_region != -1 and r_reg != -1 and r_reg != curr_region:
+                        is_feasible = False
+                    elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                        is_feasible = False
+                        
+                if not is_feasible:
+                    v_id = f'{vehicle_num}'
+                    solution[v_id] = {
+                        'dc': {'route_id': v_id, 'route_code': v_id, 'store_id': 'DC', 'total_volume': curr_vol, 'load_rate': curr_vol/self.support_capacity, 'max_capacity': self.support_capacity},
+                        'stores': curr_veh_stores
+                    }
+                    vehicle_num += 1
+                    curr_veh_stores = []
+                    curr_vol = 0.0
+                    curr_region = r_reg
+                    curr_group = g_grp
+                    
+                curr_veh_stores.append(s)
+                curr_vol += vol
+                
+            if curr_veh_stores:
+                v_id = f'{vehicle_num}'
+                solution[v_id] = {
+                    'dc': {'route_id': v_id, 'route_code': v_id, 'store_id': 'DC', 'total_volume': curr_vol, 'load_rate': curr_vol/self.support_capacity, 'max_capacity': self.support_capacity},
+                    'stores': curr_veh_stores
+                }
+                
+        # Calculate full distances using RouteManager
+        temp_rm = RouteManager(solution, self.orig_distance_matrix, self.orig_time_matrix)
+        temp_rm.update_all_routes_info()
+        return temp_rm.routes_info
+
+    def _encode_individual(self, individual):
+        s = ','.join(map(str, individual))
+        return hashlib.md5(s.encode()).hexdigest()
+
+    def _pmx_crossover(self, parent1, parent2):
+        size = len(parent1)
+        if size < 2:
+            return copy.deepcopy(parent1), copy.deepcopy(parent2)
+            
+        p1, p2 = random.sample(range(size), 2)
+        start, end = min(p1, p2), max(p1, p2)
+        
+        child1 = [-1] * size
+        child2 = [-1] * size
+        
+        child1[start:end+1] = parent1[start:end+1]
+        child2[start:end+1] = parent2[start:end+1]
+        
+        mapping1 = {parent1[i]: parent2[i] for i in range(start, end+1)}
+        mapping2 = {parent2[i]: parent1[i] for i in range(start, end+1)}
+        
+        def fill(child, parent, mapping):
+            for i in range(size):
+                if child[i] == -1:
+                    val = parent[i]
+                    while val in mapping:
+                        val = mapping[val]
+                    child[i] = val
+                    
+        fill(child1, parent2, mapping1)
+        fill(child2, parent1, mapping2)
+        
+        return child1, child2
+
+    def _crossover(self, parent1, parent2):
+        if random.random() < self.cross_rate:
+            return self._pmx_crossover(parent1, parent2)
+        return copy.deepcopy(parent1), copy.deepcopy(parent2)
+
+    def _mutate(self, individual):
+        if random.random() < self.mutation_rate:
+            size = len(individual)
+            if size < 2:
+                return individual
+                
+            p1, p2 = random.sample(range(size), 2)
+            individual[p1], individual[p2] = individual[p2], individual[p1]
+            
+            # insert mutation
+            if random.random() < 0.5:
+                p3, p4 = random.sample(range(size), 2)
+                item = individual.pop(p3)
+                individual.insert(p4, item)
+                
+        return individual
+
+    def _generate_initial_individual(self):
+        # Build chromosome reflecting current main routes
+        chromo = []
+        
+        # stores not in main routes go to Support (front of chromo)
+        main_store_ids = set()
+        for r_id, r_info in self.main_routes.items():
+            for s in r_info['stores']:
+                main_store_ids.add(s['store_id'])
+                
+        for s in self.remaining_stores:
+            if s['store_id'] not in main_store_ids:
+                chromo.append(self.s2i[s['store_id']])
+                
+        # add dividers and main stores
+        for r in range(self.M):
+            r_id = self.route_keys[r]
+            div_val = self.N + r + 1
+            chromo.append(div_val)
+            for s in self.main_routes[r_id]['stores']:
+                chromo.append(self.s2i[s['store_id']])
+                
+        return chromo
+
+    def run(self):
+        if not self.remaining_stores:
+            return 0, {}
+            
+        base_chromo = self._generate_initial_individual()
+        population = [base_chromo]
+        
+        while len(population) < self.population_size:
+            mutated = list(base_chromo)
+            # Shuffle aggressively for initial diversity
+            for _ in range(5):
+                mutated = self._mutate(mutated)
+            population.append(mutated)
+            
+        self.best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        best_chromo = base_chromo
+        early_stopper = EarlyStopper(patience=self.early_stop_patience)
+        
+        shared_cache = {}
+        
+        for gen_idx in range(self.generations):
+            evaluated_pop = []
+            fitnesses = []
+            
+            for chromo in population:
+                key = self._encode_individual(chromo)
+                
+                if key not in shared_cache:
+                    fast_cost = self._evaluate_individual_fast(chromo)
+                    shared_cache[key] = {
+                        'cost': fast_cost,
+                        'optimized_chromo': chromo
+                    }
+                    
+                res = shared_cache[key]
+                opt_chromo = res.get('optimized_chromo', chromo)
+                
+                evaluated_pop.append({
+                    'individual': opt_chromo,
+                    'cost': res['cost'],
+                })
+                fit_val = res['cost'][1] if self.is_solomon else res['cost']
+                fitnesses.append(fit_val)
+                
+            evaluated_pop.sort(key=lambda x: x['cost'])
+            current_best = evaluated_pop[0]
+                
+            if current_best['cost'] < self.best_cost:
+                self.best_cost = current_best['cost']
+                best_chromo = copy.deepcopy(current_best['individual'])
+                
+            if self.is_solomon:
+                print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost[0]} vehicles, {self.best_cost[1]:.4f} distance')
+            else:
+                print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost:.4f}')
+            
+            self.log.append({
+                'iteration': gen_idx + 1,
+                'iter_worst_cost': float(np.max(fitnesses)),
+                'iter_best_cost': float(current_best['cost'][1] if self.is_solomon else current_best['cost']),
+                'iter_avg_cost': float(np.mean(fitnesses)),
+                'std_cost': float(np.std(fitnesses)),
+                'best_cost': self.best_cost
+            })
+            
+            if early_stopper.check(self.best_cost):
+                break
+                
+            if self.target_cost is not None:
+                if self.is_solomon:
+                    if self.best_cost <= (self.target_cost[0], self.target_cost[1] + 1e-4):
+                        print(f"GA Early Stop: Reached target cost NV={self.target_cost[0]}, Dist={self.target_cost[1]:.4f} (Best Known)")
+                        break
+                else:
+                    if self.best_cost <= self.target_cost + 1e-4:
+                        print(f"GA Early Stop: Reached target cost {self.target_cost:.4f} (Best Known)")
+                        break
+                
+            # Elitism
+            elites = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
+            weights = [max(1.0 / (ind['cost'][1] if self.is_solomon else ind['cost']), 1e-12) for ind in evaluated_pop]
+            
+            child_pairs = []
+            while len(child_pairs) < (self.population_size - self.elite_size):
+                p1, p2 = random.choices(evaluated_pop, weights=weights, k=2)
+                c1, c2 = self._crossover(copy.deepcopy(p1['individual']), copy.deepcopy(p2['individual']))
+                c1 = self._mutate(list(c1))
+                c2 = self._mutate(list(c2))
+                child_pairs.append((c1, c2))
+                
+            childrens = []
+            for c1, c2 in child_pairs:
+                # Evaluate children if not in cache to select the best
+                for c in (c1, c2):
+                    k = self._encode_individual(c)
+                    if k not in shared_cache:
+                        fast_cost = self._evaluate_individual_fast(c)
+                        shared_cache[k] = {
+                            'cost': fast_cost,
+                            'optimized_chromo': c
+                        }
+                        
+                k1 = self._encode_individual(c1)
+                k2 = self._encode_individual(c2)
+                res1 = shared_cache[k1]
+                res2 = shared_cache[k2]
+                
+                c1_opt = res1.get('optimized_chromo', c1)
+                c2_opt = res2.get('optimized_chromo', c2)
+                
+                if res1['cost'] < res2['cost']:
+                    childrens.append(c1_opt)
+                else:
+                    childrens.append(c2_opt)
+
+            population = elites + childrens[:(self.population_size - self.elite_size)]
+
+        self.best_solution = self._decode_to_routes(best_chromo)
+        return self.best_cost, self.best_solution
