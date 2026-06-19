@@ -102,8 +102,7 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
             vehicle_cost=vehicle_cost,
             tw_penalty_weight=tw_penalty,
             cap_penalty_weight=cap_penalty,
-            cross_penalty_weight=cross_penalty,
-            is_solomon=False
+            cross_penalty_weight=cross_penalty
         )
         
         best_cost, best_solution = solver.run()
@@ -112,65 +111,72 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         # Update solution info using RouteManager
         temp_rm = RouteManager(copy.deepcopy(best_solution), distance_matrix, time_matrix)
         
+        # Always check and extract violating stores
+        print("Checking for internal time window and capacity violations...")
+        newly_extracted = temp_rm.extract_violating_stores(target='all', extract_original=True, check_capacity=True)
+        
         if google:
             print("Validating all routes with Google Maps API...")
-            new_ext_main = temp_rm.validate_and_extract_violating_stores(target='main')
-            new_ext_sup = temp_rm.validate_and_extract_violating_stores(target='support')
-            newly_extracted = new_ext_main + new_ext_sup
+            new_ext_api = temp_rm.validate_and_extract_violating_stores(target='all', extract_original=True)
+            newly_extracted.extend(new_ext_api)
             
-            final_support_routes = {}
-            for r_id, r_info in list(temp_rm.routes_info.items()):
-                if str(r_id).isdigit():
-                    if r_info['stores']:
-                        new_id = str(101 + len(final_support_routes))
-                        r_info['dc']['route_id'] = new_id
-                        r_info['dc']['route_code'] = new_id
-                        for s in r_info['stores']:
-                            s['route_id'] = new_id
-                        final_support_routes[new_id] = r_info
-                    del temp_rm.routes_info[r_id]
-                    
-            current_support_stores = newly_extracted
-            
-            while current_support_stores:
-                print(f"Extracted {len(current_support_stores)} stores due to real-world time window violations. Replanning with SingleStageMainLineGA...")
-                support = SingleStageMainLineGA(
-                    main_routes={},
-                    remaining_stores=current_support_stores, 
-                    distance_matrix=distance_matrix, 
-                    time_matrix=time_matrix, 
-                    population_size=actual_pop,
-                    generations=actual_gens,
-                    early_stop_patience=actual_patience,
-                    support_capacity=capacity,
-                    vehicle_cost=vehicle_cost,
-                    tw_penalty_weight=tw_penalty,
-                    cap_penalty_weight=cap_penalty,
-                    cross_penalty_weight=cross_penalty,
-                    is_solomon=False
-                )
-                _, current_routes = support.run()
+        final_support_routes = {}
+        for r_id, r_info in list(temp_rm.routes_info.items()):
+            if str(r_id).isdigit():
+                if r_info['stores']:
+                    new_id = str(101 + len(final_support_routes))
+                    r_info['dc']['route_id'] = new_id
+                    r_info['dc']['route_code'] = new_id
+                    for s in r_info['stores']:
+                        s['route_id'] = new_id
+                    final_support_routes[new_id] = r_info
+                del temp_rm.routes_info[r_id]
                 
+        current_support_stores = newly_extracted
+        
+        while current_support_stores:
+            print(f"Extracted {len(current_support_stores)} stores due to violations. Replanning with SingleStageMainLineGA...")
+            support = SingleStageMainLineGA(
+                main_routes={},
+                remaining_stores=current_support_stores, 
+                distance_matrix=distance_matrix, 
+                time_matrix=time_matrix, 
+                population_size=actual_pop,
+                generations=actual_gens,
+                early_stop_patience=actual_patience,
+                support_capacity=capacity,
+                vehicle_cost=vehicle_cost,
+                tw_penalty_weight=tw_penalty,
+                cap_penalty_weight=cap_penalty,
+                cross_penalty_weight=cross_penalty
+            )
+            _, current_routes = support.run()
+            
+            sup_rm = RouteManager(copy.deepcopy(current_routes), distance_matrix, time_matrix)
+            extracted_again = sup_rm.extract_violating_stores(target='support', extract_original=True, check_capacity=True)
+            
+            if google:
                 print("Validating replanned support routes with Google Maps API...")
-                sup_rm = RouteManager(copy.deepcopy(current_routes), distance_matrix, time_matrix)
-                extracted_again = sup_rm.validate_and_extract_violating_stores(target='support')
-                
-                for _, r_info in sup_rm.routes_info.items():
-                    if r_info['stores']: 
-                        new_id = str(101 + len(final_support_routes))
-                        r_info['dc']['route_id'] = new_id
-                        r_info['dc']['route_code'] = new_id
-                        for s in r_info['stores']:
-                            s['route_id'] = new_id
-                        final_support_routes[new_id] = r_info
-                        
-                if extracted_again:
-                    current_support_stores = extracted_again
-                else:
-                    break
+                extracted_api = sup_rm.validate_and_extract_violating_stores(target='support')
+                extracted_again.extend(extracted_api)
+            
+            for _, r_info in sup_rm.routes_info.items():
+                if r_info['stores']: 
+                    new_id = str(101 + len(final_support_routes))
+                    r_info['dc']['route_id'] = new_id
+                    r_info['dc']['route_code'] = new_id
+                    for s in r_info['stores']:
+                        s['route_id'] = new_id
+                    final_support_routes[new_id] = r_info
                     
-            routes = {**temp_rm.routes_info, **final_support_routes}
-        else:
+            if extracted_again:
+                current_support_stores = extracted_again
+            else:
+                break
+                
+        routes = {**temp_rm.routes_info, **final_support_routes}
+        if not google:
+            temp_rm.routes_info = routes
             temp_rm.update_all_routes_info()
             routes = temp_rm.routes_info
         
@@ -214,11 +220,20 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         )
         on_time_rate = on_time / total_stores if total_stores else 0
         
+        main_routes_keys = [k for k in routes.keys() if not str(k).isdigit()]
+        support_routes_keys = [k for k in routes.keys() if str(k).isdigit()]
+        
+        main_vehicles = len(main_routes_keys)
+        support_vehicles = len(support_routes_keys)
+        
+        main_distance = sum(routes[k]['dc']['distance'] for k in main_routes_keys)
+        support_distance = sum(routes[k]['dc']['distance'] for k in support_routes_keys)
+        
         result["vehicle_num"] = total_vehicles
-        result["support_num"] = total_vehicles
+        result["support_num"] = support_vehicles
         result["total_dist(km)"] = round(total_distance, 4)
-        result["main_dist(km)"] = 0.0
-        result["sup_dist(km)"] = round(total_distance, 4)
+        result["main_dist(km)"] = round(main_distance, 4)
+        result["sup_dist(km)"] = round(support_distance, 4)
         result["total_time(hr)"] = round(total_duration, 4)
         result["avg_load_rate"] = round(avg_load_rate, 4)
         result["on_time_rate"] = round(on_time_rate, 4)
@@ -307,7 +322,7 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path, para
     return excel_path
 
 
-def run(data_name: str, seed_list: list, test_mode: bool, capacity: float,
+def run(data_name: str, seed_list: list, test_mode: bool, force: bool, capacity: float,
         pop_size: int, generations: int, early_stop_patience: int, vehicle_cost: float,
         tw_penalty: float, cap_penalty: float, cross_penalty: float, google: bool):
     """Run multiple seeds and save results incrementally after each seed."""
@@ -343,18 +358,19 @@ def run(data_name: str, seed_list: list, test_mode: bool, capacity: float,
     
     excel_path = OUTPUT_DIR / f"{data_name}.xlsx"
     completed_seeds = set()
-    if excel_path.exists():
-        try:
-            prev_df = pd.read_excel(excel_path, sheet_name="Raw Results")
-            completed_seeds = set(prev_df[prev_df["status"] == "ok"]["seed"].tolist())
-            print(f"  [INFO] Found {len(completed_seeds)} completed seed(s) in {excel_path.name}")
-        except Exception:
-            pass
+    if not force:
+        if excel_path.exists():
+            try:
+                prev_df = pd.read_excel(excel_path, sheet_name="Raw Results")
+                completed_seeds = set(prev_df[prev_df["status"] == "ok"]["seed"].tolist())
+                print(f"  [INFO] Found {len(completed_seeds)} completed seed(s) in {excel_path.name}")
+            except Exception:
+                pass
 
-    seed_list = [s for s in seed_list if s not in completed_seeds]
-    if not seed_list:
-        print(f"[INFO] All requested seeds are already completed for {data_name}. Skipping.")
-        return excel_path
+        seed_list = [s for s in seed_list if s not in completed_seeds]
+        if not seed_list:
+            print(f"[INFO] All requested seeds are already completed for {data_name}. Skipping.")
+            return excel_path
 
     total = len(seed_list)
 
@@ -401,15 +417,17 @@ def parse_args():
     # Test mode
     parser.add_argument("--test", action="store_true",
                         help="Run in test mode (reduced GA generations / populations)")
+    parser.add_argument("--force", action="store_true",
+                        help="Force run all seeds even if they are already completed")
 
     # GA hyperparams
     parser.add_argument("--capacity", type=float, default=7.2,
                         help="Vehicle capacity constraint to use for the single stage GA (default: 7.2)")
-    parser.add_argument("--pop_size", type=int, default=100,
+    parser.add_argument("--pop_size", type=int, default=500,
                         help="GA population size (default: 1000)")
-    parser.add_argument("--generations", type=int, default=1000,
+    parser.add_argument("--generations", type=int, default=5000,
                         help="GA generations (default: 1000)")
-    parser.add_argument("--early_stop", type=int, default=50,
+    parser.add_argument("--early_stop", type=int, default=100,
                         help="GA early stop patience (default: 50)")
     parser.add_argument("--vehicle_cost", type=float, default=2000.0,
                         help="Vehicle fixed cost penalty (default: 2000.0)")
@@ -417,8 +435,8 @@ def parse_args():
                         help="Time window violation penalty weight (default: 1000.0)")
     parser.add_argument("--cap_penalty", type=float, default=10000000.0,
                         help="Capacity violation penalty weight for main lines (default: 1000000.0)")
-    parser.add_argument("--cross_penalty", type=float, default=10000000.0,
-                        help="Cross-route penalty weight to protect original routes (default: 5000.0)")
+    parser.add_argument("--cross_penalty", type=float, default=100.0,
+                        help="Cross-route penalty weight to protect original routes (default: 100.0)")
     parser.add_argument("--use_vnd", action="store_true",
                         help="Enable VND local search (very slow for large datasets)")
     parser.add_argument("--google", action="store_true",
@@ -450,6 +468,7 @@ if __name__ == "__main__":
         data_name=args.file_date,
         seed_list=seed_list,
         test_mode=args.test,
+        force=args.force,
         capacity=args.capacity,
         pop_size=args.pop_size,
         generations=args.generations,

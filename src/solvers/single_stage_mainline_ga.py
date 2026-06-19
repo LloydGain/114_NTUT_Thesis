@@ -22,11 +22,11 @@ def _njit_evaluate_chromosome_mainline(
     vehicle_cost,
     tw_penalty_weight,
     cap_penalty_weight,
-    cross_penalty_weight,
-    is_solomon
+    cross_penalty_weight
 ):
     total_cost = 0.0
     valid_vehicles = 0
+    support_vehicles = 0
     tw_penalty = 0.0
     cap_penalty = 0.0
     
@@ -72,7 +72,7 @@ def _njit_evaluate_chromosome_mainline(
                 
             route_vol += np_volume[curr_idx]
             
-            if prev_idx == 0 and not is_solomon:
+            if prev_idx == 0:
                 arrival_time = np_sched[curr_idx]
             else:
                 travel = np_time[prev_idx, curr_idx]
@@ -93,7 +93,7 @@ def _njit_evaluate_chromosome_mainline(
         if route_vol > main_route_caps[r]:
             cap_penalty += (route_vol - main_route_caps[r])
             
-        total_cost += route_dist + (tw_penalty * tw_penalty_weight) + (cap_penalty * cap_penalty_weight) + cross_route_penalty
+        total_cost += route_dist + cross_route_penalty
         
     # 3. Evaluate Support Routes (Greedy Split)
     if support_count > 0:
@@ -104,6 +104,7 @@ def _njit_evaluate_chromosome_mainline(
         curr_group = -1
         
         valid_vehicles += 1
+        support_vehicles += 1
         
         for i in range(support_count):
             curr_idx = support_stores[i]
@@ -120,11 +121,10 @@ def _njit_evaluate_chromosome_mainline(
             is_feasible = True
             if curr_vol + np_volume[curr_idx] > support_capacity:
                 is_feasible = False
-            elif not is_solomon:
-                if curr_region != -1 and r_reg != -1 and r_reg != curr_region:
-                    is_feasible = False
-                elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
-                    is_feasible = False
+            elif curr_region != -1 and r_reg != -1 and r_reg != curr_region:
+                is_feasible = False
+            elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                is_feasible = False
                     
             if not is_feasible:
                 # Close vehicle
@@ -132,6 +132,7 @@ def _njit_evaluate_chromosome_mainline(
                 
                 # New vehicle
                 valid_vehicles += 1
+                support_vehicles += 1
                 curr_vol = 0.0
                 curr_time = 0.0
                 prev_idx = 0
@@ -140,7 +141,7 @@ def _njit_evaluate_chromosome_mainline(
                 
             curr_vol += np_volume[curr_idx]
             
-            if prev_idx == 0 and not is_solomon:
+            if prev_idx == 0:
                 arrival_time = np_sched[curr_idx]
             else:
                 travel = np_time[prev_idx, curr_idx]
@@ -161,10 +162,7 @@ def _njit_evaluate_chromosome_mainline(
         
     total_cost += (tw_penalty * tw_penalty_weight) + (cap_penalty * cap_penalty_weight)
     
-    if is_solomon:
-        return float(valid_vehicles), total_cost
-    else:
-        return 0.0, total_cost + valid_vehicles * vehicle_cost
+    return 0.0, total_cost + support_vehicles * vehicle_cost
 
 
 def init_ga_worker(ga_instance):
@@ -207,7 +205,7 @@ class SingleStageMainLineGA:
                  support_capacity=7.2, vehicle_cost=2000, 
                  tw_penalty_weight=1000.0, cap_penalty_weight=1000000.0,
                  cross_penalty_weight=5000.0,
-                 is_solomon=False, target_cost=None):
+                 target_cost=None):
         self.dc = config.DC_CONFIG
         self.main_routes = main_routes
         self.remaining_stores = remaining_stores
@@ -227,11 +225,10 @@ class SingleStageMainLineGA:
         self.cap_penalty_weight = cap_penalty_weight
         self.cross_penalty_weight = cross_penalty_weight
         
-        self.is_solomon = is_solomon
         self.target_cost = target_cost
         
         self.log = []
-        self.best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        self.best_cost = float('inf')
         self.best_solution = None
 
         self._init_numpy_mappings()
@@ -302,11 +299,8 @@ class SingleStageMainLineGA:
             self.np_dwell, self.np_time, self.np_dist, self.np_region,
             self.np_group, self.np_orig_route, self.np_sched,
             self.main_route_caps, self.support_capacity, self.vehicle_cost,
-            self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight,
-            self.is_solomon
+            self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight
         )
-        if self.is_solomon:
-            return (int(v), c)
         return c
 
     def _decode_to_routes(self, permutation):
@@ -359,11 +353,10 @@ class SingleStageMainLineGA:
                 is_feasible = True
                 if curr_vol + vol > self.support_capacity:
                     is_feasible = False
-                elif not self.is_solomon:
-                    if curr_region != -1 and r_reg != -1 and r_reg != curr_region:
-                        is_feasible = False
-                    elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
-                        is_feasible = False
+                elif curr_region != -1 and r_reg != -1 and r_reg != curr_region:
+                    is_feasible = False
+                elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                    is_feasible = False
                         
                 if not is_feasible:
                     v_id = f'{vehicle_num}'
@@ -434,18 +427,9 @@ class SingleStageMainLineGA:
     def _mutate(self, individual):
         if random.random() < self.mutation_rate:
             size = len(individual)
-            if size < 2:
-                return individual
-                
-            p1, p2 = random.sample(range(size), 2)
-            individual[p1], individual[p2] = individual[p2], individual[p1]
-            
-            # insert mutation
-            if random.random() < 0.5:
-                p3, p4 = random.sample(range(size), 2)
-                item = individual.pop(p3)
-                individual.insert(p4, item)
-                
+            if size >= 2:
+                p1, p2 = random.sample(range(size), 2)
+                individual[p1], individual[p2] = individual[p2], individual[p1]
         return individual
 
     def _generate_initial_individual(self):
@@ -486,7 +470,7 @@ class SingleStageMainLineGA:
                 mutated = self._mutate(mutated)
             population.append(mutated)
             
-        self.best_cost = (float('inf'), float('inf')) if self.is_solomon else float('inf')
+        self.best_cost = float('inf')
         best_chromo = base_chromo
         early_stopper = EarlyStopper(patience=self.early_stop_patience)
         
@@ -513,7 +497,7 @@ class SingleStageMainLineGA:
                     'individual': opt_chromo,
                     'cost': res['cost'],
                 })
-                fit_val = res['cost'][1] if self.is_solomon else res['cost']
+                fit_val = res['cost']
                 fitnesses.append(fit_val)
                 
             evaluated_pop.sort(key=lambda x: x['cost'])
@@ -523,15 +507,12 @@ class SingleStageMainLineGA:
                 self.best_cost = current_best['cost']
                 best_chromo = copy.deepcopy(current_best['individual'])
                 
-            if self.is_solomon:
-                print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost[0]} vehicles, {self.best_cost[1]:.4f} distance')
-            else:
-                print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost:.4f}')
+            print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost:.4f}')
             
             self.log.append({
                 'iteration': gen_idx + 1,
                 'iter_worst_cost': float(np.max(fitnesses)),
-                'iter_best_cost': float(current_best['cost'][1] if self.is_solomon else current_best['cost']),
+                'iter_best_cost': float(current_best['cost']),
                 'iter_avg_cost': float(np.mean(fitnesses)),
                 'std_cost': float(np.std(fitnesses)),
                 'best_cost': self.best_cost
@@ -541,18 +522,13 @@ class SingleStageMainLineGA:
                 break
                 
             if self.target_cost is not None:
-                if self.is_solomon:
-                    if self.best_cost <= (self.target_cost[0], self.target_cost[1] + 1e-4):
-                        print(f"GA Early Stop: Reached target cost NV={self.target_cost[0]}, Dist={self.target_cost[1]:.4f} (Best Known)")
-                        break
-                else:
-                    if self.best_cost <= self.target_cost + 1e-4:
-                        print(f"GA Early Stop: Reached target cost {self.target_cost:.4f} (Best Known)")
-                        break
+                if self.best_cost <= self.target_cost + 1e-4:
+                    print(f"GA Early Stop: Reached target cost {self.target_cost:.4f} (Best Known)")
+                    break
                 
             # Elitism
             elites = [copy.deepcopy(ind['individual']) for ind in evaluated_pop[:self.elite_size]]
-            weights = [max(1.0 / (ind['cost'][1] if self.is_solomon else ind['cost']), 1e-12) for ind in evaluated_pop]
+            weights = [max(1.0 / ind['cost'], 1e-12) for ind in evaluated_pop]
             
             child_pairs = []
             while len(child_pairs) < (self.population_size - self.elite_size):
