@@ -252,6 +252,7 @@ class RouteManager:
         """
         Notes:
             Remove Unused route (0 store).
+            Main lines (non-digit IDs) are kept even if empty.
 
         Args:
             route_id (str): Route ID.
@@ -262,7 +263,8 @@ class RouteManager:
         removed_route_ids = []
         for route_id in self.routes_info:
             stores = self.routes_info[route_id]['stores']
-            if len(stores) == 0:
+            # Only remove empty support lines (digit IDs). Keep main lines.
+            if len(stores) == 0 and str(route_id).isdigit():
                 removed_route_ids.append(route_id)
 
         for route_id in removed_route_ids:
@@ -561,7 +563,77 @@ class RouteManager:
             self._update_predicted_times(stores, durations)
 
 
-    def validate_and_extract_violating_stores(self, target='all'):
+    def extract_violating_stores(self, target='all', extract_original=False, check_capacity=False):
+        """
+        Extract violating stores using internal matrices (no API).
+        """
+        extracted_stores = []
+        for route_id, route in list(self.routes_info.items()):
+            is_support = str(route_id).isdigit()
+            if target == 'main' and is_support:
+                continue
+            if target == 'support' and not is_support:
+                continue
+            
+            route_changed = True
+            while route_changed:
+                route_changed = False
+                
+                stores = route['stores']
+                if not stores:
+                    break
+                    
+                self._update_route_info(route)
+                
+                if check_capacity:
+                    vol = route['dc'].get('total_volume', 0)
+                    cap = route['dc'].get('max_capacity', 1e9)
+                    if vol > cap + 1e-5:
+                        violation_store = stores[-1]
+                        print(f"[DEBUG] Extracting store {violation_store['store_id']} from route {route_id} due to CAPACITY (vol={vol}, cap={cap})")
+                        extracted_stores.append(violation_store)
+                        self.remove_store(route_id, violation_store, fast_update=False)
+                        route_changed = True
+                        continue
+                
+                violation_store = None
+                for i, s in enumerate(stores):
+                    origin_route_id = s.get('route_code', '')[:2]
+                    curr_route_id = str(route_id)[:2]
+                    is_unoriginal = (origin_route_id != curr_route_id)
+                    
+                    pred_time = s.get('pred_time')
+                    earliest = s.get('earliest_time')
+                    latest = s.get('latest_time')
+                    
+                    if not (pred_time and earliest and latest):
+                        continue
+                        
+                    is_violation = (pred_time < earliest or pred_time > latest)
+                    
+                    if is_violation:
+                        is_main = not str(route_id).isdigit()
+                        if extract_original or not is_main or is_unoriginal:
+                            violation_store = s
+                            print(f"[DEBUG] Extracting store {s['store_id']} from route {route_id} due to TIME WINDOW. Pred: {pred_time}, Earliest: {earliest}, Latest: {latest}")
+                            break
+                        elif is_main and not is_unoriginal:
+                            if i > 0:
+                                prev_s = stores[i - 1]
+                                prev_origin = prev_s.get('route_code', '')[:2]
+                                if prev_origin != curr_route_id:
+                                    violation_store = prev_s
+                                    print(f"[DEBUG] Extracting prev store {prev_s['store_id']} from route {route_id} due to TIME WINDOW on next store. Pred: {pred_time}, Earliest: {earliest}, Latest: {latest}")
+                                    break
+                
+                if violation_store:
+                    extracted_stores.append(violation_store)
+                    self.remove_store(route_id, violation_store, fast_update=False)
+                    route_changed = True 
+                    
+        return extracted_stores
+
+    def validate_and_extract_violating_stores(self, target='all', extract_original=False):
         """
         Notes:
             Validate routes using Google API. If a store violates the time window,
@@ -608,13 +680,19 @@ class RouteManager:
                     if not (pred_time and earliest and latest):
                         continue
                         
-                    is_violation = (pred_time < earliest or pred_time > latest)
+                    pred_dt = datetime.fromisoformat(pred_time)
+                    earliest_dt = datetime.fromisoformat(earliest)
+                    latest_dt = datetime.fromisoformat(latest)
+                    
+                    tolerance = timedelta(seconds=60)
+                    is_violation = (pred_dt < earliest_dt - tolerance or pred_dt > latest_dt + tolerance)
                     
                     if is_violation:
-                        if target == 'support' or (target == 'main' and is_unoriginal):
+                        is_main = not str(route_id).isdigit()
+                        if extract_original or not is_main or is_unoriginal:
                             violation_store = s
                             break
-                        elif target == 'main' and not is_unoriginal:
+                        elif is_main and not is_unoriginal:
                             if i > 0:
                                 prev_s = stores[i - 1]
                                 prev_origin = prev_s.get('route_code', '')[:2]
