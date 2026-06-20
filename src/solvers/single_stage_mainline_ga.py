@@ -114,7 +114,7 @@ def _njit_evaluate_chromosome_mainline(
             g_grp = np_group[curr_idx]
             
             if np_orig_route[curr_idx] != -1:
-                acc_cross += (cross_penalty_weight * 0.1)
+                acc_cross += cross_penalty_weight
                 
             if curr_vol == 0.0:
                 curr_region = r_reg
@@ -468,8 +468,8 @@ class SingleStageMainLineGA:
         if random.random() < self.mutation_rate:
             size = len(individual)
             if size >= 2:
-                p1, p2 = random.sample(range(size), 2)
-                individual[p1], individual[p2] = individual[p2], individual[p1]
+                p1, p2 = sorted(random.sample(range(size), 2))
+                individual[p1:p2+1] = reversed(individual[p1:p2+1])
         return individual
 
     def _generate_initial_individual(self):
