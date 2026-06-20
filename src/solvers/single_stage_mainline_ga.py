@@ -24,7 +24,8 @@ def _njit_evaluate_chromosome_mainline(
     cap_penalty_weight,
     cross_penalty_weight
 ):
-    total_cost = 0.0
+    acc_dist = 0.0
+    acc_cross = 0.0
     valid_vehicles = 0
     support_vehicles = 0
     tw_penalty = 0.0
@@ -82,7 +83,7 @@ def _njit_evaluate_chromosome_mainline(
             if arrival_time > np_latest[curr_idx]:
                 tw_penalty += (arrival_time - np_latest[curr_idx])
             elif arrival_time < np_earliest[curr_idx]:
-                arrival_time = np_earliest[curr_idx]
+                tw_penalty += (np_earliest[curr_idx] - arrival_time)
                 
             curr_time = arrival_time
             route_dist += np_dist[prev_idx, curr_idx]
@@ -93,7 +94,8 @@ def _njit_evaluate_chromosome_mainline(
         if route_vol > main_route_caps[r]:
             cap_penalty += (route_vol - main_route_caps[r])
             
-        total_cost += route_dist + cross_route_penalty
+        acc_dist += route_dist
+        acc_cross += cross_route_penalty
         
     # 3. Evaluate Support Routes (Greedy Split)
     if support_count > 0:
@@ -112,7 +114,7 @@ def _njit_evaluate_chromosome_mainline(
             g_grp = np_group[curr_idx]
             
             if np_orig_route[curr_idx] != -1:
-                total_cost += (cross_penalty_weight * 0.1)
+                acc_cross += (cross_penalty_weight * 0.1)
                 
             if curr_vol == 0.0:
                 curr_region = r_reg
@@ -128,7 +130,7 @@ def _njit_evaluate_chromosome_mainline(
                     
             if not is_feasible:
                 # Close vehicle
-                total_cost += np_dist[prev_idx, 0]
+                acc_dist += np_dist[prev_idx, 0]
                 
                 # New vehicle
                 valid_vehicles += 1
@@ -151,18 +153,22 @@ def _njit_evaluate_chromosome_mainline(
             if arrival_time > np_latest[curr_idx]:
                 tw_penalty += (arrival_time - np_latest[curr_idx])
             elif arrival_time < np_earliest[curr_idx]:
-                arrival_time = np_earliest[curr_idx]
+                tw_penalty += (np_earliest[curr_idx] - arrival_time)
                 
             curr_time = arrival_time
-            total_cost += np_dist[prev_idx, curr_idx]
+            acc_dist += np_dist[prev_idx, curr_idx]
             prev_idx = curr_idx
             
         # Close last vehicle
-        total_cost += np_dist[prev_idx, 0]
+        acc_dist += np_dist[prev_idx, 0]
         
-    total_cost += (tw_penalty * tw_penalty_weight) + (cap_penalty * cap_penalty_weight)
+    acc_tw = tw_penalty * tw_penalty_weight
+    acc_cap = cap_penalty * cap_penalty_weight
+    acc_veh = support_vehicles * vehicle_cost
     
-    return 0.0, total_cost + support_vehicles * vehicle_cost
+    final_cost = acc_dist + acc_cross + acc_tw + acc_cap + acc_veh
+    
+    return final_cost, acc_dist, acc_veh, acc_tw, acc_cap, acc_cross
 
 
 def init_ga_worker(ga_instance):
@@ -293,7 +299,7 @@ class SingleStageMainLineGA:
 
     def _evaluate_individual_fast(self, permutation):
         perm_arr = np.array(permutation, dtype=np.int64)
-        v, c = _njit_evaluate_chromosome_mainline(
+        c, dist, veh, tw, cap, cross = _njit_evaluate_chromosome_mainline(
             perm_arr, self.N, self.M,
             self.np_volume, self.np_earliest, self.np_latest,
             self.np_dwell, self.np_time, self.np_dist, self.np_region,
@@ -301,7 +307,7 @@ class SingleStageMainLineGA:
             self.main_route_caps, self.support_capacity, self.vehicle_cost,
             self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight
         )
-        return c
+        return c, {'dist': dist, 'veh': veh, 'tw': tw, 'cap': cap, 'cross': cross}
 
     def _decode_to_routes(self, permutation):
         solution = {}
@@ -329,8 +335,9 @@ class SingleStageMainLineGA:
                 stores.append(s)
                 dc_info['total_volume'] += s.get('volume', 0.0)
             dc_info['load_rate'] = dc_info['total_volume'] / float(dc_info.get('max_capacity', 1))
-            if stores:
-                solution[r_id] = {'dc': dc_info, 'stores': stores}
+            
+            # 即使店家是空的，也必須保留主線
+            solution[r_id] = {'dc': dc_info, 'stores': stores}
                 
         # Build Support Routes
         vehicle_num = 101
@@ -433,26 +440,77 @@ class SingleStageMainLineGA:
         return individual
 
     def _generate_initial_individual(self):
-        # Build chromosome reflecting current main routes
         chromo = []
+        support_pool = []
         
-        # stores not in main routes go to Support (front of chromo)
         main_store_ids = set()
-        for r_id, r_info in self.main_routes.items():
-            for s in r_info['stores']:
-                main_store_ids.add(s['store_id'])
-                
-        for s in self.remaining_stores:
-            if s['store_id'] not in main_store_ids:
-                chromo.append(self.s2i[s['store_id']])
-                
-        # add dividers and main stores
+        
+        # 1. Simulate Main Routes and extract violating stores
+        main_stores_kept = [[] for _ in range(self.M)]
+        
         for r in range(self.M):
             r_id = self.route_keys[r]
+            cap = self.main_route_caps[r]
+            
+            curr_vol = 0.0
+            curr_time = 0.0
+            prev_idx = 0
+            
+            for s in self.main_routes[r_id]['stores']:
+                main_store_ids.add(s['store_id'])
+                s_idx = self.s2i[s['store_id']]
+                
+                # Check capacity
+                vol = self.np_volume[s_idx]
+                if curr_vol + vol > cap:
+                    support_pool.append(s_idx)
+                    continue
+                    
+                # Check time
+                if prev_idx == 0:
+                    arrival_time = self.np_sched[s_idx]
+                else:
+                    travel = self.np_time[prev_idx, s_idx]
+                    dwell = self.np_dwell[prev_idx] if prev_idx != 0 else 0
+                    arrival_time = curr_time + travel + dwell
+                    
+                if arrival_time > self.np_latest[s_idx]:
+                    support_pool.append(s_idx)
+                    continue
+                    
+                if arrival_time < self.np_earliest[s_idx]:
+                    support_pool.append(s_idx)
+                    continue
+                    
+                # Store is valid, keep it
+                curr_vol += vol
+                curr_time = arrival_time
+                prev_idx = s_idx
+                main_stores_kept[r].append(s_idx)
+                
+        # 2. Add stores not in main routes to support pool
+        for s in self.remaining_stores:
+            if s['store_id'] not in main_store_ids:
+                support_pool.append(self.s2i[s['store_id']])
+                
+        # 3. Sort support pool to help the greedy decoder (Region -> Group -> Earliest Time)
+        support_pool.sort(key=lambda x: (
+            self.np_region[x],
+            self.np_group[x],
+            self.np_earliest[x]
+        ))
+        
+        # 4. Build Chromosome
+        # Support stores go first
+        for s_idx in support_pool:
+            chromo.append(s_idx)
+            
+        # Add dividers and kept main stores
+        for r in range(self.M):
             div_val = self.N + r + 1
             chromo.append(div_val)
-            for s in self.main_routes[r_id]['stores']:
-                chromo.append(self.s2i[s['store_id']])
+            for s_idx in main_stores_kept[r]:
+                chromo.append(s_idx)
                 
         return chromo
 
@@ -484,9 +542,10 @@ class SingleStageMainLineGA:
                 key = self._encode_individual(chromo)
                 
                 if key not in shared_cache:
-                    fast_cost = self._evaluate_individual_fast(chromo)
+                    fast_cost, fast_breakdown = self._evaluate_individual_fast(chromo)
                     shared_cache[key] = {
                         'cost': fast_cost,
+                        'breakdown': fast_breakdown,
                         'optimized_chromo': chromo
                     }
                     
@@ -496,6 +555,7 @@ class SingleStageMainLineGA:
                 evaluated_pop.append({
                     'individual': opt_chromo,
                     'cost': res['cost'],
+                    'breakdown': res['breakdown']
                 })
                 fit_val = res['cost']
                 fitnesses.append(fit_val)
@@ -505,6 +565,7 @@ class SingleStageMainLineGA:
                 
             if current_best['cost'] < self.best_cost:
                 self.best_cost = current_best['cost']
+                self.best_breakdown = current_best['breakdown']
                 best_chromo = copy.deepcopy(current_best['individual'])
                 
             print(f'Iteration {gen_idx+1} | Best Cost: {self.best_cost:.4f}')
@@ -544,9 +605,10 @@ class SingleStageMainLineGA:
                 for c in (c1, c2):
                     k = self._encode_individual(c)
                     if k not in shared_cache:
-                        fast_cost = self._evaluate_individual_fast(c)
+                        fast_cost, fast_breakdown = self._evaluate_individual_fast(c)
                         shared_cache[k] = {
                             'cost': fast_cost,
+                            'breakdown': fast_breakdown,
                             'optimized_chromo': c
                         }
                         
@@ -566,4 +628,4 @@ class SingleStageMainLineGA:
             population = elites + childrens[:(self.population_size - self.elite_size)]
 
         self.best_solution = self._decode_to_routes(best_chromo)
-        return self.best_cost, self.best_solution
+        return self.best_cost, self.best_breakdown, self.best_solution, self.log

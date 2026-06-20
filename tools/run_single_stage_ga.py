@@ -27,6 +27,12 @@ METRIC_COLS = [
     "avg_load_rate",
     "on_time_rate",
     "running_time(s)",
+    "fitness",
+    "fitness_dist",
+    "fitness_veh",
+    "fitness_tw",
+    "fitness_cap",
+    "fitness_cross",
 ]
 
 # Column order for Raw Results sheet
@@ -105,7 +111,9 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
             cross_penalty_weight=cross_penalty
         )
         
-        best_cost, best_solution = solver.run()
+        best_cost, best_breakdown, best_solution, main_log = solver.run()
+        total_fitness = best_cost
+        total_breakdown = best_breakdown.copy()
         elapsed = time.time() - t0
         
         # Update solution info using RouteManager
@@ -150,7 +158,10 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
                 cap_penalty_weight=cap_penalty,
                 cross_penalty_weight=cross_penalty
             )
-            _, current_routes = support.run()
+            sup_cost, sup_breakdown, current_routes, sup_log = support.run()
+            total_fitness += sup_cost
+            for k in total_breakdown:
+                total_breakdown[k] += sup_breakdown[k]
             
             sup_rm = RouteManager(copy.deepcopy(current_routes), distance_matrix, time_matrix)
             extracted_again = sup_rm.extract_violating_stores(target='support', extract_original=True, check_capacity=True)
@@ -203,6 +214,9 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         opt_routes.plot_routes_html_in_osrm(optimized_routes_osrm_html)
         opt_routes.plot_routes_html(optimized_routes_html)
         
+        ga_log_file = str(out_base / "ga_convergence_log.csv")
+        pd.DataFrame(main_log).to_csv(ga_log_file, index=False)
+        
         # Calculate metrics
         total_vehicles = len(routes)
         total_distance = sum(r['dc']['distance'] for r in routes.values())
@@ -238,6 +252,12 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         result["avg_load_rate"] = round(avg_load_rate, 4)
         result["on_time_rate"] = round(on_time_rate, 4)
         result["running_time(s)"] = round(elapsed, 2)
+        result["fitness"] = round(total_fitness, 4)
+        result["fitness_dist"] = round(total_breakdown['dist'], 4)
+        result["fitness_veh"] = round(total_breakdown['veh'], 4)
+        result["fitness_tw"] = round(total_breakdown['tw'], 4)
+        result["fitness_cap"] = round(total_breakdown['cap'], 4)
+        result["fitness_cross"] = round(total_breakdown['cross'], 4)
         
     except Exception as e:
         result["status"] = "error"
@@ -424,7 +444,7 @@ def parse_args():
     parser.add_argument("--capacity", type=float, default=7.2,
                         help="Vehicle capacity constraint to use for the single stage GA (default: 7.2)")
     parser.add_argument("--pop_size", type=int, default=500,
-                        help="GA population size (default: 1000)")
+                        help="GA population size (default: 500)")
     parser.add_argument("--generations", type=int, default=5000,
                         help="GA generations (default: 1000)")
     parser.add_argument("--early_stop", type=int, default=100,
