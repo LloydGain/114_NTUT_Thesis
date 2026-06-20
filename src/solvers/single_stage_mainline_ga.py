@@ -78,7 +78,7 @@ def _njit_evaluate_chromosome_mainline(
             else:
                 travel = np_time[prev_idx, curr_idx]
                 dwell = np_dwell[prev_idx] if prev_idx != 0 else 0
-                arrival_time = curr_time + travel + dwell
+                arrival_time = curr_time + round(travel + dwell)
                 
             if arrival_time > np_latest[curr_idx]:
                 tw_penalty += (arrival_time - np_latest[curr_idx])
@@ -120,12 +120,20 @@ def _njit_evaluate_chromosome_mainline(
                 curr_region = r_reg
                 curr_group = g_grp
                 
+            if prev_idx == 0:
+                test_arrival = np_sched[curr_idx]
+            else:
+                test_travel = np_time[prev_idx, curr_idx] + (np_dwell[prev_idx] if prev_idx != 0 else 0)
+                test_arrival = curr_time + round(test_travel)
+                
             is_feasible = True
             if curr_vol + np_volume[curr_idx] > support_capacity:
                 is_feasible = False
             elif curr_region != -1 and r_reg != -1 and r_reg != curr_region:
                 is_feasible = False
             elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                is_feasible = False
+            elif test_arrival > np_latest[curr_idx] or test_arrival < np_earliest[curr_idx]:
                 is_feasible = False
                     
             if not is_feasible:
@@ -148,7 +156,7 @@ def _njit_evaluate_chromosome_mainline(
             else:
                 travel = np_time[prev_idx, curr_idx]
                 dwell = np_dwell[prev_idx] if prev_idx != 0 else 0
-                arrival_time = curr_time + travel + dwell
+                arrival_time = curr_time + round(travel + dwell)
                 
             if arrival_time > np_latest[curr_idx]:
                 tw_penalty += (arrival_time - np_latest[curr_idx])
@@ -345,6 +353,8 @@ class SingleStageMainLineGA:
             curr_vol = 0.0
             curr_region = -1
             curr_group = -1
+            curr_time = 0.0
+            prev_idx = 0
             curr_veh_stores = []
             
             for g in support_stores:
@@ -364,6 +374,17 @@ class SingleStageMainLineGA:
                     is_feasible = False
                 elif curr_group != -1 and g_grp != -1 and g_grp != curr_group:
                     is_feasible = False
+                
+                # Check Time Window Feasibility
+                if is_feasible:
+                    if prev_idx == 0:
+                        test_arrival = self.np_sched[g]
+                    else:
+                        test_travel = self.np_time[prev_idx][g] + (self.np_dwell[prev_idx] if prev_idx != 0 else 0)
+                        test_arrival = curr_time + round(test_travel)
+                        
+                    if test_arrival > self.np_latest[g] or test_arrival < self.np_earliest[g]:
+                        is_feasible = False
                         
                 if not is_feasible:
                     v_id = f'{vehicle_num}'
@@ -376,10 +397,22 @@ class SingleStageMainLineGA:
                     curr_vol = 0.0
                     curr_region = r_reg
                     curr_group = g_grp
+                    curr_time = 0.0
+                    prev_idx = 0
                     
                 curr_veh_stores.append(s)
                 curr_vol += vol
                 
+                # Update curr_time
+                if prev_idx == 0:
+                    curr_time = self.np_sched[g]
+                else:
+                    travel = self.np_time[prev_idx][g]
+                    dwell = self.np_dwell[prev_idx] if prev_idx != 0 else 0
+                    curr_time = curr_time + round(travel + dwell)
+                    
+                prev_idx = g
+                    
             if curr_veh_stores:
                 v_id = f'{vehicle_num}'
                 solution[v_id] = {

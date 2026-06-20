@@ -1,8 +1,10 @@
 import argparse
 import time
+import sys
+import copy
+import json
 import random
 import traceback
-import copy
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -112,6 +114,7 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         )
         
         best_cost, best_breakdown, best_solution, main_log = solver.run()
+        all_ga_logs = [("Main_GA", main_log)]
         total_fitness = best_cost
         total_breakdown = best_breakdown.copy()
         elapsed = time.time() - t0
@@ -159,6 +162,7 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
                 cross_penalty_weight=cross_penalty
             )
             sup_cost, sup_breakdown, current_routes, sup_log = support.run()
+            all_ga_logs.append((f"Support_GA_{len(all_ga_logs)}", sup_log))
             total_fitness += sup_cost
             for k in total_breakdown:
                 total_breakdown[k] += sup_breakdown[k]
@@ -214,8 +218,23 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         opt_routes.plot_routes_html_in_osrm(optimized_routes_osrm_html)
         opt_routes.plot_routes_html(optimized_routes_html)
         
-        ga_log_file = str(out_base / "ga_convergence_log.csv")
-        pd.DataFrame(main_log).to_csv(ga_log_file, index=False)
+        # Save logs (params and times and ga convergence)
+        logs_dir = out_base / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        
+        ga_log_file = str(logs_dir / "pure_ga_log.xlsx")
+        with pd.ExcelWriter(ga_log_file, engine='openpyxl') as writer:
+            for sheet_name, log_data in all_ga_logs:
+                pd.DataFrame(log_data).to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        with open(logs_dir / "log_params.json", "w", encoding="utf-8") as f:
+            json.dump(vars(args), f, indent=4, ensure_ascii=False)
+            
+        with open(logs_dir / "log_times.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "total_execution_time_seconds": elapsed,
+                "total_execution_time_minutes": elapsed / 60.0
+            }, f, indent=4, ensure_ascii=False)
         
         # Calculate metrics
         total_vehicles = len(routes)
