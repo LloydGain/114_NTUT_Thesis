@@ -589,12 +589,15 @@ class RouteManager:
                     vol = route['dc'].get('total_volume', 0)
                     cap = route['dc'].get('max_capacity', 1e9)
                     if vol > cap + 1e-5:
-                        violation_store = stores[-1]
-                        print(f"[DEBUG] Extracting store {violation_store['store_id']} from route {route_id} due to CAPACITY (vol={vol}, cap={cap})")
-                        extracted_stores.append(violation_store)
-                        self.remove_store(route_id, violation_store, fast_update=False)
-                        route_changed = True
-                        continue
+                        if len(stores) > 1:
+                            violation_store = stores[-1]
+                            print(f"[DEBUG] Extracting store {violation_store['store_id']} from route {route_id} due to CAPACITY (vol={vol}, cap={cap})")
+                            extracted_stores.append(violation_store)
+                            self.remove_store(route_id, violation_store, fast_update=False)
+                            route_changed = True
+                            continue
+                        else:
+                            print(f"[WARNING] Route {route_id} has only 1 store but exceeds capacity! Cannot extract further. (vol={vol}, cap={cap})")
                 
                 violation_store = None
                 for i, s in enumerate(stores):
@@ -684,7 +687,7 @@ class RouteManager:
                     earliest_dt = datetime.fromisoformat(earliest)
                     latest_dt = datetime.fromisoformat(latest)
                     
-                    tolerance = timedelta(seconds=60)
+                    tolerance = timedelta(seconds=0)
                     is_violation = (pred_dt < earliest_dt - tolerance or pred_dt > latest_dt + tolerance)
                     
                     if is_violation:
@@ -774,12 +777,17 @@ class RouteManager:
 
         def calc_stats(routes):
             if not routes:
-                return [0, 0, 0, 0, 0, 0, 0, 0]
+                return [0, 0, 0, 0, 0, 0, 0, 0, 0]
             vehicles = len(routes)
             stores = sum(len(r['stores']) for r in routes)
             dist = sum(r['dc'].get('distance', 0) for r in routes)
             time_hr = sum(r['dc'].get('duration', 0) for r in routes) / 3600
             load_rate = sum(r['dc'].get('load_rate', 0) for r in routes) / vehicles if vehicles else 0
+            
+            overloaded_vehicles = sum(
+                1 for r in routes if r['dc'].get('total_volume', 0) > r['dc'].get('max_capacity', 1e9) + 1e-4
+            )
+            overload_rate = overloaded_vehicles / vehicles if vehicles else 0
             
             on_time = sum(
                 1
@@ -797,6 +805,7 @@ class RouteManager:
                 round(dist / vehicles if vehicles else 0, 4),
                 round(time_hr / vehicles if vehicles else 0, 4),
                 round(load_rate, 4),
+                round(overload_rate, 4),
                 round(on_time_rate, 4)
             ]
 
@@ -812,6 +821,7 @@ class RouteManager:
             "avg_dist(km)",
             "avg_time(hr)",
             "avg_load_rate",
+            "overload_rate",
             "on_time_rate"
         ]
 

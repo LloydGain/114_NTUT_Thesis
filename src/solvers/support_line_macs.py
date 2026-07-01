@@ -8,8 +8,6 @@ from datetime import datetime, timedelta
 
 from config.config import DC_CONFIG
 from solvers.vnd import VND
-from utils.early_stopper import EarlyStopper
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Numba Core
 # ─────────────────────────────────────────────────────────────────────────────
@@ -620,7 +618,7 @@ class SupportLinePlanningMACS:
     def __init__(self, remaining_stores, distance_matrix, time_matrix,
                  num_ants=10, time_limit=60, support_capacity=7.2,
                  time_limit_per_route=5 * 60 * 60, vehicle_cost=2000, is_solomon=False,
-                 alpha=1.0, beta=1.0, rho=0.1, q0=0.9, early_stop_patience=50,
+                 alpha=1.0, beta=1.0, rho=0.1, q0=0.9,
                  verbose=True, mode='macs'):
 
         self.mode = mode
@@ -630,7 +628,6 @@ class SupportLinePlanningMACS:
         self.verbose = verbose
         self.time_limit = time_limit
         self.is_solomon = is_solomon
-        self.early_stop_patience = early_stop_patience
         self.support_capacity = float(support_capacity)
         self.time_limit_per_route = float(time_limit_per_route)
         self.vehicle_cost = float(vehicle_cost)
@@ -865,7 +862,6 @@ class SupportLinePlanningMACS:
         
         t_start = time.time()
         last_log_time = t_start
-        early_stopper = EarlyStopper(patience=self.early_stop_patience)
         global_iter = 0
         
         while (time.time() - t_start) < self.time_limit:
@@ -901,12 +897,6 @@ class SupportLinePlanningMACS:
                 if curr_time - t_start >= self.time_limit:
                     stop_event.set()
                     break
-                    
-                if self.early_stop_patience is not None:
-                    if curr_time - last_improve_time >= self.early_stop_patience:
-                        if self.verbose: print(f"    [MACS] Early stop triggered ({self.early_stop_patience}s no improvement).")
-                        stop_event.set()
-                        break
                 
                 if curr_time - last_log_time >= 1.0:
                     cost_val = self.gb_cost[1] if self.is_solomon else self.gb_cost
@@ -951,10 +941,6 @@ class SupportLinePlanningMACS:
             stop_event.set()
             t_vei.join(); t_dist.join()
             global_iter += 1
-            
-            if early_stopper.check(self.gb_cost):
-                if self.verbose: print(f"    [MACS] Early stop triggered.")
-                break
                 
         elapsed = time.time() - t_start
         if self.verbose:

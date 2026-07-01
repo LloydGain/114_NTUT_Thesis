@@ -56,25 +56,33 @@ def _njit_weights(ids_array, dist_matrix, volumes, vehicle_cost):
 ROUTES = None
 DIST   = None
 TIME   = None
+ACO_INSTANCE = None
 
 def init_worker(main_routes, distance_matrix, time_matrix):
-    global ROUTES, DIST, TIME
+    global ROUTES, DIST, TIME, ACO_INSTANCE
     ROUTES = main_routes
     DIST   = distance_matrix
     TIME   = time_matrix
+    
+    from solvers.allocate_aco import FastFitnessEvaluator
+    ACO_INSTANCE = FastFitnessEvaluator(main_routes, distance_matrix, time_matrix)
 
 def fitness_worker(args):
-    """Evaluate a full decoded context ({route_id: [store_dicts]})."""
-    context_decoded, cache_key = args
+    """Evaluate a binary context ({route_id: bits})."""
+    context, cache_key = args
 
     copy_routes = {}
     store_list = []
     
     for r_id, rd in ROUTES.items():
-        if r_id in context_decoded:
-            removed_ids = {s['route_code'] for s in context_decoded[r_id]}
-            kept_stores = [s for s in rd["stores"] if s['route_code'] not in removed_ids]
-            store_list.extend(context_decoded[r_id])
+        if r_id in context:
+            bits = context[r_id]
+            kept_stores = []
+            for i, b in enumerate(bits):
+                if b == 1:
+                    store_list.append(rd["stores"][i])
+                else:
+                    kept_stores.append(rd["stores"][i])
             
             new_volume = sum(s.get('volume', 0) for s in kept_stores)
             new_dc = rd["dc"].copy()
@@ -85,10 +93,7 @@ def fitness_worker(args):
         else:
             copy_routes[r_id] = {"dc": rd["dc"], "stores": rd["stores"]}
 
-    ac_cost, _, _, ac_vn = StoreAllocationACO(
-        copy_routes, store_list, DIST, TIME,
-        num_ants=0, iterations=0, verbose=False
-    ).run(return_routes=False)
+    ac_cost, ac_vn = ACO_INSTANCE.fast_evaluate_fitness(copy_routes, store_list)
 
     # Hierarchy of importance: VN > Extracted Stores > Distance
     extract_penalty = len(store_list) * 100
@@ -241,7 +246,9 @@ class StoreExtractionGA:
     # ── Encoding (hash) ───────────────────────────────────────────────────────
 
     def _encode_ctx(self, ctx):
-        return hash(tuple((k, tuple(ctx[k])) for k in sorted(ctx.keys())))
+        if not hasattr(self, 'sorted_route_ids'):
+            self.sorted_route_ids = sorted(self.main_routes.keys())
+        return hash(tuple((k, tuple(ctx.get(k, []))) for k in self.sorted_route_ids))
 
     # ── Crossover (binary uniform + repair) ──────────────────────────────────
 
@@ -346,7 +353,7 @@ class StoreExtractionGA:
             context = {r: list(random.choice(subpops[r])) for r in route_ids}
             ctx_key = self._encode_ctx(context)
             if ctx_key not in local_cache:
-                for k, res in pool.map(fitness_worker, [(self._decode_context(context), ctx_key)]):
+                for k, res in pool.map(fitness_worker, [(context, ctx_key)]):
                     local_cache[k] = res
             
             fb = local_cache[ctx_key]['cost']
@@ -360,10 +367,11 @@ class StoreExtractionGA:
             seen_keys = set()
             for r in route_ids:
                 for bits in subpops[r]:
-                    ctx = {k: list(v) for k, v in context.items()}; ctx[r] = bits
+                    ctx = context.copy()
+                    ctx[r] = bits
                     key = self._encode_ctx(ctx)
                     if key not in local_cache and key not in seen_keys:
-                        eval_batch.append((self._decode_context(ctx), key))
+                        eval_batch.append((ctx, key))
                         seen_keys.add(key)
                         
             if eval_batch:
@@ -402,11 +410,12 @@ class StoreExtractionGA:
                     Oi_keys = []
                     seen_keys = set()
                     for child in Oi:
-                        ctx = {k: list(v) for k, v in context.items()}; ctx[route_id] = child
+                        ctx = context.copy()
+                        ctx[route_id] = child
                         key = self._encode_ctx(ctx)
                         Oi_keys.append(key)
                         if key not in local_cache and key not in seen_keys:
-                            eval_batch.append((self._decode_context(ctx), key))
+                            eval_batch.append((ctx, key))
                             seen_keys.add(key)
                             
                     if eval_batch:

@@ -33,11 +33,12 @@ def parse_args():
     parser.add_argument("--google", action="store_true", help="Update routes via Google Maps API")
     parser.add_argument("--comment", type=str, default=None, help="Comment for the run (optional)")
     parser.add_argument("--skip_compare", action="store_true", help="Skip comparison with manual and program routes")
+    parser.add_argument("--ignore_pkl", action="store_true", help="Ignore pickle cache files and recalculate")
     parser.add_argument("--alb", type=str, nargs='+', choices=['extract', 'allocate', 'support'], default=[], help="Ablation options: extract, allocate, support")
     return parser.parse_args()
 
 
-def main(file_date, random_seed=None, test_mode=False, google=False, comment=None, skip_compare=False, hyper_params=None, alb=None):
+def main(file_date, random_seed=None, test_mode=False, google=False, comment=None, skip_compare=False, hyper_params=None, alb=None, ignore_pkl=False):
     if alb is None:
         alb = []
     """
@@ -116,7 +117,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'generations': 200,
             'cross_rate': 0.8,
             'mutation_rate': 0.1,
-            'early_stop_patience': 50
+            'early_stop_patience': 40
         },
         'store_allocation_aco': {
             'num_ants': 50,
@@ -125,7 +126,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'beta': 1,
             'q0': 0.8,
             'rho': 0.7,
-            'early_stop_patience': 50
+            'early_stop_patience': 40
         },
         'support_line_macs': {
             'time_limit': 100,
@@ -253,7 +254,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = f'{cache_dir}/extract_{mode_extract}_seed{random_seed}.pkl'
 
-    if os.path.exists(cache_file) and not test_mode and mode_extract != 'random':
+    if os.path.exists(cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
         print(f"Loading cached Store Extraction data from {cache_file}...")
         with open(cache_file, 'rb') as f:
             main_routes, extracted_stores, store_extract_log_data = pickle.load(f)
@@ -303,7 +304,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     os.makedirs(allocate_cache_dir, exist_ok=True)
     allocate_cache_file = f'{allocate_cache_dir}/allocate_{mode_allocate}_google{google}_seed{random_seed}.pkl'
 
-    if os.path.exists(allocate_cache_file) and not test_mode and mode_extract != 'random':
+    if os.path.exists(allocate_cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
         print(f"Loading cached Store Allocation data from {allocate_cache_file}...")
         with open(allocate_cache_file, 'rb') as f:
             main_routes, remaining_stores, store_allocate_log_data = pickle.load(f)
@@ -570,7 +571,7 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
 if __name__ == "__main__":
     try:
         args = parse_args()
-        main(args.file_date, args.seed, args.test, args.google, args.comment, args.skip_compare, alb=args.alb)
+        main(args.file_date, args.seed, args.test, args.google, args.comment, args.skip_compare, alb=args.alb, ignore_pkl=args.ignore_pkl)
     except KeyboardInterrupt:
         print("Execution interrupted by user.")
         exit(1)

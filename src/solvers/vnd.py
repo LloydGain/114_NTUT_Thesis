@@ -556,6 +556,12 @@ class VND:
             3: Inter-route Swap
             4: Inter-route Cross Exchange
         """
+        import os
+        if os.getenv("DISABLE_VND") == "1":
+            all_ids = [s['store_id'] for rd in routes_info.values() for s in rd['stores']]
+            self._ensure_np_matrices(all_ids)
+            return routes_info, self._calculate_routes_cost(routes_info)
+
         current_routes = copy.deepcopy(routes_info)
         all_ids = [s['store_id'] for rd in current_routes.values() for s in rd['stores']]
         self._ensure_np_matrices(all_ids)
