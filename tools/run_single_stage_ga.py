@@ -27,6 +27,7 @@ METRIC_COLS = [
     "sup_dist(km)",
     "total_time(hr)",
     "avg_load_rate",
+    "overload_rate",
     "on_time_rate",
     "running_time(s)",
     "fitness",
@@ -52,7 +53,7 @@ OUTPUT_DIR = ROOT / "output" / "exp" / "alb" / "single_stage_ga"
 def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float, 
                     pop_size: int, generations: int, early_stop_patience: int, 
                     vehicle_cost: float, tw_penalty: float, cap_penalty: float,
-                    cross_penalty: float, google: bool) -> dict:
+                    cross_penalty: float, order_penalty: float, google: bool) -> dict:
     """Run a single seed of Single-Stage GA optimization."""
     random.seed(seed)
     np.random.seed(seed)
@@ -110,7 +111,8 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
             vehicle_cost=vehicle_cost,
             tw_penalty_weight=tw_penalty,
             cap_penalty_weight=cap_penalty,
-            cross_penalty_weight=cross_penalty
+            cross_penalty_weight=cross_penalty,
+            order_penalty_weight=order_penalty
         )
         
         best_cost, best_breakdown, best_solution, main_log = solver.run()
@@ -124,11 +126,11 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         
         # Always check and extract violating stores
         print("Checking for internal time window and capacity violations...")
-        newly_extracted = temp_rm.extract_violating_stores(target='all', extract_original=True, check_capacity=True)
+        newly_extracted = temp_rm.extract_violating_stores(target='all', extract_original=False, check_capacity=True)
         
         if google:
             print("Validating all routes with Google Maps API...")
-            new_ext_api = temp_rm.validate_and_extract_violating_stores(target='all', extract_original=True)
+            new_ext_api = temp_rm.validate_and_extract_violating_stores(target='all', extract_original=False)
             newly_extracted.extend(new_ext_api)
             
         final_support_routes = {}
@@ -159,7 +161,8 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
                 vehicle_cost=vehicle_cost,
                 tw_penalty_weight=tw_penalty,
                 cap_penalty_weight=cap_penalty,
-                cross_penalty_weight=cross_penalty
+                cross_penalty_weight=cross_penalty,
+                order_penalty_weight=order_penalty
             )
             sup_cost, sup_breakdown, current_routes, sup_log = support.run()
             all_ga_logs.append((f"Support_GA_{len(all_ga_logs)}", sup_log))
@@ -245,6 +248,11 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
             sum(r['dc']['load_rate'] for r in routes.values()) / total_vehicles
             if total_vehicles else 0
         )
+        overloaded_vehicles = sum(
+            1 for r in routes.values() if r['dc']['total_volume'] > r['dc']['max_capacity'] + 1e-4
+        )
+        overload_rate = overloaded_vehicles / total_vehicles if total_vehicles else 0
+        
         on_time = sum(
             1
             for r in routes.values()
@@ -269,6 +277,7 @@ def run_single_seed(file_date: str, seed: int, test_mode: bool, capacity: float,
         result["sup_dist(km)"] = round(support_distance, 4)
         result["total_time(hr)"] = round(total_duration, 4)
         result["avg_load_rate"] = round(avg_load_rate, 4)
+        result["overload_rate"] = round(overload_rate, 4)
         result["on_time_rate"] = round(on_time_rate, 4)
         result["running_time(s)"] = round(elapsed, 2)
         result["fitness"] = round(total_fitness, 4)
@@ -363,7 +372,7 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path, para
 
 def run(data_name: str, seed_list: list, test_mode: bool, force: bool, capacity: float,
         pop_size: int, generations: int, early_stop_patience: int, vehicle_cost: float,
-        tw_penalty: float, cap_penalty: float, cross_penalty: float, google: bool):
+        tw_penalty: float, cap_penalty: float, cross_penalty: float, order_penalty: float, google: bool):
     """Run multiple seeds and save results incrementally after each seed."""
     
     # Verify OSRM is running
@@ -382,6 +391,7 @@ def run(data_name: str, seed_list: list, test_mode: bool, force: bool, capacity:
         "tw_penalty": tw_penalty,
         "cap_penalty": cap_penalty,
         "cross_penalty": cross_penalty,
+        "order_penalty": order_penalty,
         "test_mode": test_mode,
     }
 
@@ -389,7 +399,7 @@ def run(data_name: str, seed_list: list, test_mode: bool, force: bool, capacity:
     print(f"  Dataset   : {data_name}")
     print(f"  Seeds     : {seed_list}")
     print(f"  Test mode : {test_mode}")
-    print(f"  Params    : {{\"capacity\": {capacity}, \"pop_size\": {pop_size}, \"generations\": {generations}, \"early_stop_patience\": {early_stop_patience}, \"vehicle_cost\": {vehicle_cost}, \"tw_penalty\": {tw_penalty}, \"cap_penalty\": {cap_penalty}, \"cross_penalty\": {cross_penalty}, \"test_mode\": {test_mode}}}")
+    print(f"  Params    : {{\"capacity\": {capacity}, \"pop_size\": {pop_size}, \"generations\": {generations}, \"early_stop_patience\": {early_stop_patience}, \"vehicle_cost\": {vehicle_cost}, \"tw_penalty\": {tw_penalty}, \"cap_penalty\": {cap_penalty}, \"cross_penalty\": {cross_penalty}, \"order_penalty\": {order_penalty}, \"test_mode\": {test_mode}}}")
     print(f"  Output    : {OUTPUT_DIR}")
     print(f"{'='*60}\n")
 
@@ -427,11 +437,12 @@ def run(data_name: str, seed_list: list, test_mode: bool, force: bool, capacity:
             tw_penalty=tw_penalty,
             cap_penalty=cap_penalty,
             cross_penalty=cross_penalty,
+            order_penalty=order_penalty,
             google=google
         )
 
         if result["status"] == "ok":
-            print(f"  [OK]  seed={seed}: vehicle_num={result['vehicle_num']}, total_dist={result['total_dist(km)']}km, time={result['running_time(s)']}s")
+            print(f"  [OK]  seed={seed}: vehicle_num={result['vehicle_num']}, overload={result['overload_rate']:.4f}, total_dist={result['total_dist(km)']}km, time={result['running_time(s)']}s")
         else:
             print(f"  [ERR] seed={seed}: {result['error']}")
 
@@ -462,18 +473,20 @@ def parse_args():
     # GA hyperparams
     parser.add_argument("--capacity", type=float, default=7.2,
                         help="Vehicle capacity constraint to use for the single stage GA (default: 7.2)")
-    parser.add_argument("--pop_size", type=int, default=500,
+    parser.add_argument("--pop_size", type=int, default=1000,
                         help="GA population size (default: 500)")
-    parser.add_argument("--generations", type=int, default=5000,
-                        help="GA generations (default: 1000)")
-    parser.add_argument("--early_stop", type=int, default=100,
+    parser.add_argument("--generations", type=int, default=1000,
+                        help="GA generations (default: 200)")
+    parser.add_argument("--early_stop", type=int, default=500,
                         help="GA early stop patience (default: 50)")
     parser.add_argument("--vehicle_cost", type=float, default=2000.0,
                         help="Vehicle fixed cost penalty (default: 2000.0)")
-    parser.add_argument("--tw_penalty", type=float, default=10000000.0,
-                        help="Time window violation penalty weight (default: 1000.0)")
-    parser.add_argument("--cap_penalty", type=float, default=10000000.0,
-                        help="Capacity violation penalty weight for main lines (default: 1000000.0)")
+    parser.add_argument("--tw_penalty", type=float, default=10000.0,
+                        help="Time window violation penalty weight (default: 5000.0)")
+    parser.add_argument("--cap_penalty", type=float, default=10000.0,
+                        help="Capacity violation penalty weight for main lines (default: 5000.0)")
+    parser.add_argument("--order_penalty", type=float, default=10000.0,
+                        help="Order violation penalty weight for main lines (default: 5000.0)")
     parser.add_argument("--cross_penalty", type=float, default=100.0,
                         help="Cross-route penalty weight to protect original routes (default: 100.0)")
     parser.add_argument("--use_vnd", action="store_true",
@@ -516,5 +529,6 @@ if __name__ == "__main__":
         tw_penalty=args.tw_penalty,
         cap_penalty=args.cap_penalty,
         cross_penalty=args.cross_penalty,
+        order_penalty=args.order_penalty,
         google=args.google
     )
