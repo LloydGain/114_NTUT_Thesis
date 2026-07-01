@@ -4,7 +4,6 @@ import hashlib
 import numpy as np
 from datetime import datetime
 from multiprocessing import cpu_count, Manager
-import concurrent.futures
 
 from config import config
 from models.route_manager import RouteManager
@@ -16,13 +15,14 @@ from solvers.vnd import VND
 def _njit_evaluate_chromosome_mainline(
     permutation, 
     N, M, 
-    np_volume, np_earliest, np_latest, np_dwell, np_time, np_dist, np_region, np_group, np_orig_route, np_sched,
+    np_volume, np_earliest, np_latest, np_dwell, np_time, np_dist, np_region, np_group, np_orig_route, np_sched, np_orig_seq,
     main_route_caps,
     support_capacity, 
     vehicle_cost,
     tw_penalty_weight,
     cap_penalty_weight,
-    cross_penalty_weight
+    cross_penalty_weight,
+    order_penalty_weight
 ):
     acc_dist = 0.0
     acc_cross = 0.0
@@ -30,6 +30,7 @@ def _njit_evaluate_chromosome_mainline(
     support_vehicles = 0
     tw_penalty = 0.0
     cap_penalty = 0.0
+    order_penalty = 0.0
     
     # 1. Collect stores for each route
     main_stores = np.full((M, N), -1, dtype=np.int64)
@@ -62,14 +63,26 @@ def _njit_evaluate_chromosome_mainline(
         route_vol = 0.0
         route_dist = 0.0
         cross_route_penalty = 0.0
+        route_tw_penalty = 0.0
+        has_inserted_stores = False
         
         curr_time = 0.0
         prev_idx = 0
+        last_seq = -1
         for i in range(count):
             curr_idx = main_stores[r, i]
             
             if np_orig_route[curr_idx] != -1 and np_orig_route[curr_idx] != r:
                 cross_route_penalty += cross_penalty_weight
+                has_inserted_stores = True
+            elif np_orig_route[curr_idx] == -1:
+                has_inserted_stores = True
+            elif np_orig_route[curr_idx] == r:
+                curr_seq = np_orig_seq[curr_idx]
+                if curr_seq < last_seq:
+                    order_penalty += 1.0
+                else:
+                    last_seq = curr_seq
                 
             route_vol += np_volume[curr_idx]
             
@@ -81,9 +94,9 @@ def _njit_evaluate_chromosome_mainline(
                 arrival_time = curr_time + round(travel + dwell)
                 
             if arrival_time > np_latest[curr_idx]:
-                tw_penalty += (arrival_time - np_latest[curr_idx])
+                route_tw_penalty += (arrival_time - np_latest[curr_idx])
             elif arrival_time < np_earliest[curr_idx]:
-                tw_penalty += (np_earliest[curr_idx] - arrival_time)
+                route_tw_penalty += (np_earliest[curr_idx] - arrival_time)
                 
             curr_time = arrival_time
             route_dist += np_dist[prev_idx, curr_idx]
@@ -93,6 +106,9 @@ def _njit_evaluate_chromosome_mainline(
         
         if route_vol > main_route_caps[r]:
             cap_penalty += (route_vol - main_route_caps[r])
+            
+        if has_inserted_stores:
+            tw_penalty += route_tw_penalty
             
         acc_dist += route_dist
         acc_cross += cross_route_penalty
@@ -172,11 +188,12 @@ def _njit_evaluate_chromosome_mainline(
         
     acc_tw = tw_penalty * tw_penalty_weight
     acc_cap = cap_penalty * cap_penalty_weight
+    acc_order = order_penalty * order_penalty_weight
     acc_veh = support_vehicles * vehicle_cost
     
-    final_cost = acc_dist + acc_cross + acc_tw + acc_cap + acc_veh
+    final_cost = acc_dist + acc_cross + acc_tw + acc_cap + acc_order + acc_veh
     
-    return final_cost, acc_dist, acc_veh, acc_tw, acc_cap, acc_cross
+    return final_cost, acc_dist, acc_veh, acc_tw, acc_cap, acc_cross, acc_order
 
 
 def init_ga_worker(ga_instance):
@@ -215,10 +232,10 @@ class SingleStageMainLineGA:
     """
     def __init__(self, main_routes, remaining_stores, distance_matrix, time_matrix, 
                  population_size=1000, elite_rate=0.1, generations=1000, 
-                 cross_rate=0.8, mutation_rate=0.1, early_stop_patience=50, 
+                 cross_rate=0.8, mutation_rate=0.1, early_stop_patience=500, 
                  support_capacity=7.2, vehicle_cost=2000, 
-                 tw_penalty_weight=1000.0, cap_penalty_weight=1000000.0,
-                 cross_penalty_weight=5000.0,
+                 tw_penalty_weight=10000.0, cap_penalty_weight=10000.0,
+                 cross_penalty_weight=100.0, order_penalty_weight=10000.0,
                  target_cost=None):
         self.dc = config.DC_CONFIG
         self.main_routes = main_routes
@@ -238,6 +255,7 @@ class SingleStageMainLineGA:
         self.tw_penalty_weight = tw_penalty_weight
         self.cap_penalty_weight = cap_penalty_weight
         self.cross_penalty_weight = cross_penalty_weight
+        self.order_penalty_weight = order_penalty_weight
         
         self.target_cost = target_cost
         
@@ -271,6 +289,13 @@ class SingleStageMainLineGA:
         self.np_group = np.full(n, -1, dtype=np.int64)
         self.np_region = np.full(n, -1, dtype=np.int64)
         self.np_orig_route = np.full(n, -1, dtype=np.int64)
+        self.np_orig_seq = np.full(n, -1, dtype=np.int64)
+        
+        for r_id, r_info in self.main_routes.items():
+            for seq_idx, s in enumerate(r_info['stores']):
+                s_id = s['store_id']
+                if s_id in self.s2i:
+                    self.np_orig_seq[self.s2i[s_id]] = seq_idx
         
         region_map = {'north': 0, 'south': 1, 'east': 2, 'west': 3}
         group_map = {'near': 0, 'mid': 1, 'far': 2}
@@ -307,15 +332,15 @@ class SingleStageMainLineGA:
 
     def _evaluate_individual_fast(self, permutation):
         perm_arr = np.array(permutation, dtype=np.int64)
-        c, dist, veh, tw, cap, cross = _njit_evaluate_chromosome_mainline(
+        c, dist, veh, tw, cap, cross, order = _njit_evaluate_chromosome_mainline(
             perm_arr, self.N, self.M,
             self.np_volume, self.np_earliest, self.np_latest,
             self.np_dwell, self.np_time, self.np_dist, self.np_region,
-            self.np_group, self.np_orig_route, self.np_sched,
+            self.np_group, self.np_orig_route, self.np_sched, self.np_orig_seq,
             self.main_route_caps, self.support_capacity, self.vehicle_cost,
-            self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight
+            self.tw_penalty_weight, self.cap_penalty_weight, self.cross_penalty_weight, self.order_penalty_weight
         )
-        return c, {'dist': dist, 'veh': veh, 'tw': tw, 'cap': cap, 'cross': cross}
+        return c, {'dist': dist, 'veh': veh, 'tw': tw, 'cap': cap, 'cross': cross, 'order': order}
 
     def _decode_to_routes(self, permutation):
         solution = {}
@@ -472,11 +497,12 @@ class SingleStageMainLineGA:
                 individual[p1:p2+1] = reversed(individual[p1:p2+1])
         return individual
 
-    def _generate_initial_individual(self):
+    def _generate_initial_individual(self, randomize=False):
         chromo = []
         support_pool = []
         
         main_store_ids = set()
+        visited_s_idx = set()
         
         # 1. Simulate Main Routes and extract violating stores
         main_stores_kept = [[] for _ in range(self.M)]
@@ -488,33 +514,40 @@ class SingleStageMainLineGA:
             curr_vol = 0.0
             curr_time = 0.0
             prev_idx = 0
+            has_extracted = False
             
             for s in self.main_routes[r_id]['stores']:
-                main_store_ids.add(s['store_id'])
                 s_idx = self.s2i[s['store_id']]
                 
-                # Check capacity
+                if s_idx in visited_s_idx:
+                    continue
+                visited_s_idx.add(s_idx)
+                
+                main_store_ids.add(s['store_id'])
+                
                 vol = self.np_volume[s_idx]
+                
+                # Capacity is always checked
                 if curr_vol + vol > cap:
                     support_pool.append(s_idx)
+                    has_extracted = True
                     continue
                     
-                # Check time
+                # Calculate arrival time
                 if prev_idx == 0:
                     arrival_time = self.np_sched[s_idx]
                 else:
                     travel = self.np_time[prev_idx, s_idx]
                     dwell = self.np_dwell[prev_idx] if prev_idx != 0 else 0
-                    arrival_time = curr_time + travel + dwell
+                    arrival_time = curr_time + round(travel + dwell)
                     
-                if arrival_time > self.np_latest[s_idx]:
-                    support_pool.append(s_idx)
-                    continue
-                    
-                if arrival_time < self.np_earliest[s_idx]:
-                    support_pool.append(s_idx)
-                    continue
-                    
+                # If we have modified this route (extracted something), enforce Time Window
+                if has_extracted:
+                    if arrival_time > self.np_latest[s_idx] or arrival_time < self.np_earliest[s_idx]:
+                        support_pool.append(s_idx)
+                        # has_extracted is already True
+                        continue
+                
                 # Store is valid, keep it
                 curr_vol += vol
                 curr_time = arrival_time
@@ -526,17 +559,125 @@ class SingleStageMainLineGA:
             if s['store_id'] not in main_store_ids:
                 support_pool.append(self.s2i[s['store_id']])
                 
-        # 3. Sort support pool to help the greedy decoder (Region -> Group -> Earliest Time)
-        support_pool.sort(key=lambda x: (
-            self.np_region[x],
-            self.np_group[x],
-            self.np_earliest[x]
-        ))
+        def check_tw_feasibility(route_stores):
+            curr_time = 0.0
+            prev_idx = 0
+            for s_idx in route_stores:
+                if prev_idx == 0:
+                    arrival_time = self.np_sched[s_idx]
+                else:
+                    travel = self.np_time[prev_idx, s_idx]
+                    dwell = self.np_dwell[prev_idx] if prev_idx != 0 else 0
+                    arrival_time = curr_time + round(travel + dwell)
+                    
+                if arrival_time > self.np_latest[s_idx] or arrival_time < self.np_earliest[s_idx]:
+                    return False
+                curr_time = arrival_time
+                prev_idx = s_idx
+            return True
+
+        def calc_route_distance(route_stores):
+            if not route_stores:
+                return 0.0
+            dist = self.np_dist[0, route_stores[0]]
+            for i in range(len(route_stores) - 1):
+                dist += self.np_dist[route_stores[i], route_stores[i+1]]
+            dist += self.np_dist[route_stores[-1], 0]
+            return dist
+
+        # 3. Mainline Insertion (Solomon Heuristic)
+        main_order = list(range(self.M))
+        random.shuffle(main_order)
         
-        # 4. Build Chromosome
-        # Support stores go first
-        for s_idx in support_pool:
-            chromo.append(s_idx)
+        for r in main_order:
+            cap = self.main_route_caps[r]
+            while True:
+                best_insertions = []
+                
+                curr_route = main_stores_kept[r]
+                curr_vol = sum(self.np_volume[s] for s in curr_route)
+                curr_dist = calc_route_distance(curr_route)
+                
+                for s_idx in support_pool:
+                    vol = self.np_volume[s_idx]
+                    if curr_vol + vol > cap:
+                        continue
+                        
+                    for k in range(len(curr_route) + 1):
+                        test_route = curr_route[:k] + [s_idx] + curr_route[k:]
+                        if check_tw_feasibility(test_route):
+                            test_dist = calc_route_distance(test_route)
+                            cost_diff = test_dist - curr_dist
+                            best_insertions.append((cost_diff, s_idx, k))
+                                
+                if best_insertions:
+                    best_insertions.sort(key=lambda x: x[0])
+                    if randomize:
+                        top_k = min(3, len(best_insertions))
+                        chosen = random.choice(best_insertions[:top_k])
+                    else:
+                        chosen = best_insertions[0]
+                        
+                    main_stores_kept[r].insert(chosen[2], chosen[1])
+                    support_pool.remove(chosen[1])
+                else:
+                    break
+                    
+        # 4. Support Line Generation
+        support_routes = []
+        while support_pool:
+            # Seed point: farthest from depot
+            seed_store = max(support_pool, key=lambda x: self.np_dist[0, x])
+            curr_route = [seed_store]
+            support_pool.remove(seed_store)
+            
+            curr_region = self.np_region[seed_store]
+            curr_group = self.np_group[seed_store]
+            
+            while True:
+                best_insertions = []
+                
+                curr_vol = sum(self.np_volume[s] for s in curr_route)
+                curr_dist = calc_route_distance(curr_route)
+                
+                for s_idx in support_pool:
+                    vol = self.np_volume[s_idx]
+                    if curr_vol + vol > self.support_capacity:
+                        continue
+                    
+                    r_reg = self.np_region[s_idx]
+                    g_grp = self.np_group[s_idx]
+                    if curr_region != -1 and r_reg != -1 and r_reg != curr_region:
+                        continue
+                    if curr_group != -1 and g_grp != -1 and g_grp != curr_group:
+                        continue
+                        
+                    for k in range(len(curr_route) + 1):
+                        test_route = curr_route[:k] + [s_idx] + curr_route[k:]
+                        if check_tw_feasibility(test_route):
+                            test_dist = calc_route_distance(test_route)
+                            cost_diff = test_dist - curr_dist
+                            best_insertions.append((cost_diff, s_idx, k))
+                                
+                if best_insertions:
+                    best_insertions.sort(key=lambda x: x[0])
+                    if randomize:
+                        top_k = min(3, len(best_insertions))
+                        chosen = random.choice(best_insertions[:top_k])
+                    else:
+                        chosen = best_insertions[0]
+                        
+                    curr_route.insert(chosen[2], chosen[1])
+                    support_pool.remove(chosen[1])
+                else:
+                    break
+                    
+            support_routes.append(curr_route)
+            
+        # 5. Build Chromosome
+        for sr in support_routes:
+            for s_idx in sr:
+                chromo.append(s_idx)
             
         # Add dividers and kept main stores
         for r in range(self.M):
@@ -551,14 +692,18 @@ class SingleStageMainLineGA:
         if not self.remaining_stores:
             return 0, {}
             
-        base_chromo = self._generate_initial_individual()
+        base_chromo = self._generate_initial_individual(randomize=False)
         population = [base_chromo]
+        
+        # Inject diverse but high-quality individuals
+        grasp_count = min(self.population_size // 10, 30)
+        for _ in range(grasp_count):
+            population.append(self._generate_initial_individual(randomize=True))
         
         while len(population) < self.population_size:
             mutated = list(base_chromo)
-            # Shuffle aggressively for initial diversity
-            for _ in range(5):
-                mutated = self._mutate(mutated)
+            # Completely shuffle the chromosome for true randomness
+            random.shuffle(mutated)
             population.append(mutated)
             
         self.best_cost = float('inf')
