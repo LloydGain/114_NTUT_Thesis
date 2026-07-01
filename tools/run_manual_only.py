@@ -69,8 +69,8 @@ def process_date(file_date, google, distance_matrix, time_matrix):
         "support_num": support_vehicles,
         "total_dist(km)": round(total_distance, 2),
         "total_time(hr)": round(total_duration, 2),
-        "avg_load_rate": round(avg_load_rate, 2),
-        "on_time_rate": round(on_time_rate, 2)
+        "avg_load_rate": round(avg_load_rate, 4),
+        "on_time_rate": round(on_time_rate, 4)
     }
     
     df = pd.DataFrame([summary_data])

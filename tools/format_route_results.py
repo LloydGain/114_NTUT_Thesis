@@ -65,12 +65,15 @@ def process_exp_results(input_dir, manual_path, output_path):
             return df
         numeric_cols = [c for c in df.columns if c != 'date']
         for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
+            if col in ['on_time_rate', 'avg_load_rate']:
+                df[col] = (pd.to_numeric(df[col], errors='coerce') * 100).round(2)
+            else:
+                df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
         df = df.sort_values('date')
-        avg_values = df[numeric_cols].mean().round(2)
+        avg_values = df[numeric_cols].mean()
         avg_row_data = {'date': 'Average'}
         for col in numeric_cols:
-            avg_row_data[col] = avg_values[col]
+            avg_row_data[col] = round(avg_values[col], 2)
         avg_row = pd.DataFrame([avg_row_data])
         df = pd.concat([df, avg_row], ignore_index=True)
         return df
@@ -164,8 +167,8 @@ def process_exp_results(input_dir, manual_path, output_path):
                     row['Program Load Rate'] = p_val
                     row['Load Rate Diff'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
                 elif col == 'on_time_rate':
-                    row['Manual On Time Rate'] = m_val
-                    row['Program On Time Rate'] = p_val
+                    row['Manual On Time Rate'] = round(m_val, 2) if pd.notna(m_val) else m_val
+                    row['Program On Time Rate'] = round(p_val, 2) if pd.notna(p_val) else p_val
                     row['On Time Rate Diff'] = round(p_val - m_val, 2) if pd.notna(p_val) and pd.notna(m_val) else np.nan
                     
             comp_data.append(row)

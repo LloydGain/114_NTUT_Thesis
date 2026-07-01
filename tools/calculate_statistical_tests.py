@@ -14,10 +14,7 @@ warnings.filterwarnings("ignore")
 def format_pval(pval):
     if pd.isna(pval):
         return "NaN"
-    s = f"{pval:.20f}".rstrip('0')
-    if s.endswith('.'):
-        s += '0'
-    return s
+    return f"{pval:.2E}"
 
 def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -270,6 +267,12 @@ def main():
         f_res2 = run_friedman(algo_methods, '僅比較所有程式演算法 (排除手動)')
         friedman_results_all.extend(f_res2)
 
+    target_four_methods = ['程式編排', '程式(alb_extract)', '程式(alb_allocate)', '程式(alb_support)']
+    four_methods_exist = [m for m in target_four_methods if m in all_methods]
+    if len(four_methods_exist) > 1:
+        f_res3 = run_friedman(four_methods_exist, '僅比較四種核心演算法')
+        friedman_results_all.extend(f_res3)
+
     pivot_sheets = {}
     
     for group in pd.DataFrame(friedman_results_all)['Group'].unique():
@@ -337,6 +340,8 @@ def main():
         
         if '排除手動' in group:
             sheet_name = 'Friedman排名表(僅演算法)'
+        elif '四種核心' in group:
+            sheet_name = 'Friedman排名表(四核心)'
         else:
             sheet_name = 'Friedman排名表(含手動)'
             
