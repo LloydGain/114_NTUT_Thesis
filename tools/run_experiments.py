@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import gc
 
 from setup import *
 from main import main
@@ -179,7 +180,7 @@ def summarize_and_save(new_results: list, data_name: str, output_dir: Path):
 # ---------------------------------------------------------------------------
 # Main experiment loop
 # ---------------------------------------------------------------------------
-def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False, alb: list = None, skip_compare: bool = True):
+def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool = False, alb: list = None, skip_compare: bool = True, force: bool = False):
     """Run multiple seeds and save results incrementally after each seed."""
     if alb is None: alb = []
     
@@ -209,7 +210,8 @@ def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool =
         except Exception:
             pass
 
-    seed_list = [s for s in seed_list if s not in completed_seeds]
+    if not force:
+        seed_list = [s for s in seed_list if s not in completed_seeds]
     if not seed_list:
         print(f"[INFO] All requested seeds are already completed for {data_name}. Skipping.")
         return excel_path
@@ -227,6 +229,9 @@ def run(data_name: str, seed_list: list, test_mode: bool = False, google: bool =
 
         # Save immediately after each seed (merge with existing file)
         summarize_and_save([result], data_name, current_out_dir)
+
+        # Force garbage collection to prevent memory accumulation over multiple seeds
+        gc.collect()
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +266,9 @@ def parse_args():
     parser.add_argument("--skip_compare", action="store_true",
                         help="Skip comparison with manual routes")
 
+    parser.add_argument("--force", action="store_true",
+                        help="Force rerun of seeds even if they are already completed")
+
     return parser.parse_args()
 
 
@@ -288,4 +296,5 @@ if __name__ == "__main__":
         google=args.google,
         alb=args.alb,
         skip_compare=args.skip_compare,
+        force=args.force,
     )
