@@ -1,4 +1,4 @@
-# 115_NTUT_Thesis: Logistics Route Optimization
+# 114_NTUT_Thesis: Logistics Route Optimization
 
 This project implements a hybrid metaheuristic approach combining **Cooperative Coevolutionary Genetic Algorithms (CCGA)**, **Hybrid Ant Colony Optimization (HACO)**, **Multiple Ant Colony System (MACS)**, **Solomon Insertion Heuristics**, and **Variable Neighborhood Descent (VND)** to optimize logistics delivery routes. The system is designed to handle complex constraints such as vehicle capacity, time windows, and support line allocation.
 
