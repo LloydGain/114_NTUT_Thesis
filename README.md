@@ -18,7 +18,9 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
 - **OSRM Backend**: A local OSRM server running on `http://localhost:5000` is required for fast distance matrix calculations.
 - **Google Maps API** (Optional): Update routes with real-world traffic data and precise durations.
 
-## Installation
+## Installation & Setup
+
+**Prerequisite:** Please ensure you have **Docker** installed and running on your system, as it is required for the OSRM routing engine.
 
 1. **Clone the repository**
 
@@ -26,13 +28,8 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
    git clone <repository_url>
    cd 114_NTUT_Thesis
    ```
-2. **Install Dependencies**
-   It is recommended to use a virtual environment.
 
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Environment Configuration**
+2. **Environment Configuration**
    Create a `.env` file in the **project root** directory. This is required for configuring the OSRM server, Distribution Center (DC) coordinates, and optional Google Maps API.
 
    ```env
@@ -50,31 +47,15 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
    DC_LATITUDE=25.083282
    ```
 
-## OSRM Setup
-
-This project relies on a local OSRM instance for calculating routing time and distance matrices and generating HTML maps. It is recommended to use **Docker**.
-
-1. **Download Map Data**
-   Download the OpenStreetMap data for Taiwan:
+3. **Run Setup Scripts**
+   We provide two automated scripts to set up the Python environment and the OSRM backend server. Please run them sequentially:
 
    ```powershell
-   # Windows PowerShell
-   Invoke-WebRequest -Uri http://download.geofabrik.de/asia/taiwan-latest.osm.pbf -OutFile taiwan-latest.osm.pbf
-   ```
-2. **Process Map Data**
-   Run the following commands to extract, partition, and customize the map data:
+   # 1. Install Python dependencies
+   scripts\setup\setup_python.bat
 
-   ```powershell
-   # Windows PowerShell
-   docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-extract -p /opt/car.lua /data/taiwan-latest.osm.pbf
-   docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-partition /data/taiwan-latest.osrm
-   docker run -t -v "${PWD}:/data" osrm/osrm-backend osrm-customize /data/taiwan-latest.osrm
-   ```
-3. **Run OSRM Server**
-   Start the OSRM server on port 5000:
-
-   ```powershell
-   docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend osrm-routed --algorithm mld /data/taiwan-latest.osrm
+   # 2. Download map data and start OSRM server (requires Docker)
+   scripts\setup\setup_osrm.bat
    ```
 
 ## Usage
