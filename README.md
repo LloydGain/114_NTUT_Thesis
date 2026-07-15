@@ -109,18 +109,29 @@ The repository includes extensive utilities to automate running experiments and 
 ### `tools/` Directory
 
 - **Experiment Execution**: 
-  - `run_experiments.py`, `run_solomon.py`, `run_single_stage_ga.py`: Scripts to execute batch runs across multiple dates and seeds.
-  - `run_tune_hpo.py`: Hyperparameter optimization script.
-  - `run_manual_only.py`: Evaluates solely the manual/baseline routing performance.
+  - `run_experiments.py`: Main script to execute batch experiments across multiple dataset dates and random seeds.
+  - `run_solomon.py`: Executes the optimization algorithms on standard Solomon benchmark datasets for validation.
+  - `run_single_stage_ga.py`: Executes batch experiments specifically focused on evaluating the new single-stage GA pipeline.
+  - `run_tune_hpo.py`: Hyperparameter optimization script (e.g., using Optuna) to tune algorithm parameters.
+  - `run_manual_only.py`: Executes and evaluates solely the manual (baseline) routing performance without running optimization.
 - **Statistical Analysis & Reporting**: 
-  - `calculate_statistical_tests.py`, `baseline_wilcoxon.py`: Automates generating comprehensive statistical Excel reports (e.g., Wilcoxon Signed-Rank tests).
-  - `dataset_analysis.py`, `compare_osrm_google.py`, `format_route_results.py`: Data analysis and routing result formatting utilities.
+  - `calculate_statistical_tests.py`: Automates the generation of comprehensive statistical Excel reports (e.g., Wilcoxon Signed-Rank tests) to compare algorithm performance.
+  - `baseline_wilcoxon.py`: Executes Wilcoxon Signed-Rank tests specifically for baseline performance comparisons.
+  - `dataset_analysis.py`: Analyzes dataset characteristics (e.g., volume, time windows) and outputs statistical summaries.
+  - `compare_osrm_google.py`: Analyzes and compares routing results (distance and time) calculated by OSRM vs Google Maps API.
+  - `format_route_results.py`: Formats the raw route results into a structured, readable layout for final reporting and analysis.
 - **Visualization & Plotting**: 
-  - `convergence_analysis.py`, `plot_ablation.py`: Reads `.pkl` history and aggregates iteration-level metrics to generate convergence charts.
-  - `generate_osrm_plots.py`: Automates map snapshot generation for route visualization.
+  - `convergence_analysis.py`: Reads .pkl history and aggregates iteration-level metrics to generate convergence charts for the optimization algorithms.
+  - `plot_ablation.py`: Generates ablation study charts to visualize the impact of disabling specific optimization stages.
+  - `generate_osrm_plots.py`: Automates the generation of map snapshots (e.g., HTML/PNG) for route visualizations using the OSRM backend.
 - **Data Conversion & Utilities**: 
-  - `transfer_manual_to_origin.py`, `transfer_store_info.py`, `update_osrm_matrices.py`: Scripts to convert legacy route formats and update distance/time matrices.
-  - `count_all_stores.py`, `export_error_routes.py`, `export_optimized_routes.py`: Helper tools for data verification and extraction.
+  - `count_all_stores.py`: Helper utility to count and aggregate store quantities across datasets.
+  - `export_error_routes.py`: Extracts and exports routes that encountered errors or violations during optimization.
+  - `export_optimized_routes.py`: Helper script to format and export the final optimized routes into an Excel or JSON format.
+  - `transfer_manual_to_origin.py`: Converts legacy manual route formats into the new origin format used by the system.
+  - `transfer_store_info.py`: Utility to convert and migrate store information formats or structures.
+  - `update_osrm_matrices.py`: Recalculates and updates the distance and time matrices using the local OSRM server.
+  - `setup.py`: Standard Python setup script for package management and installation.
 ### `scripts/` Directory
 
 Contains convenient `.bat` files for Windows batch execution, organized into subdirectories:
