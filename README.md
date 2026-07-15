@@ -140,8 +140,9 @@ Contains convenient `.bat` files for Windows batch execution, organized into sub
   - `run_experiments.bat`: Standard bulk dataset execution.
   - `run_single_stage_ga.bat`: Run experiments focused on the new GA pipeline.
   - `run_hpo.bat`: Hyperparameter Optimization flows.
-- **`osrm/`**:
-  - `run_osrm.bat`: Automates OSRM backend setup and server startup using Docker.
+- **`setup/`**:
+  - `setup_python.bat`: Installs all required Python dependencies from `requirements.txt`.
+  - `setup_osrm.bat`: Automates OSRM backend setup and server startup using Docker.
 
 ## Project Structure
 
@@ -149,7 +150,7 @@ Contains convenient `.bat` files for Windows batch execution, organized into sub
 114_NTUT_Thesis/
 ├── docs/           # Documentation, thesis materials, and statistical result reports
 ├── output/         # Experiment results, convergence plots, and cached states
-├── scripts/        # Batch files for execution, organized by purpose (experiments, osrm)
+├── scripts/        # Batch files for execution, organized by purpose (experiments, setup)
 ├── solomon-100/    # Standard Solomon benchmark datasets for algorithm validation
 ├── tools/          # Statistical analysis, plotting, and bulk execution tools
 ├── src/
