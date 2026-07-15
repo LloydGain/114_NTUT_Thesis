@@ -24,7 +24,7 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
 
    ```bash
    git clone <repository_url>
-   cd 115_NTUT_Thesis
+   cd 114_NTUT_Thesis
    ```
 2. **Install Dependencies**
    It is recommended to use a virtual environment.
@@ -143,7 +143,7 @@ Contains convenient `.bat` files for Windows batch execution:
 ## Project Structure
 
 ```text
-115_NTUT_Thesis/
+114_NTUT_Thesis/
 ├── scripts/        # Batch files for automated execution (.bat)
 ├── tools/          # Statistical analysis, plotting, and bulk execution tools
 ├── src/
