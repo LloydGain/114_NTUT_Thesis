@@ -108,11 +108,19 @@ The repository includes extensive utilities to automate running experiments and 
 
 ### `tools/` Directory
 
-- **`run_experiments.py` / `run_solomon.py` / `run_single_stage_ga.py`**: Scripts to execute batch runs across multiple dates and seeds.
-- **`calculate_statistical_tests.py` / `baseline_wilcoxon.py`**: Automates generating comprehensive statistical Excel reports (e.g., Wilcoxon Signed-Rank tests) to compare algorithm performance.
-- **`convergence_analysis.py` / `plot_ablation.py`**: Reads `.pkl` history and aggregates iteration-level metrics to generate convergence charts.
-- **`generate_osrm_plots.py`**: Automates map snapshot generation for route visualization.
-
+- **Experiment Execution**: 
+  - `run_experiments.py`, `run_solomon.py`, `run_single_stage_ga.py`: Scripts to execute batch runs across multiple dates and seeds.
+  - `run_tune_hpo.py`: Hyperparameter optimization script.
+  - `run_manual_only.py`: Evaluates solely the manual/baseline routing performance.
+- **Statistical Analysis & Reporting**: 
+  - `calculate_statistical_tests.py`, `baseline_wilcoxon.py`: Automates generating comprehensive statistical Excel reports (e.g., Wilcoxon Signed-Rank tests).
+  - `dataset_analysis.py`, `compare_osrm_google.py`, `format_route_results.py`: Data analysis and routing result formatting utilities.
+- **Visualization & Plotting**: 
+  - `convergence_analysis.py`, `plot_ablation.py`: Reads `.pkl` history and aggregates iteration-level metrics to generate convergence charts.
+  - `generate_osrm_plots.py`: Automates map snapshot generation for route visualization.
+- **Data Conversion & Utilities**: 
+  - `transfer_manual_to_origin.py`, `transfer_store_info.py`, `update_osrm_matrices.py`: Scripts to convert legacy route formats and update distance/time matrices.
+  - `count_all_stores.py`, `export_error_routes.py`, `export_optimized_routes.py`: Helper tools for data verification and extraction.
 ### `scripts/` Directory
 
 Contains convenient `.bat` files for Windows batch execution, organized into subdirectories:
