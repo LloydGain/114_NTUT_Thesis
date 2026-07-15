@@ -41,7 +41,7 @@ for %%D in (%FILE_DATES%) do (
         echo  Running dataset: %%D - Single-Stage GA
     )
     echo ============================================================
-    python "..\tools\run_single_stage_ga.py" --file_date %%D --seeds %SEEDS% %TEST_FLAG% %FORCE_FLAG% %GOOGLE_FLAG%
+    python "..\..\tools\run_single_stage_ga.py" --file_date %%D --seeds %SEEDS% %TEST_FLAG% %FORCE_FLAG% %GOOGLE_FLAG%
     if errorlevel 1 (
         echo [ERROR] Dataset %%D failed. Continuing to next...
     )
