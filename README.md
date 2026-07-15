@@ -92,7 +92,7 @@ python main.py --file_date <DATE_IDENTIFIER>
 
 | Argument           | Type     | Required | Description                                                                       |
 | ------------------ | -------- | -------- | --------------------------------------------------------------------------------- |
-| `--file_date`    | `str`  | Yes      | The date for the input data files (e.g.,`1203`, `1205`).                      |
+| `--file_date`    | `str`  | Yes      | The date for the input data files (e.g.,`20221203`, `20221205`).                      |
 | `--seed`         | `int`  | No       | Set a specific random seed for reproducibility. Overrides`.env`.                |
 | `--test`         | Flag     | No       | Run in**test mode** with reduced iterations for quick debugging.            |
 | `--google`       | Flag     | No       | Use**Google Maps API** for final distance/duration updates.                 |
@@ -103,22 +103,22 @@ python main.py --file_date <DATE_IDENTIFIER>
 
 ### Examples
 
-**Run a standard optimization for data '1203':**
+**Run a standard optimization for data '20221203':**
 
 ```bash
-python main.py --file_date 1203
+python main.py --file_date 20221203
 ```
 
 **Run a quick test with a fixed seed and custom comment:**
 
 ```bash
-python main.py --file_date 1203 --seed 123 --test --comment "baseline_test"
+python main.py --file_date 20221203 --seed 123 --test --comment "baseline_test"
 ```
 
 **Run an ablation study skipping cache and comparisons:**
 
 ```bash
-python main.py --file_date 1203 --ignore_pkl --skip_compare --alb extract
+python main.py --file_date 20221203 --ignore_pkl --skip_compare --alb extract
 ```
 
 ## Tools & Scripts
