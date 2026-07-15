@@ -134,17 +134,23 @@ The repository includes extensive utilities to automate running experiments and 
 
 ### `scripts/` Directory
 
-Contains convenient `.bat` files for Windows batch execution:
+Contains convenient `.bat` files for Windows batch execution, organized into subdirectories:
 
-- `run_experiments.bat`: Standard bulk dataset execution.
-- `run_single_stage_ga.bat`: Run experiments focused on the new GA pipeline.
-- `run_test.bat` / `run_hpo.bat`: Quick testing and Hyperparameter Optimization flows.
+- **`experiments/`**:
+  - `run_experiments.bat`: Standard bulk dataset execution.
+  - `run_single_stage_ga.bat`: Run experiments focused on the new GA pipeline.
+  - `run_hpo.bat`: Hyperparameter Optimization flows.
+- **`osrm/`**:
+  - `run_osrm.bat`: Automates OSRM backend setup and server startup using Docker.
 
 ## Project Structure
 
 ```text
 114_NTUT_Thesis/
-├── scripts/        # Batch files for automated execution (.bat)
+├── docs/           # Documentation, thesis materials, and statistical result reports
+├── output/         # Experiment results, convergence plots, and cached states
+├── scripts/        # Batch files for execution, organized by purpose (experiments, osrm)
+├── solomon-100/    # Standard Solomon benchmark datasets for algorithm validation
 ├── tools/          # Statistical analysis, plotting, and bulk execution tools
 ├── src/
 │   ├── data/       # Data loading and processing (Base, Manual, Origin, Program)
