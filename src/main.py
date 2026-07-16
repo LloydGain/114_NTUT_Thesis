@@ -168,7 +168,6 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
             'alpha': 1,
             'beta': 1,
             'rho': 0.1,
-            'q': 1,
             'q0': 0.8,
             'support_capacity': 7.2,
             'vehicle_cost': 2000,

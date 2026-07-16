@@ -16,7 +16,6 @@ from config import config
 from models.route_manager import RouteManager
 from utils.early_stopper import EarlyStopper
 from solvers.support_line_macs import SupportLinePlanningMACS
-from solvers.allocate_ga import _njit_get_store_insertion_cost_pos_ranged
 from solvers.vnd import VND
 
 @njit(cache=True)
@@ -46,6 +45,61 @@ def _njit_check_time_constraint(full_route, dc_idx, distance_matrix, time_matrix
     if total_duration > time_limit + 1e-4:
         return False
     return True
+
+@njit(cache=True)
+def _njit_get_store_insertion_cost_pos_ranged(
+    store_idx, route_stores, dc_idx, route_region,
+    route_vol, route_cap, store_region, store_vol,
+    dist_matrix, time_matrix, dwell_arr,
+    earliest_arr, latest_arr, sched_arr, time_limit,
+    pos_low, pos_high
+):
+    if route_vol + store_vol > route_cap:
+        return -1.0, -1
+
+    if route_region == 0 and store_region == 1: return -1.0, -1
+    if route_region == 1 and store_region == 0: return -1.0, -1
+    if route_region == 2 and store_region == 3: return -1.0, -1
+    if route_region == 3 and store_region == 2: return -1.0, -1
+
+    L = len(route_stores)
+    full_route = np.zeros(L + 2, dtype=np.int64)
+    full_route[0] = dc_idx
+    full_route[L + 1] = dc_idx
+    for i in range(L):
+        full_route[i + 1] = route_stores[i]
+
+    best_cost = 1e12
+    best_pos = -1
+
+    test_route = np.zeros(L + 3, dtype=np.int64)
+
+    start_pos = max(1, pos_low)
+    end_pos = min(len(full_route), pos_high + 1)
+
+    for pos in range(start_pos, end_pos):
+        prev_idx = full_route[pos - 1]
+        next_idx = full_route[pos]
+        
+        insert_cost = dist_matrix[prev_idx, store_idx] + dist_matrix[store_idx, next_idx] - dist_matrix[prev_idx, next_idx]
+        
+        if 0 < insert_cost < best_cost:
+            for i in range(pos):
+                test_route[i] = full_route[i]
+            test_route[pos] = store_idx
+            for i in range(pos, len(full_route)):
+                test_route[i + 1] = full_route[i]
+
+            if _njit_check_time_constraint(test_route, dc_idx, dist_matrix, time_matrix,
+                                           dwell_arr, earliest_arr, latest_arr,
+                                           sched_arr, time_limit):
+                best_cost = insert_cost
+                best_pos = pos - 1
+
+    if best_pos == -1:
+        return -1.0, -1
+        
+    return best_cost, best_pos
 
 @njit(cache=True)
 def _njit_greedy_function_attractions(store_idx, route_stores, dc_idx, route_vol, route_cap,
