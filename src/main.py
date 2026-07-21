@@ -252,20 +252,20 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = f'{cache_dir}/extract_{mode_extract}_seed{random_seed}.pkl'
 
-    if os.path.exists(cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
-        print(f"Loading cached Store Extraction data from {cache_file}...")
-        with open(cache_file, 'rb') as f:
-            main_routes, extracted_stores, store_extract_log_data = pickle.load(f)
-    else:
-        print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
-        ga_params = params['store_extraction_ga']
-        store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)
-        main_routes, extracted_stores = store_extract.run()
-        store_extract_log_data = store_extract.log
-        
-        if not test_mode and mode_extract != 'random':
-            with open(cache_file, 'wb') as f:
-                pickle.dump((main_routes, extracted_stores, store_extract_log_data), f)
+    # if os.path.exists(cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
+    #     print(f"Loading cached Store Extraction data from {cache_file}...")
+    #     with open(cache_file, 'rb') as f:
+    #         main_routes, extracted_stores, store_extract_log_data = pickle.load(f)
+    # else:
+    print(f"Starting Store Extraction using GA (Mode: {mode_extract})...")
+    ga_params = params['store_extraction_ga']
+    store_extract = StoreExtractionGA(routes, distance_matrix, time_matrix, mode=mode_extract, **ga_params)
+    main_routes, extracted_stores = store_extract.run()
+    store_extract_log_data = store_extract.log
+    
+    # if not test_mode and mode_extract != 'random':
+    #     with open(cache_file, 'wb') as f:
+    #         pickle.dump((main_routes, extracted_stores, store_extract_log_data), f)
                 
     extract_excel_file = f'{out_base}/extract_routes_info.xlsx'
     print(f"Exporting extracted routes info to {extract_excel_file}...")
@@ -302,29 +302,29 @@ def main(file_date, random_seed=None, test_mode=False, google=False, comment=Non
     os.makedirs(allocate_cache_dir, exist_ok=True)
     allocate_cache_file = f'{allocate_cache_dir}/allocate_{mode_allocate}_google{google}_seed{random_seed}.pkl'
 
-    if os.path.exists(allocate_cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
-        print(f"Loading cached Store Allocation data from {allocate_cache_file}...")
-        with open(allocate_cache_file, 'rb') as f:
-            main_routes, remaining_stores, store_allocate_log_data = pickle.load(f)
-    else:
-        print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
-        allocate_params = params['store_allocation_aco']
-        store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
-        _, main_routes, remaining_stores, _ = store_allocate.run()
-        store_allocate_log_data = store_allocate.log
+    # if os.path.exists(allocate_cache_file) and not test_mode and mode_extract != 'random' and not ignore_pkl:
+    #     print(f"Loading cached Store Allocation data from {allocate_cache_file}...")
+    #     with open(allocate_cache_file, 'rb') as f:
+    #         main_routes, remaining_stores, store_allocate_log_data = pickle.load(f)
+    # else:
+    print(f"Starting Store Allocation using ACO (Mode: {mode_allocate})...")
+    allocate_params = params['store_allocation_aco']
+    store_allocate = StoreAllocationACO(main_routes, extracted_stores, distance_matrix, time_matrix, mode=mode_allocate, **allocate_params)
+    _, main_routes, remaining_stores, _ = store_allocate.run()
+    store_allocate_log_data = store_allocate.log
 
-        if google:
-            print("Validating allocated routes with Google Maps API...")
-            temp_rm = RouteManager(copy.deepcopy(main_routes), distance_matrix, time_matrix)
-            newly_extracted = temp_rm.validate_and_extract_violating_stores(target='main')
-            if newly_extracted:
-                print(f"Extracted {len(newly_extracted)} unoriginal stores due to real-world time window violations.")
-                remaining_stores.extend(newly_extracted)
-            main_routes = temp_rm.routes_info
+    if google:
+        print("Validating allocated routes with Google Maps API...")
+        temp_rm = RouteManager(copy.deepcopy(main_routes), distance_matrix, time_matrix)
+        newly_extracted = temp_rm.validate_and_extract_violating_stores(target='main')
+        if newly_extracted:
+            print(f"Extracted {len(newly_extracted)} unoriginal stores due to real-world time window violations.")
+            remaining_stores.extend(newly_extracted)
+        main_routes = temp_rm.routes_info
 
-        if not test_mode and mode_extract != 'random':
-            with open(allocate_cache_file, 'wb') as f:
-                pickle.dump((main_routes, remaining_stores, store_allocate_log_data), f)
+    # if not test_mode and mode_extract != 'random':
+    #     with open(allocate_cache_file, 'wb') as f:
+    #         pickle.dump((main_routes, remaining_stores, store_allocate_log_data), f)
 
     end_time = time.time()
     time_consume = round(end_time - start_time, 2)
