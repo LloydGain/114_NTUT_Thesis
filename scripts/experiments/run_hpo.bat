@@ -1,6 +1,7 @@
 @echo off
+cd /d "%~dp0..\..\src"
 set PYTHON=python
-set SCRIPT=..\..\tools\run_tune_hpo.py
+set SCRIPT=..\tools\run_tune_hpo.py
 set SEED=0
 
 REM ===== file_date 清單 =====

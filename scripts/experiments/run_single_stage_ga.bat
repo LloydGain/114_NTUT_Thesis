@@ -30,7 +30,7 @@ if "%GOOGLE_MODE%"=="1" (
 
 :: ---[ Run ]--------------------------------------------------
 
-cd /d "%~dp0"
+cd /d "%~dp0..\..\src"
 
 for %%D in (%FILE_DATES%) do (
     echo.
@@ -41,7 +41,7 @@ for %%D in (%FILE_DATES%) do (
         echo  Running dataset: %%D - Single-Stage GA
     )
     echo ============================================================
-    python "..\..\tools\run_single_stage_ga.py" --file_date %%D --seeds %SEEDS% %TEST_FLAG% %FORCE_FLAG% %GOOGLE_FLAG%
+    python "..\tools\run_single_stage_ga.py" --file_date %%D --seeds %SEEDS% %TEST_FLAG% %FORCE_FLAG% %GOOGLE_FLAG%
     if errorlevel 1 (
         echo [ERROR] Dataset %%D failed. Continuing to next...
     )
