@@ -28,7 +28,6 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
    git clone <repository_url>
    cd 114_NTUT_Thesis
    ```
-
 2. **Environment Configuration**
    Create a `.env` file in the **project root** directory. This is required for configuring the OSRM server, Distribution Center (DC) coordinates, and optional Google Maps API.
 
@@ -46,7 +45,6 @@ This project implements a hybrid metaheuristic approach combining **Cooperative 
    DC_LONGITUDE=121.40712
    DC_LATITUDE=25.083282
    ```
-
 3. **Run Setup Scripts**
    We provide two automated scripts to set up the Python environment and the OSRM backend server. Please run them sequentially:
 
@@ -73,7 +71,7 @@ python main.py --file_date <DATE_IDENTIFIER>
 
 | Argument           | Type     | Required | Description                                                                       |
 | ------------------ | -------- | -------- | --------------------------------------------------------------------------------- |
-| `--file_date`    | `str`  | Yes      | The date for the input data files (e.g.,`20221203`, `20221205`).                      |
+| `--file_date`    | `str`  | Yes      | The date for the input data files (e.g.,`20221203`, `20221205`).              |
 | `--seed`         | `int`  | No       | Set a specific random seed for reproducibility. Overrides`.env`.                |
 | `--test`         | Flag     | No       | Run in**test mode** with reduced iterations for quick debugging.            |
 | `--google`       | Flag     | No       | Use**Google Maps API** for final distance/duration updates.                 |
@@ -108,23 +106,23 @@ The repository includes extensive utilities to automate running experiments and 
 
 ### `tools/` Directory
 
-- **Experiment Execution**: 
+- **Experiment Execution**:
   - `run_experiments.py`: Main script to execute batch experiments across multiple dataset dates and random seeds.
   - `run_solomon.py`: Executes the optimization algorithms on standard Solomon benchmark datasets for validation.
   - `run_single_stage_ga.py`: Executes batch experiments specifically focused on evaluating the new single-stage GA pipeline.
   - `run_tune_hpo.py`: Hyperparameter optimization script (e.g., using Optuna) to tune algorithm parameters.
   - `run_manual_only.py`: Executes and evaluates solely the manual (baseline) routing performance without running optimization.
-- **Statistical Analysis & Reporting**: 
+- **Statistical Analysis & Reporting**:
   - `calculate_statistical_tests.py`: Automates the generation of comprehensive statistical Excel reports (e.g., Wilcoxon Signed-Rank tests) to compare algorithm performance.
   - `baseline_wilcoxon.py`: Executes Wilcoxon Signed-Rank tests specifically for baseline performance comparisons.
   - `dataset_analysis.py`: Analyzes dataset characteristics (e.g., volume, time windows) and outputs statistical summaries.
   - `compare_osrm_google.py`: Analyzes and compares routing results (distance and time) calculated by OSRM vs Google Maps API.
   - `format_route_results.py`: Formats the raw route results into a structured, readable layout for final reporting and analysis.
-- **Visualization & Plotting**: 
+- **Visualization & Plotting**:
   - `convergence_analysis.py`: Reads .pkl history and aggregates iteration-level metrics to generate convergence charts for the optimization algorithms.
   - `plot_ablation.py`: Generates ablation study charts to visualize the impact of disabling specific optimization stages.
   - `generate_osrm_plots.py`: Automates the generation of map snapshots (e.g., HTML/PNG) for route visualizations using the OSRM backend.
-- **Data Conversion & Utilities**: 
+- **Data Conversion & Utilities**:
   - `count_all_stores.py`: Helper utility to count and aggregate store quantities across datasets.
   - `export_error_routes.py`: Extracts and exports routes that encountered errors or violations during optimization.
   - `export_optimized_routes.py`: Helper script to format and export the final optimized routes into an Excel or JSON format.
@@ -132,14 +130,15 @@ The repository includes extensive utilities to automate running experiments and 
   - `transfer_store_info.py`: Utility to convert and migrate store information formats or structures.
   - `update_osrm_matrices.py`: Recalculates and updates the distance and time matrices using the local OSRM server.
   - `setup.py`: Standard Python setup script for package management and installation.
+
 ### `scripts/` Directory
 
 Contains convenient `.bat` files for Windows batch execution, organized into subdirectories:
 
 - **`experiments/`**:
-  - `run_experiments.bat`: Standard bulk dataset execution.
-  - `run_single_stage_ga.bat`: Run experiments focused on the new GA pipeline.
-  - `run_hpo.bat`: Hyperparameter Optimization flows.
+  - `run_experiments.bat`: Standard execution script used for running the full hybrid optimization pipeline across multiple historical dataset dates.
+  - `run_single_stage_ga.bat`: Executable script for running experiments focused purely on evaluating the new single-stage HGA-SIH
+  - `run_hpo.bat`: Automated workflow for conducting Hyperparameter Optimization (e.g., using Optuna) to systematically tune algorithm parameters for better convergence and solution quality.
 - **`setup/`**:
   - `setup_python.bat`: Installs all required Python dependencies from `requirements.txt`.
   - `setup_osrm.bat`: Automates OSRM backend setup and server startup using Docker.
